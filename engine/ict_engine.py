@@ -4,6 +4,7 @@ from core.market_structure import MarketStructure
 from detectors.real_bos import RealBOSDetector
 from engine.trend_engine import TrendEngine
 from engine.structure_engine import StructureEngine
+from detectors.choch import CHOCHDetector
 
 
 class ICTEngine:
@@ -14,6 +15,7 @@ class ICTEngine:
         self.structure = MarketStructure()
         self.trend = TrendEngine()
         self.real_bos = RealBOSDetector()
+        self.choch = CHOCHDetector()
         self.structure_engine = StructureEngine()
 
     def analyze(self, df):
@@ -21,6 +23,7 @@ class ICTEngine:
         context = MarketContext()
 
         context.candles = df
+        context = self.choch.detect(context)
 
         context.swings = self.swing.detect(df)
 
