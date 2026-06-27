@@ -3,7 +3,7 @@ from models.swing_point import SwingPoint
 
 class SwingDetector:
 
-    def __init__(self, left=2, right=2):
+    def __init__(self, left=3, right=3):
         self.left = left
         self.right = right
 
@@ -11,22 +11,25 @@ class SwingDetector:
 
         swings = []
 
-        highs = df["high"]
-        lows = df["low"]
+        highs = df["high"].tolist()
+        lows = df["low"].tolist()
 
         for i in range(self.left, len(df) - self.right):
 
+            # -------------------------
             # Swing High
-            current_high = highs.iloc[i]
+            # -------------------------
+
+            current_high = highs[i]
 
             is_high = True
 
-            for j in range(i-self.left, i+self.right+1):
+            for j in range(i - self.left, i + self.right + 1):
 
                 if j == i:
                     continue
 
-                if highs.iloc[j] >= current_high:
+                if highs[j] >= current_high:
                     is_high = False
                     break
 
@@ -40,17 +43,20 @@ class SwingDetector:
                     )
                 )
 
+            # -------------------------
             # Swing Low
-            current_low = lows.iloc[i]
+            # -------------------------
+
+            current_low = lows[i]
 
             is_low = True
 
-            for j in range(i-self.left, i+self.right+1):
+            for j in range(i - self.left, i + self.right + 1):
 
                 if j == i:
                     continue
 
-                if lows.iloc[j] <= current_low:
+                if lows[j] <= current_low:
                     is_low = False
                     break
 
@@ -64,4 +70,41 @@ class SwingDetector:
                     )
                 )
 
-        return swings
+        # --------------------------------
+        # Sort by candle index
+        # --------------------------------
+
+        swings.sort(key=lambda s: s.index)
+
+        # --------------------------------
+        # Remove consecutive duplicate highs/lows
+        # Keep only the strongest one
+        # --------------------------------
+
+        filtered = []
+
+        for swing in swings:
+
+            if not filtered:
+
+                filtered.append(swing)
+                continue
+
+            last = filtered[-1]
+
+            if last.swing_type != swing.swing_type:
+
+                filtered.append(swing)
+                continue
+
+            if swing.swing_type == "HIGH":
+
+                if swing.price > last.price:
+                    filtered[-1] = swing
+
+            else:
+
+                if swing.price < last.price:
+                    filtered[-1] = swing
+
+        return filtered

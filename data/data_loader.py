@@ -5,7 +5,10 @@ import pandas as pd
 class DataLoader:
 
     def __init__(self):
-        self.exchange = ccxt.binance()
+        self.exchange = ccxt.binance({
+    "enableRateLimit": True,
+    "timeout": 30000
+})
 
     def load_data(self, symbol="BTC/USDT", timeframe="15m", limit=100):
 
