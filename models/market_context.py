@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 
 @dataclass
@@ -41,11 +41,11 @@ class MarketContext:
     # EXTERNAL STRUCTURE
     # ==========================================================
 
-    external_high = None
-    external_low = None
+    external_high: Optional[float] = None
+    external_low: Optional[float] = None
 
-    external_high_index = None
-    external_low_index = None
+    external_high_index: Optional[int] = None
+    external_low_index: Optional[int] = None
 
     # ==========================================================
     # INTERNAL STRUCTURE

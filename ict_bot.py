@@ -31,14 +31,16 @@ class ICTBot:
         print("===== MARKET STRUCTURE =====")
         print()
 
-        for swing in context.swings:
+        for event in context.structure:
 
             flag = ""
 
-            if swing.bos:
+            if event.bos:
                 flag = " <-- BOS"
+            elif event.choch:
+                flag = " <-- CHOCH"
 
-            print(f"{swing}{flag}")
+            print(f"{event}{flag}")
 
         print()
         print("===== BOS EVENTS =====")
@@ -46,3 +48,10 @@ class ICTBot:
 
         for bos in context.bos:
             print(bos)
+
+        print()
+        print("===== CHOCH EVENTS =====")
+        print()
+
+        for choch in context.choch:
+            print(choch)
