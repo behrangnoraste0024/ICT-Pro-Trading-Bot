@@ -1,58 +1,117 @@
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
 class MarketContext:
+    """
+    Shared context between all ICT engines.
 
-    # -----------------------------
-    # Raw Data
-    # -----------------------------
+    Every engine reads from and writes to this object.
+    It is the single source of truth for the entire system.
+    """
 
-    candles = None
+    # ==========================================================
+    # RAW DATA
+    # ==========================================================
+
+    candles: Any = None
+
+    # ==========================================================
+    # SWINGS
+    # ==========================================================
 
     swings: list = field(default_factory=list)
 
-    # -----------------------------
-    # Trend
-    # -----------------------------
+    # ==========================================================
+    # MARKET STRUCTURE
+    # ==========================================================
+
+    structure: list = field(default_factory=list)
+
+    # ==========================================================
+    # TREND
+    # ==========================================================
 
     trend: str = "UNKNOWN"
 
-    # -----------------------------
-    # External Structure
-    # -----------------------------
+    previous_trend: str = "UNKNOWN"
 
-    external_high: float | None = None
-    external_low: float | None = None
+    # ==========================================================
+    # EXTERNAL STRUCTURE
+    # ==========================================================
 
-    # -----------------------------
-    # Internal Structure
-    # -----------------------------
+    external_high = None
+    external_low = None
+
+    external_high_index = None
+    external_low_index = None
+
+    # ==========================================================
+    # INTERNAL STRUCTURE
+    # ==========================================================
 
     internal_highs: list = field(default_factory=list)
     internal_lows: list = field(default_factory=list)
 
-    # -----------------------------
-    # Smart Money Events
-    # -----------------------------
+    # ==========================================================
+    # BOS / CHOCH
+    # ==========================================================
 
     bos: list = field(default_factory=list)
+
     choch: list = field(default_factory=list)
+
+    # ==========================================================
+    # LIQUIDITY
+    # ==========================================================
 
     liquidity: list = field(default_factory=list)
 
+    liquidity_sweeps: list = field(default_factory=list)
+
+    # ==========================================================
+    # FAIR VALUE GAPS
+    # ==========================================================
+
     fvgs: list = field(default_factory=list)
+
+    # ==========================================================
+    # ORDER BLOCKS
+    # ==========================================================
 
     order_blocks: list = field(default_factory=list)
 
-    # -----------------------------
-    # Future Modules
-    # -----------------------------
+    # ==========================================================
+    # PREMIUM / DISCOUNT
+    # ==========================================================
 
-    premium_discount = None
+    premium = None
+
+    discount = None
+
+    equilibrium = None
+
+    # ==========================================================
+    # OTE
+    # ==========================================================
 
     ote = None
 
+    # ==========================================================
+    # ENTRY
+    # ==========================================================
+
     entry = None
 
-    risk = None
+    stop_loss = None
+
+    take_profit = None
+
+    risk_reward = None
+
+    # ==========================================================
+    # DEBUG
+    # ==========================================================
+
+    debug: dict = field(default_factory=dict)
