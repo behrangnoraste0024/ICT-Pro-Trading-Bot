@@ -1,5 +1,6 @@
 from models.market_context import MarketContext
 from core.swing import SwingDetector
+from engine.fvg_engine import FVGEngine
 from engine.liquidity_engine import LiquidityEngine
 from engine.structure_engine_v2 import StructureEngineV2
 
@@ -11,6 +12,7 @@ class ICTEngine:
         self.swing = SwingDetector()
         self.structure_engine = StructureEngineV2()
         self.liquidity_engine = LiquidityEngine()
+        self.fvg_engine = FVGEngine()
 
     def analyze(self, df):
 
@@ -22,5 +24,6 @@ class ICTEngine:
 
         context = self.structure_engine.build(context)
         context = self.liquidity_engine.detect(context)
+        context = self.fvg_engine.detect(context)
 
         return context

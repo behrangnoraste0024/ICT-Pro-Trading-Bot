@@ -62,3 +62,10 @@ class ICTBot:
 
         for sweep in context.liquidity_sweeps:
             print(sweep)
+
+        print()
+        print("===== FAIR VALUE GAPS =====")
+        print()
+
+        for fvg in context.fvgs:
+            print(fvg)
