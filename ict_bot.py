@@ -55,3 +55,10 @@ class ICTBot:
 
         for choch in context.choch:
             print(choch)
+
+        print()
+        print("===== LIQUIDITY SWEEPS =====")
+        print()
+
+        for sweep in context.liquidity_sweeps:
+            print(sweep)
