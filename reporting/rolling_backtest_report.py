@@ -91,6 +91,9 @@ def _format_diagnostics(diagnostics) -> list[str]:
     dealing_range_diagnostics = getattr(diagnostics, "dealing_range_diagnostics", None)
     if dealing_range_diagnostics is not None:
         lines.extend(_format_dealing_range_diagnostics(dealing_range_diagnostics))
+    range_candidate_diagnostics = getattr(diagnostics, "range_candidate_diagnostics", None)
+    if range_candidate_diagnostics is not None:
+        lines.extend(_format_range_candidate_diagnostics(range_candidate_diagnostics))
     return lines
 
 
@@ -213,3 +216,73 @@ def _format_matrix(counts: dict[str, int]) -> list[str]:
         return ["None"]
     items = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     return [f"{key:<30}: {count}" for key, count in items]
+
+
+def _format_range_candidate_diagnostics(diagnostics) -> list[str]:
+    best_aligned = diagnostics.best_candidate_by_aligned_zone()
+    best_in_ote = diagnostics.best_candidate_by_in_ote()
+    best_wrong_zone_fix = diagnostics.best_candidate_by_wrong_zone_fix()
+    lines = [
+        "",
+        "===== RANGE CANDIDATE DIAGNOSTICS =====",
+        f"Windows Analyzed              : {diagnostics.windows_analyzed}",
+        "",
+        f"Best By Aligned Zone          : {_candidate_name_or_none(best_aligned)}",
+        f"Best By In OTE                : {_candidate_name_or_none(best_in_ote)}",
+        f"Best By Wrong Zone Fix        : {_candidate_name_or_none(best_wrong_zone_fix)}",
+    ]
+    for candidate_name in [
+        "CURRENT_EXTERNAL_RANGE",
+        "RECENT_50_CANDLE_RANGE",
+        "RECENT_100_CANDLE_RANGE",
+        "RECENT_200_CANDLE_RANGE",
+        "RECENT_SWING_RANGE",
+    ]:
+        stats = diagnostics.candidates.get(candidate_name)
+        if stats is None:
+            continue
+        lines.extend(_format_range_candidate_stats(stats))
+    return lines
+
+
+def _candidate_name_or_none(stats) -> str:
+    if stats is None:
+        return "None"
+    return stats.candidate_name
+
+
+def _format_range_candidate_stats(stats) -> list[str]:
+    return [
+        "",
+        f"--- {stats.candidate_name} ---",
+        f"Available                     : {stats.available_count}",
+        f"Missing                       : {stats.missing_count}",
+        f"Invalid                       : {stats.invalid_count}",
+        f"Premium                       : {stats.premium_count}",
+        f"Discount                      : {stats.discount_count}",
+        f"Equilibrium                   : {stats.equilibrium_count}",
+        f"Unknown Zone                  : {stats.unknown_zone_count}",
+        f"In OTE                        : {stats.in_ote_count}",
+        f"Not In OTE                    : {stats.not_in_ote_count}",
+        f"OTE Unavailable               : {stats.ote_unavailable_count}",
+        f"Near OTE <= 0.1%              : {stats.near_ote_0_1_pct_count}",
+        f"Near OTE <= 0.25%             : {stats.near_ote_0_25_pct_count}",
+        f"Near OTE <= 0.5%              : {stats.near_ote_0_5_pct_count}",
+        f"Near OTE <= 1.0%              : {stats.near_ote_1_0_pct_count}",
+        f"Average Distance To OTE       : {_format_optional_float(stats.average_distance_to_ote)}",
+        f"Median Distance To OTE        : {_format_optional_float(stats.median_distance_to_ote)}",
+        f"Max Distance To OTE           : {_format_optional_float(stats.max_distance_to_ote)}",
+        f"Average Range Size            : {_format_optional_float(stats.average_range_size)}",
+        f"Median Range Size             : {_format_optional_float(stats.median_range_size)}",
+        f"Average Range Size %          : {_format_optional_float(stats.average_range_size_percent)}",
+        f"Median Range Size %           : {_format_optional_float(stats.median_range_size_percent)}",
+        f"Bearish OTE + Premium         : {stats.bearish_ote_premium_count}",
+        f"Bearish OTE + Discount        : {stats.bearish_ote_discount_count}",
+        f"Bullish OTE + Discount        : {stats.bullish_ote_discount_count}",
+        f"Bullish OTE + Premium         : {stats.bullish_ote_premium_count}",
+        f"Aligned Zone Count            : {stats.candidate_aligned_zone_count}",
+        f"Wrong Zone Count              : {stats.candidate_wrong_zone_count}",
+        f"Fix Wrong Zone Count          : {stats.candidate_fix_wrong_zone_count}",
+        f"Fix Not In OTE Count          : {stats.candidate_fix_not_in_ote_count}",
+        f"Fix Near OTE <= 0.5% Count    : {stats.candidate_fix_near_ote_0_5_count}",
+    ]

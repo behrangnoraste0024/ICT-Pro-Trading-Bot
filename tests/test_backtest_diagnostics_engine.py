@@ -188,3 +188,43 @@ def test_missing_dealing_range_fields_do_not_break_diagnostics() -> None:
     assert diagnostics.setup_blockers == {"A": 1}
     assert diagnostics.dealing_range_diagnostics is not None
     assert diagnostics.dealing_range_diagnostics.range_missing_count == 1
+
+
+def test_backtest_diagnostics_include_range_candidate_diagnostics_after_summary() -> None:
+    diagnostics = BacktestDiagnosticsEngine().summarize_contexts([_context()])
+
+    assert diagnostics.range_candidate_diagnostics is not None
+    assert diagnostics.range_candidate_diagnostics.windows_analyzed == 1
+
+
+def test_blocker_counts_remain_unchanged_with_range_candidate_diagnostics() -> None:
+    context = _context()
+    context.setup_blockers = ["A", "B"]
+
+    diagnostics = BacktestDiagnosticsEngine().summarize_contexts([context])
+
+    assert diagnostics.setup_blockers == {"A": 1, "B": 1}
+    assert diagnostics.range_candidate_diagnostics is not None
+
+
+def test_ote_diagnostics_remain_present_with_range_candidate_diagnostics() -> None:
+    diagnostics = BacktestDiagnosticsEngine().summarize_contexts([_context()])
+
+    assert diagnostics.ote_diagnostics is not None
+    assert diagnostics.range_candidate_diagnostics is not None
+
+
+def test_dealing_range_diagnostics_remain_present_with_range_candidate_diagnostics() -> None:
+    diagnostics = BacktestDiagnosticsEngine().summarize_contexts([_context()])
+
+    assert diagnostics.dealing_range_diagnostics is not None
+    assert diagnostics.range_candidate_diagnostics is not None
+
+
+def test_missing_candidate_data_does_not_break_diagnostics() -> None:
+    context = SimpleNamespace(setup_blockers=["A"], setup_status="INVALID")
+
+    diagnostics = BacktestDiagnosticsEngine().summarize_contexts([context])
+
+    assert diagnostics.range_candidate_diagnostics is not None
+    assert diagnostics.range_candidate_diagnostics.candidates["CURRENT_EXTERNAL_RANGE"].missing_count == 1

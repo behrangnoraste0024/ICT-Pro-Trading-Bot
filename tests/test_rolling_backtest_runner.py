@@ -6,6 +6,7 @@ from pathlib import Path
 from models.backtest_diagnostics import BacktestDiagnostics
 from models.dealing_range_diagnostics import DealingRangeDiagnostics
 from models.ote_diagnostics import OTEDiagnostics
+from models.range_candidate_diagnostics import RangeCandidateDiagnostics, RangeCandidateStats
 from models.rolling_backtest_result import RollingBacktestResult
 from reporting.rolling_backtest_report import format_rolling_backtest_report
 from scripts.run_rolling_backtest import main
@@ -35,6 +36,19 @@ def _result() -> RollingBacktestResult:
 
 
 def _result_with_diagnostics() -> RollingBacktestResult:
+    candidate_stats = {
+        name: RangeCandidateStats(candidate_name=name)
+        for name in [
+            "CURRENT_EXTERNAL_RANGE",
+            "RECENT_50_CANDLE_RANGE",
+            "RECENT_100_CANDLE_RANGE",
+            "RECENT_200_CANDLE_RANGE",
+            "RECENT_SWING_RANGE",
+        ]
+    }
+    candidate_stats["RECENT_50_CANDLE_RANGE"].candidate_aligned_zone_count = 2
+    candidate_stats["RECENT_50_CANDLE_RANGE"].in_ote_count = 1
+    candidate_stats["RECENT_50_CANDLE_RANGE"].candidate_fix_wrong_zone_count = 3
     result = _result()
     result.diagnostics = BacktestDiagnostics(
         setup_blockers={"A": 1, "B": 3},
@@ -97,6 +111,7 @@ def _result_with_diagnostics() -> RollingBacktestResult:
             max_external_high_age=20,
             max_external_low_age=15,
         ),
+        range_candidate_diagnostics=RangeCandidateDiagnostics(windows_analyzed=2, candidates=candidate_stats),
         windows_analyzed=2,
     )
     return result
@@ -112,6 +127,18 @@ def _result_with_empty_range_age() -> RollingBacktestResult:
     result = _result()
     result.diagnostics = BacktestDiagnostics(
         dealing_range_diagnostics=DealingRangeDiagnostics(windows_analyzed=1),
+        windows_analyzed=1,
+    )
+    return result
+
+
+def _result_with_empty_candidate_metrics() -> RollingBacktestResult:
+    result = _result()
+    result.diagnostics = BacktestDiagnostics(
+        range_candidate_diagnostics=RangeCandidateDiagnostics(
+            windows_analyzed=1,
+            candidates={"CURRENT_EXTERNAL_RANGE": RangeCandidateStats(candidate_name="CURRENT_EXTERNAL_RANGE")},
+        ),
         windows_analyzed=1,
     )
     return result
@@ -237,6 +264,48 @@ def test_none_range_age_values_render_as_none() -> None:
 
     assert "Average External High Age     : None" in report
     assert "Max External Low Age          : None" in report
+
+
+def test_report_includes_range_candidate_diagnostics() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "===== RANGE CANDIDATE DIAGNOSTICS =====" in report
+
+
+def test_report_includes_best_by_aligned_zone() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "Best By Aligned Zone" in report
+
+
+def test_report_includes_recent_50_candle_range() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "--- RECENT_50_CANDLE_RANGE ---" in report
+
+
+def test_report_includes_recent_100_candle_range() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "--- RECENT_100_CANDLE_RANGE ---" in report
+
+
+def test_report_includes_recent_swing_range() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "--- RECENT_SWING_RANGE ---" in report
+
+
+def test_report_includes_fix_wrong_zone_count() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "Fix Wrong Zone Count" in report
+
+
+def test_none_candidate_metrics_render_as_none() -> None:
+    report = format_rolling_backtest_report(_result_with_empty_candidate_metrics(), FIXTURE_PATH, 50)
+
+    assert "Average Distance To OTE       : None" in report
 
 
 def test_runner_loads_fixture_and_returns_success(capsys) -> None:

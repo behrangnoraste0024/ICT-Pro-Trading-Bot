@@ -4,6 +4,7 @@ from typing import Any
 
 from engine.backtest.dealing_range_diagnostics_engine import DealingRangeDiagnosticsEngine
 from engine.backtest.ote_diagnostics_engine import OTEDiagnosticsEngine
+from engine.backtest.range_candidate_diagnostics_engine import RangeCandidateDiagnosticsEngine
 from models.backtest_diagnostics import BacktestDiagnostics
 from models.market_context import MarketContext
 
@@ -12,6 +13,7 @@ class BacktestDiagnosticsEngine:
     def __init__(self):
         self.ote_diagnostics_engine = OTEDiagnosticsEngine()
         self.dealing_range_diagnostics_engine = DealingRangeDiagnosticsEngine()
+        self.range_candidate_diagnostics_engine = RangeCandidateDiagnosticsEngine()
 
     def collect_from_context(self, context: MarketContext) -> BacktestDiagnostics:
         diagnostics = BacktestDiagnostics(windows_analyzed=1)
@@ -29,6 +31,7 @@ class BacktestDiagnosticsEngine:
         self._count_status(diagnostics.paper_trade_status_counts, self._get_status(context, "paper_trade_status"))
         diagnostics.ote_diagnostics = self.ote_diagnostics_engine.collect_from_context(context)
         diagnostics.dealing_range_diagnostics = self.dealing_range_diagnostics_engine.collect_from_context(context)
+        diagnostics.range_candidate_diagnostics = self.range_candidate_diagnostics_engine.collect_from_context(context)
 
         return diagnostics
 
@@ -50,6 +53,7 @@ class BacktestDiagnosticsEngine:
 
         summary.ote_diagnostics = self.ote_diagnostics_engine.summarize_contexts(contexts)
         summary.dealing_range_diagnostics = self.dealing_range_diagnostics_engine.summarize_contexts(contexts)
+        summary.range_candidate_diagnostics = self.range_candidate_diagnostics_engine.summarize_contexts(contexts)
         return summary
 
     def _get_blockers(self, context: MarketContext, field_name: str) -> list[str]:
