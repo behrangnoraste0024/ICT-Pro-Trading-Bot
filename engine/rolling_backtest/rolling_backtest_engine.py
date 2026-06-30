@@ -7,6 +7,7 @@ import pandas as pd
 
 from engine.backtest.backtest_diagnostics_engine import BacktestDiagnosticsEngine
 from engine.backtest.backtest_engine import BacktestEngine
+from engine.backtest.sl_tp_outcome_diagnostics_engine import SLTPOutcomeDiagnosticsEngine
 from engine.backtest.trade_outcome_diagnostics_engine import TradeOutcomeDiagnosticsEngine
 from engine.ict_engine import ICTEngine
 from engine.rolling_backtest.trade_state_manager import TradeStateManager
@@ -42,6 +43,7 @@ class RollingBacktestEngine:
         self.backtest_engine = BacktestEngine()
         self.diagnostics_engine = BacktestDiagnosticsEngine()
         self.trade_outcome_diagnostics_engine = TradeOutcomeDiagnosticsEngine()
+        self.sl_tp_outcome_diagnostics_engine = SLTPOutcomeDiagnosticsEngine()
         self.trade_state_manager = TradeStateManager()
 
     def run(self, candles: pd.DataFrame) -> RollingBacktestResult:
@@ -289,6 +291,7 @@ class RollingBacktestEngine:
         diagnostics = self.diagnostics_engine.summarize_contexts(diagnostics_source)
         fallback_count = self._range_mode_fallback_count(diagnostics_source)
         trade_outcomes = self.trade_outcome_diagnostics_engine.summarize_contexts(contexts)
+        sl_tp_outcomes = self.sl_tp_outcome_diagnostics_engine.summarize_trade_contexts(contexts)
         return RollingBacktestResult(
             total_windows=total_windows,
             processed_windows=processed_windows,
@@ -314,6 +317,7 @@ class RollingBacktestEngine:
             dealing_range_mode=self.config.dealing_range_mode,
             range_mode_fallback_count=fallback_count,
             trade_outcome_diagnostics=trade_outcomes,
+            sl_tp_outcome_diagnostics=sl_tp_outcomes,
             trade_outcome_contexts=contexts,
         )
 

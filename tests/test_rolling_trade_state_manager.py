@@ -64,6 +64,7 @@ def test_final_context_preserves_entry_snapshot_metadata_after_close() -> None:
     context.active_setup = SimpleNamespace(matched_pois=["ORDER_BLOCK:BULLISH:10"])
     context.trade_quality_score = 90
     context.custom_diagnostic_field = "ENTRY_CONTEXT"
+    context.candles = pd.DataFrame([{"open": 100, "high": 101, "low": 99, "close": 100}])
 
     state = manager.open_from_context(context)
     state = manager.update_with_candle(state, _candle(high=113, low=100), candle_index=11)
@@ -80,6 +81,7 @@ def test_final_context_preserves_entry_snapshot_metadata_after_close() -> None:
     assert final_context.paper_trade_status == "PAPER_CLOSED_TP"
     assert final_context.paper_exit_price == 112.0
     assert final_context.paper_pnl == 12.0
+    assert len(final_context.candles) == 2
 
 
 def test_bullish_sl_closes() -> None:

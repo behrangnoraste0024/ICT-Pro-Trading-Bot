@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from models.backtest_diagnostics import BacktestDiagnostics
+from models.sl_tp_outcome_diagnostics import SLTPOutcomeDiagnostics
 from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics
 
 
@@ -32,6 +33,7 @@ class RollingBacktestResult:
     dealing_range_mode: str = "current_external"
     range_mode_fallback_count: int = 0
     trade_outcome_diagnostics: TradeOutcomeDiagnostics | None = None
+    sl_tp_outcome_diagnostics: SLTPOutcomeDiagnostics | None = None
     trade_outcome_contexts: list[Any] = field(default_factory=list)
     event_type: str = "ROLLING_BACKTEST_RESULT"
 

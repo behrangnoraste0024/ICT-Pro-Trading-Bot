@@ -19,6 +19,7 @@ class RollingTradeState:
     reasons: list[str] = field(default_factory=list)
     entry_context_metadata: dict[str, Any] = field(default_factory=dict)
     entry_context_snapshot: Any | None = None
+    observed_candles: list[Any] = field(default_factory=list)
     event_type: str = "ROLLING_TRADE_STATE"
 
     def __str__(self) -> str:

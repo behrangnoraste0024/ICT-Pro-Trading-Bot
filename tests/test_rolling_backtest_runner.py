@@ -8,6 +8,7 @@ from models.dealing_range_diagnostics import DealingRangeDiagnostics
 from models.ote_diagnostics import OTEDiagnostics
 from models.range_candidate_diagnostics import RangeCandidateDiagnostics, RangeCandidateStats
 from models.rolling_backtest_result import RollingBacktestResult
+from models.sl_tp_outcome_diagnostics import SLTPOutcomeDiagnostics, SLTPOutcomeRecord
 from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics, TradeOutcomeRecord
 from reporting.rolling_backtest_report import format_rolling_backtest_report
 from scripts.run_rolling_backtest import main
@@ -148,12 +149,44 @@ def _result_with_trade_outcomes() -> RollingBacktestResult:
         average_pnl=20,
         win_rate=100,
     )
+    result.sl_tp_outcome_diagnostics = SLTPOutcomeDiagnostics(
+        records=[
+            SLTPOutcomeRecord(
+                trade_number=1,
+                direction="LONG",
+                result="WIN",
+                bars_held=3,
+                mae_r=0.2,
+                mfe_r=2,
+                tp_progress=1,
+                sl_progress=0.2,
+            )
+        ],
+        total_trades=1,
+        closed_trades=1,
+        wins=1,
+        average_bars_held=3,
+        average_mae_r=0.2,
+        average_mfe_r=2,
+        average_tp_progress=1,
+        average_sl_progress=0.2,
+        reached_25_pct_tp_count=1,
+        reached_50_pct_tp_count=1,
+        reached_75_pct_tp_count=1,
+        reached_25_pct_sl_count=0,
+        reached_50_pct_sl_count=0,
+        reached_75_pct_sl_count=0,
+        average_mfe_r_winners=2,
+        average_mae_r_winners=0.2,
+        long_win_count=1,
+    )
     return result
 
 
 def _result_with_empty_trade_outcomes() -> RollingBacktestResult:
     result = _result()
     result.trade_outcome_diagnostics = TradeOutcomeDiagnostics()
+    result.sl_tp_outcome_diagnostics = SLTPOutcomeDiagnostics()
     return result
 
 
@@ -222,6 +255,40 @@ def test_report_includes_trade_outcome_diagnostics() -> None:
     report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
 
     assert "===== TRADE OUTCOME DIAGNOSTICS =====" in report
+
+
+def test_report_includes_sl_tp_outcome_diagnostics() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "===== SL/TP OUTCOME DIAGNOSTICS =====" in report
+
+
+def test_sl_tp_summary_appears_by_default() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "Average MAE R" in report
+    assert "Fast Losses" in report
+
+
+def test_sl_tp_trade_log_is_hidden_by_default() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "#1 | LONG | WIN | bars=3" not in report
+    assert "Hidden. Use --show-trades to display SL/TP trade log rows." in report
+
+
+def test_show_trades_prints_sl_tp_trade_log() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50, show_trades=True)
+
+    assert "SL/TP Trade Log:" in report
+    assert "#1 | LONG | WIN | bars=3" in report
+
+
+def test_no_trades_prints_empty_sl_tp_report() -> None:
+    report = format_rolling_backtest_report(_result_with_empty_trade_outcomes(), FIXTURE_PATH, 50, show_trades=True)
+
+    assert "===== SL/TP OUTCOME DIAGNOSTICS =====" in report
+    assert "SL/TP Trade Log:\nNo trades." in report
 
 
 def test_trade_outcome_summary_appears_by_default() -> None:

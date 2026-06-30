@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import copy
 from copy import deepcopy
 
+import pandas as pd
+
 from engine.backtest.trade_metadata_extractor import apply_trade_metadata_to_context
 from engine.backtest.trade_metadata_extractor import extract_trade_metadata_from_context
 from models.market_context import MarketContext
@@ -45,6 +47,7 @@ class TradeStateManager:
         if not state.is_open:
             return state
 
+        state.observed_candles.append(deepcopy(candle))
         high = float(candle["high"])
         low = float(candle["low"])
 
@@ -82,6 +85,7 @@ class TradeStateManager:
         context.paper_exit_index = state.exit_index
         context.paper_pnl = state.pnl
         context.paper_trade_reasons = list(state.reasons)
+        self._apply_observed_candles(context, state)
         return context
 
     def _resolve_entry_index(self, context: MarketContext, entry_index: int | None) -> int | None:
@@ -145,3 +149,15 @@ class TradeStateManager:
         context = MarketContext()
         apply_trade_metadata_to_context(context, state.entry_context_metadata)
         return context
+
+    def _apply_observed_candles(self, context: MarketContext, state: RollingTradeState) -> None:
+        if not state.observed_candles:
+            return
+
+        base_candles = getattr(context, "candles", None)
+        future_candles = pd.DataFrame([dict(candle) for candle in state.observed_candles])
+        if base_candles is None or len(base_candles) == 0:
+            context.candles = future_candles.reset_index(drop=True)
+            return
+
+        context.candles = pd.concat([base_candles, future_candles], ignore_index=True)

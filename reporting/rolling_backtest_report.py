@@ -51,6 +51,9 @@ def format_rolling_backtest_report(
     trade_outcomes = getattr(result, "trade_outcome_diagnostics", None)
     if trade_outcomes is not None:
         lines.extend(_format_trade_outcome_diagnostics(trade_outcomes, show_trades=show_trades))
+    sl_tp_outcomes = getattr(result, "sl_tp_outcome_diagnostics", None)
+    if sl_tp_outcomes is not None:
+        lines.extend(_format_sl_tp_outcome_diagnostics(sl_tp_outcomes, show_trades=show_trades))
     diagnostics = getattr(result, "diagnostics", None)
     if diagnostics is not None:
         lines.extend(_format_diagnostics(diagnostics))
@@ -105,6 +108,69 @@ def _format_trade_row(trade) -> str:
         f"exit={trade.exit_price} | pnl={trade.pnl} | rr={trade.risk_reward} | "
         f"setup_score={trade.setup_score} | trigger={trade.entry_trigger_type} | "
         f"zone={trade.current_price_zone} | in_ote={trade.in_ote_zone} | poi={trade.matched_poi_count}:{poi_types}"
+    )
+
+
+def _format_sl_tp_outcome_diagnostics(diagnostics, show_trades: bool = False) -> list[str]:
+    lines = [
+        "",
+        "===== SL/TP OUTCOME DIAGNOSTICS =====",
+        f"Total Trades             : {diagnostics.total_trades}",
+        f"Closed Trades            : {diagnostics.closed_trades}",
+        f"Open Trades              : {diagnostics.open_trades}",
+        f"Wins                     : {diagnostics.wins}",
+        f"Losses                   : {diagnostics.losses}",
+        "",
+        f"Average Bars Held        : {_format_optional_float(diagnostics.average_bars_held)}",
+        f"Average MAE R            : {_format_optional_float(diagnostics.average_mae_r)}",
+        f"Average MFE R            : {_format_optional_float(diagnostics.average_mfe_r)}",
+        f"Average TP Progress      : {_format_optional_float(diagnostics.average_tp_progress)}",
+        f"Average SL Progress      : {_format_optional_float(diagnostics.average_sl_progress)}",
+        "",
+        f"Fast Losses              : {diagnostics.fast_loss_count}",
+        f"Almost TP Then Loss      : {diagnostics.almost_tp_then_loss_count}",
+        f"No Follow-through Loss   : {diagnostics.no_follow_through_loss_count}",
+        f"High RR Losses           : {diagnostics.high_rr_loss_count}",
+        "",
+        f"Reached 25% TP           : {diagnostics.reached_25_pct_tp_count}",
+        f"Reached 50% TP           : {diagnostics.reached_50_pct_tp_count}",
+        f"Reached 75% TP           : {diagnostics.reached_75_pct_tp_count}",
+        f"Reached 25% SL           : {diagnostics.reached_25_pct_sl_count}",
+        f"Reached 50% SL           : {diagnostics.reached_50_pct_sl_count}",
+        f"Reached 75% SL           : {diagnostics.reached_75_pct_sl_count}",
+        "",
+        "Winners:",
+        f"Average MFE R            : {_format_optional_float(diagnostics.average_mfe_r_winners)}",
+        f"Average MAE R            : {_format_optional_float(diagnostics.average_mae_r_winners)}",
+        "",
+        "Losers:",
+        f"Average MFE R            : {_format_optional_float(diagnostics.average_mfe_r_losers)}",
+        f"Average MAE R            : {_format_optional_float(diagnostics.average_mae_r_losers)}",
+        "",
+        "Direction Outcomes:",
+        f"LONG Wins                : {diagnostics.long_win_count}",
+        f"LONG Losses              : {diagnostics.long_loss_count}",
+        f"SHORT Wins               : {diagnostics.short_win_count}",
+        f"SHORT Losses             : {diagnostics.short_loss_count}",
+    ]
+
+    lines.extend(["", "SL/TP Trade Log:"])
+    if not diagnostics.records:
+        lines.append("No trades.")
+    elif not show_trades:
+        lines.append("Hidden. Use --show-trades to display SL/TP trade log rows.")
+    else:
+        for record in diagnostics.records:
+            lines.append(_format_sl_tp_trade_row(record))
+    return lines
+
+
+def _format_sl_tp_trade_row(record) -> str:
+    return (
+        f"#{record.trade_number} | {record.direction} | {record.result} | "
+        f"bars={record.bars_held} | mae_r={record.mae_r} | mfe_r={record.mfe_r} | "
+        f"tp_progress={record.tp_progress} | sl_progress={record.sl_progress} | "
+        f"fast_loss={record.fast_loss} | high_rr_loss={record.high_rr_loss}"
     )
 
 
