@@ -69,3 +69,10 @@ class ICTBot:
 
         for fvg in context.fvgs:
             print(fvg)
+
+        print()
+        print("===== ORDER BLOCKS =====")
+        print()
+
+        for order_block in context.order_blocks:
+            print(order_block)

@@ -4,6 +4,7 @@ import pandas as pd
 
 from core.swing import SwingDetector
 from engine.fvg.fvg_engine import FVGEngine
+from engine.order_block.order_block_engine import OrderBlockEngine
 from engine.liquidity.liquidity_engine import LiquidityEngine
 from engine.structure.structure_engine_v2 import StructureEngineV2
 from models.market_context import MarketContext
@@ -22,6 +23,7 @@ def run_pipeline(df: pd.DataFrame) -> MarketContext:
     context = StructureEngineV2().build(context)
     context = LiquidityEngine().detect(context)
     context = FVGEngine().detect(context)
+    context = OrderBlockEngine().detect(context)
     return context
 
 
@@ -51,6 +53,9 @@ def test_full_pipeline_regression_baseline() -> None:
     assert sum(1 for fvg in context.fvgs if fvg.active) == 12
     assert sum(1 for fvg in context.fvgs if fvg.mitigation_type == "PARTIAL") == 8
     assert sum(1 for fvg in context.fvgs if fvg.mitigation_type == "FULL") == 12
+    assert len(context.order_blocks) == 3
+    assert sum(1 for block in context.order_blocks if block.direction == "BULLISH") == 2
+    assert sum(1 for block in context.order_blocks if block.direction == "BEARISH") == 1
     assert context.trend == "DOWNTREND"
     assert context.external_high == 60780.57
     assert context.external_low == 59745.46
