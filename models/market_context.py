@@ -116,6 +116,20 @@ class MarketContext:
 
     ote = None
 
+    ote_direction: str = "NONE"
+
+    ote_lower_bound: Optional[float] = None
+
+    ote_upper_bound: Optional[float] = None
+
+    ote_level_62: Optional[float] = None
+
+    ote_level_705: Optional[float] = None
+
+    ote_level_79: Optional[float] = None
+
+    in_ote_zone: bool = False
+
     # ==========================================================
     # ENTRY
     # ==========================================================

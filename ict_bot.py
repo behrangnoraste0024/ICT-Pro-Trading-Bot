@@ -93,3 +93,19 @@ class ICTBot:
         print(f"Equilibrium        : {context.equilibrium}")
         print(f"Current Price      : {context.current_price}")
         print(f"Current Zone       : {context.current_price_zone}")
+
+        print()
+        print("===== OTE =====")
+        print()
+
+        if context.ote:
+            print(f"OTE Direction : {context.ote_direction}")
+            print(f"OTE Lower     : {context.ote_lower_bound}")
+            print(f"OTE Upper     : {context.ote_upper_bound}")
+            print(f"OTE 0.62      : {context.ote_level_62}")
+            print(f"OTE 0.705     : {context.ote_level_705}")
+            print(f"OTE 0.79      : {context.ote_level_79}")
+            print(f"In OTE Zone  : {context.in_ote_zone}")
+        else:
+            print("OTE Direction : NONE")
+            print("In OTE Zone  : False")

@@ -6,6 +6,7 @@ from core.swing import SwingDetector
 from engine.breaker.breaker_block_engine import BreakerBlockEngine
 from engine.fvg.fvg_engine import FVGEngine
 from engine.premium_discount.premium_discount_engine import PremiumDiscountEngine
+from engine.ote.ote_engine import OTEEngine
 from engine.order_block.order_block_engine import OrderBlockEngine
 from engine.liquidity.liquidity_engine import LiquidityEngine
 from engine.structure.structure_engine_v2 import StructureEngineV2
@@ -28,6 +29,7 @@ def run_pipeline(df: pd.DataFrame) -> MarketContext:
     context = OrderBlockEngine().detect(context)
     context = BreakerBlockEngine().detect(context)
     context = PremiumDiscountEngine().detect(context)
+    context = OTEEngine().detect(context)
     return context
 
 
@@ -71,6 +73,13 @@ def test_full_pipeline_regression_baseline() -> None:
     assert context.current_price_zone == "DISCOUNT"
     assert context.premium_zone == {"lower_bound": 60263.015, "upper_bound": 60780.57}
     assert context.discount_zone == {"lower_bound": 59745.46, "upper_bound": 60263.015}
+    assert context.ote_direction == "BEARISH"
+    assert context.ote_lower_bound == 60387.2282
+    assert context.ote_upper_bound == 60563.1969
+    assert context.ote_level_62 == 60387.2282
+    assert context.ote_level_705 == 60475.21255
+    assert context.ote_level_79 == 60563.1969
+    assert context.in_ote_zone is False
     assert context.trend == "DOWNTREND"
     assert context.external_high == 60780.57
     assert context.external_low == 59745.46
