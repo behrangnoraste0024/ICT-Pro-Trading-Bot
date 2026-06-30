@@ -134,3 +134,20 @@ class ICTBot:
 
         if context.entry_trigger:
             print(context.entry_trigger)
+
+        print()
+        print("===== TRADE PLAN =====")
+        print()
+
+        print(f"Trade Plan Status : {context.trade_plan_status}")
+        print(f"Trade Direction   : {context.trade_direction}")
+        print(f"Entry Price       : {context.planned_entry_price}")
+        print(f"Stop Loss         : {context.planned_stop_loss}")
+        print(f"Take Profit       : {context.planned_take_profit}")
+        print(f"Risk              : {context.planned_risk}")
+        print(f"Reward            : {context.planned_reward}")
+        print(f"Risk Reward       : {context.planned_risk_reward}")
+        print(f"Blockers          : {context.trade_plan_blockers}")
+
+        if context.trade_plan:
+            print(context.trade_plan)

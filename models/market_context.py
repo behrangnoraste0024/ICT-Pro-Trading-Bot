@@ -164,6 +164,30 @@ class MarketContext:
 
     entry = None
 
+    # ==========================================================
+    # TRADE PLAN
+    # ==========================================================
+
+    trade_plan: Any = None
+
+    trade_plan_status: str = "NO_TRADE"
+
+    trade_direction: str = "NONE"
+
+    planned_entry_price: Optional[float] = None
+
+    planned_stop_loss: Optional[float] = None
+
+    planned_take_profit: Optional[float] = None
+
+    planned_risk: Optional[float] = None
+
+    planned_reward: Optional[float] = None
+
+    planned_risk_reward: Optional[float] = None
+
+    trade_plan_blockers: list = field(default_factory=list)
+
     stop_loss = None
 
     take_profit = None

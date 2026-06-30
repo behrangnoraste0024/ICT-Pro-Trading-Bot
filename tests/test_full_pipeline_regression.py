@@ -9,6 +9,7 @@ from engine.premium_discount.premium_discount_engine import PremiumDiscountEngin
 from engine.ote.ote_engine import OTEEngine
 from engine.setup.setup_engine import SetupEngine
 from engine.entry.entry_trigger_engine import EntryTriggerEngine
+from engine.trade_plan.trade_plan_engine import TradePlanEngine
 from engine.order_block.order_block_engine import OrderBlockEngine
 from engine.liquidity.liquidity_engine import LiquidityEngine
 from engine.structure.structure_engine_v2 import StructureEngineV2
@@ -34,6 +35,7 @@ def run_pipeline(df: pd.DataFrame) -> MarketContext:
     context = OTEEngine().detect(context)
     context = SetupEngine().detect(context)
     context = EntryTriggerEngine().detect(context)
+    context = TradePlanEngine().detect(context)
     return context
 
 
@@ -94,6 +96,15 @@ def test_full_pipeline_regression_baseline() -> None:
     assert context.entry_trigger_type == "NONE"
     assert context.entry_confirmed is False
     assert context.entry_blockers == ["NO_VALID_SETUP"]
+    assert context.trade_plan_status == "NO_TRADE"
+    assert context.trade_direction == "NONE"
+    assert context.planned_entry_price is None
+    assert context.planned_stop_loss is None
+    assert context.planned_take_profit is None
+    assert context.planned_risk is None
+    assert context.planned_reward is None
+    assert context.planned_risk_reward is None
+    assert context.trade_plan_blockers == ["NO_CONFIRMED_ENTRY"]
     assert context.trend == "DOWNTREND"
     assert context.external_high == 60780.57
     assert context.external_low == 59745.46
