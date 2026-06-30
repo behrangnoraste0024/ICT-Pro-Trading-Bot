@@ -314,6 +314,7 @@ class RollingBacktestEngine:
             dealing_range_mode=self.config.dealing_range_mode,
             range_mode_fallback_count=fallback_count,
             trade_outcome_diagnostics=trade_outcomes,
+            trade_outcome_contexts=contexts,
         )
 
     def _range_mode_fallback_count(self, contexts: list[MarketContext]) -> int:

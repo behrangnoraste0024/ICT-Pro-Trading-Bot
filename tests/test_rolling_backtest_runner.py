@@ -471,6 +471,50 @@ def test_runner_show_trades_prints_trade_log(capsys) -> None:
     assert "#1 |" in captured.out
 
 
+def test_runner_default_output_does_not_include_first_trade_metadata_debug(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--dealing-range-mode",
+            "recent_50",
+            "--show-trades",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "===== FIRST TRADE METADATA DEBUG =====" not in captured.out
+
+
+def test_runner_debug_first_trade_metadata_prints_debug_section(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--dealing-range-mode",
+            "recent_50",
+            "--show-trades",
+            "--debug-first-trade-metadata",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "===== FIRST TRADE METADATA DEBUG =====" in captured.out
+    assert "Top Level Candidate Fields:" in captured.out
+    assert "Nested Candidate Objects:" in captured.out
+    assert "Extracted Metadata:" in captured.out
+
+
 def test_runner_default_report_includes_current_external_mode(capsys) -> None:
     return_code = main(["--fixture", FIXTURE_PATH, "--min-candles", "50", "--progress-every", "0"])
 

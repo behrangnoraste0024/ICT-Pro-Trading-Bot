@@ -9,6 +9,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from data.historical_data_utils import load_candles_json
+from engine.backtest.trade_outcome_diagnostics_engine import debug_extract_available_trade_metadata
 from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngine
 from reporting.rolling_backtest_report import format_rolling_backtest_report
 
@@ -24,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-windows", type=int, default=None)
     parser.add_argument("--dealing-range-mode", choices=["current_external", "recent_50"], default="current_external")
     parser.add_argument("--show-trades", action="store_true")
+    parser.add_argument("--debug-first-trade-metadata", action="store_true")
     args = parser.parse_args(argv)
 
     if args.min_candles <= 0:
@@ -63,7 +65,38 @@ def main(argv: list[str] | None = None) -> int:
         show_trades=args.show_trades,
     )
     print(report)
+    if args.debug_first_trade_metadata:
+        print(_format_first_trade_metadata_debug(result))
     return 0
+
+
+def _format_first_trade_metadata_debug(result) -> str:
+    contexts = getattr(result, "trade_outcome_contexts", [])
+    if not contexts:
+        return "\n===== FIRST TRADE METADATA DEBUG =====\nNo trade outcome context available."
+
+    debug = debug_extract_available_trade_metadata(contexts[0])
+    lines = ["", "===== FIRST TRADE METADATA DEBUG =====", "Top Level Candidate Fields:"]
+    top_level = debug.get("top_level_candidate_fields", {})
+    if top_level:
+        lines.extend(f"{key}: {value}" for key, value in sorted(top_level.items()))
+    else:
+        lines.append("None")
+
+    lines.append("Nested Candidate Objects:")
+    nested = debug.get("nested_candidate_objects", {})
+    if nested:
+        lines.extend(f"{key}: {value}" for key, value in sorted(nested.items()))
+    else:
+        lines.append("None")
+
+    lines.append("Extracted Metadata:")
+    extracted = debug.get("extracted_metadata", {})
+    if extracted:
+        lines.extend(f"{key}: {value}" for key, value in sorted(extracted.items()))
+    else:
+        lines.append("None")
+    return "\n".join(lines)
 
 
 def _print_progress(payload: dict[str, int]) -> None:

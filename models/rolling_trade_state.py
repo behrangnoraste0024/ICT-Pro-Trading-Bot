@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Any
 from typing import Optional
 
 
@@ -16,6 +17,8 @@ class RollingTradeState:
     exit_index: Optional[int] = None
     pnl: Optional[float] = None
     reasons: list[str] = field(default_factory=list)
+    entry_context_metadata: dict[str, Any] = field(default_factory=dict)
+    entry_context_snapshot: Any | None = None
     event_type: str = "ROLLING_TRADE_STATE"
 
     def __str__(self) -> str:

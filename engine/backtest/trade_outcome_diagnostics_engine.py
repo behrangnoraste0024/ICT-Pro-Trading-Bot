@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import copy
 from typing import Any
 
+from engine.backtest.trade_metadata_extractor import debug_extract_available_trade_metadata
+from engine.backtest.trade_metadata_extractor import extract_trade_metadata_from_context
 from models.market_context import MarketContext
 from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics, TradeOutcomeRecord
 
@@ -58,7 +60,8 @@ class TradeOutcomeDiagnosticsEngine:
         entry_index = self._int_or_none(getattr(context, "paper_entry_index", None))
         exit_index = self._int_or_none(getattr(context, "paper_exit_index", None))
         risk, reward, risk_reward = self._risk_metrics(direction, entry_price, stop_loss, take_profit)
-        matched_pois = self._matched_pois(context)
+        metadata = extract_trade_metadata_from_context(context)
+        matched_pois = self._matched_pois(context, metadata)
 
         return TradeOutcomeRecord(
             trade_number=trade_number,
@@ -77,27 +80,27 @@ class TradeOutcomeDiagnosticsEngine:
             exit_index=exit_index,
             entry_timestamp=self._timestamp_at(context, entry_index),
             exit_timestamp=self._timestamp_at(context, exit_index),
-            setup_status=getattr(context, "setup_status", None),
-            setup_bias=getattr(context, "setup_bias", None),
-            setup_score=getattr(context, "setup_score", None),
-            entry_status=getattr(context, "entry_status", None),
-            entry_trigger_type=getattr(context, "entry_trigger_type", None),
-            dealing_range_mode=getattr(context, "dealing_range_mode_applied", None),
-            current_price_zone=getattr(context, "current_price_zone", None),
-            in_ote_zone=getattr(context, "in_ote_zone", None),
-            ote_direction=getattr(context, "ote_direction", None),
-            dealing_range_high=self._float_or_none(getattr(context, "dealing_range_high", None)),
-            dealing_range_low=self._float_or_none(getattr(context, "dealing_range_low", None)),
-            equilibrium=self._float_or_none(getattr(context, "equilibrium", None)),
+            setup_status=metadata.get("setup_status"),
+            setup_bias=metadata.get("setup_bias"),
+            setup_score=metadata.get("setup_score"),
+            entry_status=metadata.get("entry_status"),
+            entry_trigger_type=metadata.get("entry_trigger_type"),
+            dealing_range_mode=metadata.get("dealing_range_mode_applied"),
+            current_price_zone=metadata.get("current_price_zone"),
+            in_ote_zone=metadata.get("in_ote_zone"),
+            ote_direction=metadata.get("ote_direction"),
+            dealing_range_high=self._float_or_none(metadata.get("dealing_range_high")),
+            dealing_range_low=self._float_or_none(metadata.get("dealing_range_low")),
+            equilibrium=self._float_or_none(metadata.get("equilibrium")),
             matched_poi_count=len(matched_pois),
             matched_poi_types=[self._poi_type(poi) for poi in matched_pois],
-            trade_quality_status=getattr(context, "trade_quality_status", None),
-            trade_quality_score=getattr(context, "trade_quality_score", None),
-            setup_blockers=self._safe_list(getattr(context, "setup_blockers", [])),
-            entry_blockers=self._safe_list(getattr(context, "entry_blockers", [])),
-            trade_plan_blockers=self._safe_list(getattr(context, "trade_plan_blockers", [])),
-            trade_quality_blockers=self._safe_list(getattr(context, "trade_quality_blockers", [])),
-            paper_trade_blockers=self._safe_list(getattr(context, "paper_trade_blockers", [])),
+            trade_quality_status=metadata.get("trade_quality_status"),
+            trade_quality_score=metadata.get("trade_quality_score"),
+            setup_blockers=self._safe_list(metadata.get("setup_blockers", [])),
+            entry_blockers=self._safe_list(metadata.get("entry_blockers", [])),
+            trade_plan_blockers=self._safe_list(metadata.get("trade_plan_blockers", [])),
+            trade_quality_blockers=self._safe_list(metadata.get("trade_quality_blockers", [])),
+            paper_trade_blockers=self._safe_list(metadata.get("paper_trade_blockers", [])),
             reasons=self._safe_list(self._first_value(context, ["paper_trade_reasons", "reasons"], [])),
         )
 
@@ -138,7 +141,10 @@ class TradeOutcomeDiagnosticsEngine:
             return "SHORT"
         return value
 
-    def _matched_pois(self, context: MarketContext) -> list[Any]:
+    def _matched_pois(self, context: MarketContext, metadata: dict[str, Any] | None = None) -> list[Any]:
+        if metadata is not None and metadata.get("matched_pois"):
+            return list(metadata["matched_pois"])
+
         active_setup = getattr(context, "active_setup", None)
         for source in [
             getattr(active_setup, "matched_pois", None) if active_setup is not None else None,
@@ -197,3 +203,7 @@ class TradeOutcomeDiagnosticsEngine:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+
+def debug_extract_available_trade_metadata_for_context(context: MarketContext) -> dict[str, Any]:
+    return debug_extract_available_trade_metadata(context)

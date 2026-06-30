@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from copy import copy
+from copy import deepcopy
+
+from engine.backtest.trade_metadata_extractor import apply_trade_metadata_to_context
+from engine.backtest.trade_metadata_extractor import extract_trade_metadata_from_context
 from models.market_context import MarketContext
 from models.rolling_trade_state import RollingTradeState
 
@@ -32,6 +37,8 @@ class TradeStateManager:
             stop_loss=float(stop_loss),
             take_profit=float(take_profit),
             entry_index=resolved_entry_index,
+            entry_context_metadata=self._entry_context_metadata(context),
+            entry_context_snapshot=self._entry_context_snapshot(context),
         )
 
     def update_with_candle(self, state: RollingTradeState, candle, candle_index: int) -> RollingTradeState:
@@ -58,7 +65,7 @@ class TradeStateManager:
         return state
 
     def to_paper_trade_context(self, state: RollingTradeState) -> MarketContext:
-        context = MarketContext()
+        context = self._paper_context_base(state)
         status_map = {
             "OPEN": "PAPER_OPEN",
             "CLOSED_TP": "PAPER_CLOSED_TP",
@@ -112,3 +119,29 @@ class TradeStateManager:
             return state.exit_price - state.entry_price
 
         return state.entry_price - state.exit_price
+
+    def _entry_context_metadata(self, context: MarketContext) -> dict:
+        return extract_trade_metadata_from_context(context)
+
+    def _entry_context_snapshot(self, context: MarketContext):
+        try:
+            return deepcopy(context)
+        except Exception:
+            try:
+                return copy(context)
+            except Exception:
+                return None
+
+    def _paper_context_base(self, state: RollingTradeState) -> MarketContext:
+        if state.entry_context_snapshot is not None:
+            try:
+                return deepcopy(state.entry_context_snapshot)
+            except Exception:
+                try:
+                    return copy(state.entry_context_snapshot)
+                except Exception:
+                    pass
+
+        context = MarketContext()
+        apply_trade_metadata_to_context(context, state.entry_context_metadata)
+        return context

@@ -4,7 +4,11 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 from engine.backtest.trade_outcome_diagnostics_engine import TradeOutcomeDiagnosticsEngine
+from models.entry_trigger_event import EntryTriggerEvent
 from models.market_context import MarketContext
+from models.ote_zone import OTEZone
+from models.setup_event import SetupEvent
+from models.trade_quality_event import TradeQualityEvent
 
 
 def _trade_context(status: str = "PAPER_CLOSED_TP", direction: str = "BULLISH", pnl: float | None = 20) -> MarketContext:
@@ -121,6 +125,104 @@ def test_matched_poi_count_and_types_extracted_safely() -> None:
 
     assert record.matched_poi_count == 2
     assert record.matched_poi_types == ["ORDER_BLOCK", "FVG"]
+
+
+def test_collect_from_context_extracts_metadata_from_real_nested_events() -> None:
+    context = _trade_context()
+    context.active_setup = SetupEvent(
+        direction="BULLISH",
+        status="VALID",
+        score=85,
+        price_zone="DISCOUNT",
+        ote_direction="BULLISH",
+        in_ote_zone=True,
+        matched_pois=["ORDER_BLOCK:BULLISH:10"],
+    )
+    context.entry_trigger = EntryTriggerEvent(
+        direction="BULLISH",
+        status="CONFIRMED",
+        trigger_type="DISPLACEMENT",
+        confirmed=True,
+        candle_index=1,
+        current_price=105,
+    )
+    context.trade_quality = TradeQualityEvent(status="APPROVED", score=90, risk_reward=2.5)
+    context.ote = OTEZone(
+        direction="BULLISH",
+        dealing_range_high=110,
+        dealing_range_low=90,
+        level_62=97.6,
+        level_705=95.9,
+        level_79=94.2,
+        lower_bound=94.2,
+        upper_bound=97.6,
+        current_price=95,
+        in_zone=True,
+    )
+
+    record = TradeOutcomeDiagnosticsEngine().collect_from_context(context, 1)
+
+    assert record.setup_status == "VALID"
+    assert record.setup_bias == "BULLISH"
+    assert record.setup_score == 85
+    assert record.entry_status == "CONFIRMED"
+    assert record.entry_trigger_type == "DISPLACEMENT"
+    assert record.current_price_zone == "DISCOUNT"
+    assert record.in_ote_zone is True
+    assert record.ote_direction == "BULLISH"
+    assert record.matched_poi_count == 1
+    assert record.matched_poi_types == ["str"]
+    assert record.trade_quality_status == "APPROVED"
+    assert record.trade_quality_score == 90
+
+
+def test_collect_from_context_extracts_metadata_from_event_lists_and_nested_zone_objects() -> None:
+    context = _trade_context()
+    context.setups = [
+        SetupEvent(direction="BULLISH", status="INVALID", score=25),
+        SetupEvent(
+            direction="BEARISH",
+            status="VALID",
+            score=100,
+            price_zone="PREMIUM",
+            ote_direction="BEARISH",
+            in_ote_zone=True,
+            matched_pois=["ORDER_BLOCK:BEARISH:9"],
+        ),
+    ]
+    context.entry_triggers = [
+        EntryTriggerEvent(
+            direction="BEARISH",
+            status="CONFIRMED",
+            trigger_type="CONFIRMATION_CANDLE",
+            confirmed=True,
+            candle_index=1,
+            current_price=99,
+        )
+    ]
+    context.trade_quality_events = [TradeQualityEvent(status="APPROVED", score=90, risk_reward=3)]
+    context.premium_discount = SimpleNamespace(zone="PREMIUM")
+    context.ote = SimpleNamespace(in_zone=True, direction="BEARISH")
+
+    record = TradeOutcomeDiagnosticsEngine().collect_from_context(context, 1)
+
+    assert record.setup_score == 100
+    assert record.setup_bias == "BEARISH"
+    assert record.entry_trigger_type == "CONFIRMATION_CANDLE"
+    assert record.current_price_zone == "PREMIUM"
+    assert record.in_ote_zone is True
+    assert record.ote_direction == "BEARISH"
+    assert record.matched_poi_count == 1
+    assert record.trade_quality_score == 90
+
+
+def test_missing_trade_metadata_stays_none_instead_of_context_defaults() -> None:
+    record = TradeOutcomeDiagnosticsEngine().collect_from_context(_trade_context(), 1)
+
+    assert record.setup_score is None
+    assert record.entry_trigger_type is None
+    assert record.current_price_zone is None
+    assert record.in_ote_zone is None
 
 
 def test_blockers_and_reasons_copied_safely() -> None:

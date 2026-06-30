@@ -5,8 +5,12 @@ from types import SimpleNamespace
 import pandas as pd
 
 from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngine
+from models.entry_trigger_event import EntryTriggerEvent
 from models.market_context import MarketContext
+from models.ote_zone import OTEZone
 from models.rolling_backtest_result import RollingBacktestResult
+from models.setup_event import SetupEvent
+from models.trade_quality_event import TradeQualityEvent
 
 
 def _candles(length: int) -> pd.DataFrame:
@@ -224,6 +228,72 @@ def test_stateful_trade_closes_tp_on_future_candle() -> None:
     assert result.wins == 1
     assert result.closed_by_state == 1
     assert result.net_pnl == 12
+
+
+def test_stateful_closed_trade_preserves_entry_context_metadata() -> None:
+    context = _approved_context("BULLISH")
+    context.dealing_range_mode_applied = "recent_50"
+    context.equilibrium = 100
+    context.setup_score = 100
+    context.setup_bias = "BEARISH"
+    context.setup_status = "VALID"
+    context.entry_status = "CONFIRMED"
+    context.entry_trigger_type = "CONFIRMATION_CANDLE"
+    context.current_price_zone = "PREMIUM"
+    context.in_ote_zone = True
+    context.ote_direction = "BEARISH"
+    context.trade_quality_score = 90
+    context.active_setup = SetupEvent(
+        direction="BEARISH",
+        status="VALID",
+        score=100,
+        price_zone="PREMIUM",
+        ote_direction="BEARISH",
+        in_ote_zone=True,
+        matched_pois=[SimpleNamespace(poi_type="ORDER_BLOCK")],
+    )
+    context.entry_trigger = EntryTriggerEvent(
+        direction="BEARISH",
+        status="CONFIRMED",
+        trigger_type="CONFIRMATION_CANDLE",
+        confirmed=True,
+        candle_index=0,
+        current_price=100,
+    )
+    context.ote = OTEZone(
+        direction="BULLISH",
+        dealing_range_high=110,
+        dealing_range_low=90,
+        level_62=97.6,
+        level_705=95.9,
+        level_79=94.2,
+        lower_bound=94.2,
+        upper_bound=97.6,
+        current_price=95,
+        in_zone=True,
+    )
+    context.trade_quality = TradeQualityEvent(status="APPROVED", score=90, risk_reward=2.5)
+    fake_engine = RecordingICTEngine(contexts=[context])
+    candles = pd.DataFrame(
+        [
+            {"open": 100, "high": 101, "low": 99, "close": 100},
+            {"open": 100, "high": 113, "low": 100, "close": 112},
+        ]
+    )
+
+    result = RollingBacktestEngine(ict_engine=fake_engine, min_candles=1).run(candles)
+
+    assert result.trade_outcome_diagnostics is not None
+    trade = result.trade_outcome_diagnostics.trades[0]
+    assert trade.result == "WIN"
+    assert trade.setup_score == 100
+    assert trade.entry_trigger_type == "CONFIRMATION_CANDLE"
+    assert trade.current_price_zone == "PREMIUM"
+    assert trade.in_ote_zone is True
+    assert trade.ote_direction == "BEARISH"
+    assert trade.matched_poi_count == 1
+    assert trade.matched_poi_types == ["ORDER_BLOCK"]
+    assert trade.trade_quality_score == 90
 
 
 def test_stateful_trade_closes_sl_on_future_candle() -> None:

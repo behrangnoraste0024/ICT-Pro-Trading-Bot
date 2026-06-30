@@ -53,6 +53,35 @@ def test_bullish_tp_closes() -> None:
     assert state.pnl == 12
 
 
+def test_final_context_preserves_entry_snapshot_metadata_after_close() -> None:
+    manager = TradeStateManager()
+    context = _approved_context("BULLISH")
+    context.setup_score = 100
+    context.entry_trigger_type = "CONFIRMATION_CANDLE"
+    context.current_price_zone = "PREMIUM"
+    context.in_ote_zone = True
+    context.ote_direction = "BEARISH"
+    context.active_setup = SimpleNamespace(matched_pois=["ORDER_BLOCK:BULLISH:10"])
+    context.trade_quality_score = 90
+    context.custom_diagnostic_field = "ENTRY_CONTEXT"
+
+    state = manager.open_from_context(context)
+    state = manager.update_with_candle(state, _candle(high=113, low=100), candle_index=11)
+    final_context = manager.to_paper_trade_context(state)
+
+    assert final_context.setup_score == 100
+    assert final_context.entry_trigger_type == "CONFIRMATION_CANDLE"
+    assert final_context.current_price_zone == "PREMIUM"
+    assert final_context.in_ote_zone is True
+    assert final_context.ote_direction == "BEARISH"
+    assert final_context.active_setup.matched_pois == ["ORDER_BLOCK:BULLISH:10"]
+    assert final_context.trade_quality_score == 90
+    assert final_context.custom_diagnostic_field == "ENTRY_CONTEXT"
+    assert final_context.paper_trade_status == "PAPER_CLOSED_TP"
+    assert final_context.paper_exit_price == 112.0
+    assert final_context.paper_pnl == 12.0
+
+
 def test_bullish_sl_closes() -> None:
     state = TradeStateManager().open_from_context(_approved_context("BULLISH"))
 
