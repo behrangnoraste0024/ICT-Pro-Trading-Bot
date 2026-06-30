@@ -4,6 +4,7 @@ import importlib
 from pathlib import Path
 
 from models.backtest_diagnostics import BacktestDiagnostics
+from models.ote_diagnostics import OTEDiagnostics
 from models.rolling_backtest_result import RollingBacktestResult
 from reporting.rolling_backtest_report import format_rolling_backtest_report
 from scripts.run_rolling_backtest import main
@@ -45,8 +46,32 @@ def _result_with_diagnostics() -> RollingBacktestResult:
         trade_plan_status_counts={"NO_TRADE": 2},
         trade_quality_status_counts={"REJECTED": 2},
         paper_trade_status_counts={"NO_PAPER_TRADE": 2},
+        ote_diagnostics=OTEDiagnostics(
+            windows_analyzed=2,
+            ote_available_count=2,
+            in_ote_count=1,
+            not_in_ote_count=1,
+            near_ote_0_5_pct_count=1,
+            average_distance_to_ote=2.5,
+            median_distance_to_ote=2.5,
+            max_distance_to_ote=5,
+            premium_count=1,
+            discount_count=1,
+            bullish_ote_count=1,
+            bearish_ote_count=1,
+            average_distance_to_equilibrium=1.5,
+            median_distance_to_equilibrium=1.5,
+            max_distance_to_equilibrium=3,
+            near_equilibrium_0_5_pct_count=1,
+        ),
         windows_analyzed=2,
     )
+    return result
+
+
+def _result_with_empty_ote_distances() -> RollingBacktestResult:
+    result = _result()
+    result.diagnostics = BacktestDiagnostics(ote_diagnostics=OTEDiagnostics(windows_analyzed=1), windows_analyzed=1)
     return result
 
 
@@ -102,6 +127,40 @@ def test_report_sorts_blockers_by_count_descending() -> None:
     report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
 
     assert report.index("B                             : 3") < report.index("A                             : 1")
+
+
+def test_report_includes_ote_distance_diagnostics() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "===== OTE DISTANCE DIAGNOSTICS =====" in report
+
+
+def test_report_includes_near_ote_half_percent() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "Near OTE <= 0.5%" in report
+
+
+def test_report_includes_price_zone_counts() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "Price Zone Counts:" in report
+    assert "PREMIUM" in report
+    assert "DISCOUNT" in report
+
+
+def test_report_includes_equilibrium_distance() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "Equilibrium Distance:" in report
+    assert "Average Distance To EQ" in report
+
+
+def test_none_distance_values_render_as_none() -> None:
+    report = format_rolling_backtest_report(_result_with_empty_ote_distances(), FIXTURE_PATH, 50)
+
+    assert "Average Distance To OTE    : None" in report
+    assert "Median Distance To EQ      : None" in report
 
 
 def test_runner_loads_fixture_and_returns_success(capsys) -> None:

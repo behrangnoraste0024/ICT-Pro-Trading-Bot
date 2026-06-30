@@ -121,3 +121,32 @@ def test_str_includes_event_type_and_windows() -> None:
 
     assert "BACKTEST_DIAGNOSTICS" in output
     assert "WINDOWS=1" in output
+
+
+def test_backtest_diagnostics_include_ote_diagnostics_after_summary() -> None:
+    context = _context()
+
+    diagnostics = BacktestDiagnosticsEngine().summarize_contexts([context])
+
+    assert diagnostics.ote_diagnostics is not None
+    assert diagnostics.ote_diagnostics.windows_analyzed == 1
+
+
+def test_existing_blocker_counts_remain_unchanged_with_ote_diagnostics() -> None:
+    context = _context()
+    context.setup_blockers = ["A", "A", "B"]
+
+    diagnostics = BacktestDiagnosticsEngine().summarize_contexts([context])
+
+    assert diagnostics.setup_blockers == {"A": 2, "B": 1}
+    assert diagnostics.ote_diagnostics is not None
+
+
+def test_missing_ote_fields_do_not_break_backtest_diagnostics() -> None:
+    context = SimpleNamespace(setup_blockers=["A"], setup_status="INVALID")
+
+    diagnostics = BacktestDiagnosticsEngine().summarize_contexts([context])
+
+    assert diagnostics.setup_blockers == {"A": 1}
+    assert diagnostics.ote_diagnostics is not None
+    assert diagnostics.ote_diagnostics.ote_missing_count == 1

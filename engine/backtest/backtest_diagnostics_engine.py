@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from engine.backtest.ote_diagnostics_engine import OTEDiagnosticsEngine
 from models.backtest_diagnostics import BacktestDiagnostics
 from models.market_context import MarketContext
 
 
 class BacktestDiagnosticsEngine:
+    def __init__(self):
+        self.ote_diagnostics_engine = OTEDiagnosticsEngine()
+
     def collect_from_context(self, context: MarketContext) -> BacktestDiagnostics:
         diagnostics = BacktestDiagnostics(windows_analyzed=1)
 
@@ -21,6 +25,7 @@ class BacktestDiagnosticsEngine:
         self._count_status(diagnostics.trade_plan_status_counts, self._get_status(context, "trade_plan_status"))
         self._count_status(diagnostics.trade_quality_status_counts, self._get_status(context, "trade_quality_status"))
         self._count_status(diagnostics.paper_trade_status_counts, self._get_status(context, "paper_trade_status"))
+        diagnostics.ote_diagnostics = self.ote_diagnostics_engine.collect_from_context(context)
 
         return diagnostics
 
@@ -40,6 +45,7 @@ class BacktestDiagnosticsEngine:
             self._merge_counts(summary.trade_quality_status_counts, diagnostics.trade_quality_status_counts)
             self._merge_counts(summary.paper_trade_status_counts, diagnostics.paper_trade_status_counts)
 
+        summary.ote_diagnostics = self.ote_diagnostics_engine.summarize_contexts(contexts)
         return summary
 
     def _get_blockers(self, context: MarketContext, field_name: str) -> list[str]:
