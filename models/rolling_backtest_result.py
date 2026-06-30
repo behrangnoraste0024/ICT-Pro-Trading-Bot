@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from models.backtest_diagnostics import BacktestDiagnostics
+
 
 @dataclass
 class RollingBacktestResult:
@@ -23,6 +25,8 @@ class RollingBacktestResult:
     opened_trades: int = 0
     closed_by_state: int = 0
     duplicate_signals_skipped: int = 0
+    diagnostics: BacktestDiagnostics | None = None
+    diagnostics_windows_analyzed: int = 0
     event_type: str = "ROLLING_BACKTEST_RESULT"
 
     def __str__(self) -> str:

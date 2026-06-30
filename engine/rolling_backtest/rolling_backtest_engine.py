@@ -5,6 +5,7 @@ from typing import Any
 
 import pandas as pd
 
+from engine.backtest.backtest_diagnostics_engine import BacktestDiagnosticsEngine
 from engine.backtest.backtest_engine import BacktestEngine
 from engine.ict_engine import ICTEngine
 from engine.rolling_backtest.trade_state_manager import TradeStateManager
@@ -32,6 +33,7 @@ class RollingBacktestEngine:
         self.progress_every = progress_every
         self.max_windows = max_windows
         self.backtest_engine = BacktestEngine()
+        self.diagnostics_engine = BacktestDiagnosticsEngine()
         self.trade_state_manager = TradeStateManager()
 
     def run(self, candles: pd.DataFrame) -> RollingBacktestResult:
@@ -46,6 +48,7 @@ class RollingBacktestEngine:
                 skipped_windows=0,
                 failed_windows=0,
                 contexts=[],
+                diagnostic_contexts=[],
             )
             return result, []
 
@@ -107,6 +110,7 @@ class RollingBacktestEngine:
             skipped_windows=skipped_windows,
             failed_windows=failed_windows,
             contexts=contexts,
+            diagnostic_contexts=contexts,
         )
         return result, contexts
 
@@ -209,6 +213,7 @@ class RollingBacktestEngine:
             skipped_windows=skipped_windows,
             failed_windows=failed_windows,
             contexts=completed_trade_contexts,
+            diagnostic_contexts=contexts,
             opened_trades=opened_trades,
             closed_by_state=closed_by_state,
             duplicate_signals_skipped=duplicate_signals_skipped,
@@ -266,11 +271,14 @@ class RollingBacktestEngine:
         skipped_windows: int,
         failed_windows: int,
         contexts: list[MarketContext],
+        diagnostic_contexts: list[MarketContext] | None = None,
         opened_trades: int = 0,
         closed_by_state: int = 0,
         duplicate_signals_skipped: int = 0,
     ) -> RollingBacktestResult:
         summary = self.backtest_engine.summarize_contexts(contexts)
+        diagnostics_source = contexts if diagnostic_contexts is None else diagnostic_contexts
+        diagnostics = self.diagnostics_engine.summarize_contexts(diagnostics_source)
         return RollingBacktestResult(
             total_windows=total_windows,
             processed_windows=processed_windows,
@@ -291,4 +299,6 @@ class RollingBacktestEngine:
             opened_trades=opened_trades,
             closed_by_state=closed_by_state,
             duplicate_signals_skipped=duplicate_signals_skipped,
+            diagnostics=diagnostics,
+            diagnostics_windows_analyzed=diagnostics.windows_analyzed,
         )

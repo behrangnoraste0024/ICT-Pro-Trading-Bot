@@ -43,4 +43,56 @@ def format_rolling_backtest_report(
             f"Max Drawdown      : {result.max_drawdown}",
         ]
     )
+    diagnostics = getattr(result, "diagnostics", None)
+    if diagnostics is not None:
+        lines.extend(_format_diagnostics(diagnostics))
     return "\n".join(lines)
+
+
+def _format_diagnostics(diagnostics) -> list[str]:
+    return [
+        "",
+        "===== BACKTEST DIAGNOSTICS =====",
+        f"Windows Analyzed : {diagnostics.windows_analyzed}",
+        "",
+        "Setup Status Counts:",
+        *_format_counts(diagnostics.setup_status_counts),
+        "",
+        "Setup Blockers:",
+        *_format_counts(diagnostics.setup_blockers, sort_by_count=True),
+        "",
+        "Entry Status Counts:",
+        *_format_counts(diagnostics.entry_status_counts),
+        "",
+        "Entry Blockers:",
+        *_format_counts(diagnostics.entry_blockers, sort_by_count=True),
+        "",
+        "Trade Plan Status Counts:",
+        *_format_counts(diagnostics.trade_plan_status_counts),
+        "",
+        "Trade Plan Blockers:",
+        *_format_counts(diagnostics.trade_plan_blockers, sort_by_count=True),
+        "",
+        "Trade Quality Status Counts:",
+        *_format_counts(diagnostics.trade_quality_status_counts),
+        "",
+        "Trade Quality Blockers:",
+        *_format_counts(diagnostics.trade_quality_blockers, sort_by_count=True),
+        "",
+        "Paper Trade Status Counts:",
+        *_format_counts(diagnostics.paper_trade_status_counts),
+        "",
+        "Paper Trade Blockers:",
+        *_format_counts(diagnostics.paper_trade_blockers, sort_by_count=True),
+    ]
+
+
+def _format_counts(counts: dict[str, int], sort_by_count: bool = False) -> list[str]:
+    if not counts:
+        return ["None"]
+
+    if sort_by_count:
+        items = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    else:
+        items = sorted(counts.items())
+    return [f"{name:<30}: {count}" for name, count in items]

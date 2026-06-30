@@ -44,6 +44,15 @@ def _approved_context(direction: str = "BULLISH") -> MarketContext:
     return context
 
 
+def _blocked_context(setup_blocker: str = "PRICE_NOT_IN_OTE", entry_blocker: str = "NO_VALID_SETUP") -> MarketContext:
+    context = MarketContext()
+    context.setup_blockers = [setup_blocker]
+    context.entry_blockers = [entry_blocker]
+    context.setup_status = "INVALID"
+    context.entry_status = "NOT_CONFIRMED"
+    return context
+
+
 class RecordingICTEngine:
     def __init__(self, contexts: list[MarketContext] | None = None):
         self.call_lengths: list[int] = []
@@ -337,3 +346,70 @@ def test_max_windows_preserves_growing_windows_without_lookahead() -> None:
     RollingBacktestEngine(ict_engine=fake_engine, min_candles=50, max_windows=3).run(_candles(100))
 
     assert fake_engine.call_lengths == [50, 51, 52]
+
+
+def test_rolling_result_includes_diagnostics() -> None:
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=[_blocked_context()]),
+        min_candles=1,
+    ).run(_candles(1))
+
+    assert result.diagnostics is not None
+
+
+def test_stateful_diagnostics_windows_equal_evaluated_contexts() -> None:
+    fake_engine = RecordingICTEngine(contexts=[_approved_context("BULLISH") for _ in range(5)])
+    candles = pd.DataFrame(
+        [
+            {"open": 100, "high": 101, "low": 99, "close": 100},
+            {"open": 100, "high": 101, "low": 99, "close": 100},
+            {"open": 100, "high": 101, "low": 99, "close": 100},
+            {"open": 100, "high": 101, "low": 99, "close": 100},
+            {"open": 100, "high": 101, "low": 99, "close": 100},
+        ]
+    )
+
+    result = RollingBacktestEngine(ict_engine=fake_engine, min_candles=1).run(candles)
+
+    assert result.diagnostics is not None
+    assert result.diagnostics.windows_analyzed == 1
+    assert fake_engine.call_lengths == [1]
+
+
+def test_diagnostics_counts_setup_blockers_from_fake_contexts() -> None:
+    contexts = [_blocked_context("A"), _blocked_context("A"), _blocked_context("B")]
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=contexts),
+        min_candles=1,
+        stateful=False,
+    ).run(_candles(3))
+
+    assert result.diagnostics is not None
+    assert result.diagnostics.setup_blockers == {"A": 2, "B": 1}
+
+
+def test_diagnostics_counts_entry_blockers_from_fake_contexts() -> None:
+    contexts = [_blocked_context(entry_blocker="ENTRY_A"), _blocked_context(entry_blocker="ENTRY_A")]
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=contexts),
+        min_candles=1,
+        stateful=False,
+    ).run(_candles(2))
+
+    assert result.diagnostics is not None
+    assert result.diagnostics.entry_blockers == {"ENTRY_A": 2}
+
+
+def test_non_stateful_mode_collects_diagnostics() -> None:
+    contexts = [_blocked_context("A"), _blocked_context("B")]
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=contexts),
+        min_candles=1,
+        stateful=False,
+    ).run(_candles(2))
+
+    assert result.diagnostics is not None
+    assert result.diagnostics.windows_analyzed == 2

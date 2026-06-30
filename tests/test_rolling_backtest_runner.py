@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+from models.backtest_diagnostics import BacktestDiagnostics
 from models.rolling_backtest_result import RollingBacktestResult
 from reporting.rolling_backtest_report import format_rolling_backtest_report
 from scripts.run_rolling_backtest import main
@@ -29,6 +30,24 @@ def _result() -> RollingBacktestResult:
         max_drawdown=5.0,
         ignored_contexts=46,
     )
+
+
+def _result_with_diagnostics() -> RollingBacktestResult:
+    result = _result()
+    result.diagnostics = BacktestDiagnostics(
+        setup_blockers={"A": 1, "B": 3},
+        entry_blockers={},
+        trade_plan_blockers={},
+        trade_quality_blockers={},
+        paper_trade_blockers={},
+        setup_status_counts={"INVALID": 2},
+        entry_status_counts={"NOT_CONFIRMED": 2},
+        trade_plan_status_counts={"NO_TRADE": 2},
+        trade_quality_status_counts={"REJECTED": 2},
+        paper_trade_status_counts={"NO_PAPER_TRADE": 2},
+        windows_analyzed=2,
+    )
+    return result
 
 
 def test_formatter_includes_key_metrics() -> None:
@@ -59,12 +78,46 @@ def test_formatter_includes_max_windows_when_provided() -> None:
     assert "Max Windows       : 5" in report
 
 
+def test_report_includes_backtest_diagnostics_section() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "===== BACKTEST DIAGNOSTICS =====" in report
+    assert "Windows Analyzed : 2" in report
+
+
+def test_report_includes_setup_blockers() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "Setup Blockers:" in report
+    assert "B                             : 3" in report
+
+
+def test_report_prints_none_for_empty_blocker_sections() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "Entry Blockers:\nNone" in report
+
+
+def test_report_sorts_blockers_by_count_descending() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert report.index("B                             : 3") < report.index("A                             : 1")
+
+
 def test_runner_loads_fixture_and_returns_success(capsys) -> None:
     return_code = main(["--fixture", FIXTURE_PATH, "--min-candles", "50"])
 
     captured = capsys.readouterr()
     assert return_code == 0
     assert "ROLLING BACKTEST REPORT" in captured.out
+
+
+def test_runner_output_includes_diagnostics_when_using_fixture(capsys) -> None:
+    return_code = main(["--fixture", FIXTURE_PATH, "--min-candles", "50", "--progress-every", "0"])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "===== BACKTEST DIAGNOSTICS =====" in captured.out
 
 
 def test_missing_fixture_returns_failure(capsys) -> None:
