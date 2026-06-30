@@ -4,6 +4,7 @@ from engine.fvg.fvg_engine import FVGEngine
 from engine.breaker.breaker_block_engine import BreakerBlockEngine
 from engine.premium_discount.premium_discount_engine import PremiumDiscountEngine
 from engine.ote.ote_engine import OTEEngine
+from engine.setup.setup_engine import SetupEngine
 from engine.order_block.order_block_engine import OrderBlockEngine
 from engine.liquidity.liquidity_engine import LiquidityEngine
 from engine.structure.structure_engine_v2 import StructureEngineV2
@@ -21,6 +22,7 @@ class ICTEngine:
         self.breaker_block_engine = BreakerBlockEngine()
         self.premium_discount_engine = PremiumDiscountEngine()
         self.ote_engine = OTEEngine()
+        self.setup_engine = SetupEngine()
 
     def analyze(self, df):
 
@@ -37,5 +39,6 @@ class ICTEngine:
         context = self.breaker_block_engine.detect(context)
         context = self.premium_discount_engine.detect(context)
         context = self.ote_engine.detect(context)
+        context = self.setup_engine.detect(context)
 
         return context

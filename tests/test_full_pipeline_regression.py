@@ -7,6 +7,7 @@ from engine.breaker.breaker_block_engine import BreakerBlockEngine
 from engine.fvg.fvg_engine import FVGEngine
 from engine.premium_discount.premium_discount_engine import PremiumDiscountEngine
 from engine.ote.ote_engine import OTEEngine
+from engine.setup.setup_engine import SetupEngine
 from engine.order_block.order_block_engine import OrderBlockEngine
 from engine.liquidity.liquidity_engine import LiquidityEngine
 from engine.structure.structure_engine_v2 import StructureEngineV2
@@ -30,6 +31,7 @@ def run_pipeline(df: pd.DataFrame) -> MarketContext:
     context = BreakerBlockEngine().detect(context)
     context = PremiumDiscountEngine().detect(context)
     context = OTEEngine().detect(context)
+    context = SetupEngine().detect(context)
     return context
 
 
@@ -80,6 +82,11 @@ def test_full_pipeline_regression_baseline() -> None:
     assert context.ote_level_705 == 60475.21255
     assert context.ote_level_79 == 60563.1969
     assert context.in_ote_zone is False
+    assert context.setup_status == "INVALID"
+    assert context.setup_bias == "NONE"
+    assert context.setup_score == 65
+    assert context.setup_blockers == ["WRONG_PRICE_ZONE", "PRICE_NOT_IN_OTE"]
+    assert len(context.setups) == 2
     assert context.trend == "DOWNTREND"
     assert context.external_high == 60780.57
     assert context.external_low == 59745.46

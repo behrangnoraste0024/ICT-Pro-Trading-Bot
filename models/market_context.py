@@ -131,6 +131,22 @@ class MarketContext:
     in_ote_zone: bool = False
 
     # ==========================================================
+    # SETUP
+    # ==========================================================
+
+    setups: list = field(default_factory=list)
+
+    active_setup = None
+
+    setup_bias: str = "NONE"
+
+    setup_score: int = 0
+
+    setup_status: str = "INVALID"
+
+    setup_blockers: list = field(default_factory=list)
+
+    # ==========================================================
     # ENTRY
     # ==========================================================
 

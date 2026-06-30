@@ -109,3 +109,15 @@ class ICTBot:
         else:
             print("OTE Direction : NONE")
             print("In OTE Zone  : False")
+
+        print()
+        print("===== SETUP =====")
+        print()
+
+        print(f"Setup Status : {context.setup_status}")
+        print(f"Setup Bias   : {context.setup_bias}")
+        print(f"Setup Score  : {context.setup_score}")
+        print(f"Blockers     : {context.setup_blockers}")
+
+        if context.active_setup:
+            print(context.active_setup)
