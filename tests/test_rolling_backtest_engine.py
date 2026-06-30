@@ -32,6 +32,18 @@ def _context(status: str, pnl: float | None = None) -> MarketContext:
     return context
 
 
+def _approved_context(direction: str = "BULLISH") -> MarketContext:
+    context = MarketContext()
+    context.trade_quality_status = "APPROVED"
+    context.trade_plan_status = "PLANNED"
+    context.trade_direction = direction
+    context.trade_plan = SimpleNamespace(status="PLANNED")
+    context.planned_entry_price = 100
+    context.planned_stop_loss = 95 if direction == "BULLISH" else 105
+    context.planned_take_profit = 112 if direction == "BULLISH" else 88
+    return context
+
+
 class RecordingICTEngine:
     def __init__(self, contexts: list[MarketContext] | None = None):
         self.call_lengths: list[int] = []
@@ -105,7 +117,7 @@ def test_summarizes_contexts_into_rolling_result() -> None:
     ]
     fake_engine = RecordingICTEngine(contexts=contexts)
 
-    result = RollingBacktestEngine(ict_engine=fake_engine, min_candles=1).run(_candles(4))
+    result = RollingBacktestEngine(ict_engine=fake_engine, min_candles=1, stateful=False).run(_candles(4))
 
     assert result.total_paper_trades == 3
     assert result.closed_trades == 2
@@ -168,3 +180,95 @@ def test_no_live_network_uses_fake_engine_only() -> None:
 
     assert result.processed_windows == 1
     assert fake_engine.call_lengths == [3]
+
+
+def test_stateful_mode_opens_one_trade_and_prevents_duplicates() -> None:
+    fake_engine = RecordingICTEngine(contexts=[_approved_context("BULLISH") for _ in range(5)])
+    candles = pd.DataFrame(
+        [
+            {"open": 100, "high": 101, "low": 99, "close": 100},
+            {"open": 100, "high": 105, "low": 99, "close": 101},
+            {"open": 101, "high": 106, "low": 100, "close": 102},
+            {"open": 102, "high": 107, "low": 101, "close": 103},
+            {"open": 103, "high": 108, "low": 102, "close": 104},
+        ]
+    )
+
+    result = RollingBacktestEngine(ict_engine=fake_engine, min_candles=1).run(candles)
+
+    assert result.opened_trades == 1
+    assert result.duplicate_signals_skipped > 0
+    assert fake_engine.call_lengths == [1]
+
+
+def test_stateful_trade_closes_tp_on_future_candle() -> None:
+    fake_engine = RecordingICTEngine(contexts=[_approved_context("BULLISH")])
+    candles = pd.DataFrame(
+        [
+            {"open": 100, "high": 101, "low": 99, "close": 100},
+            {"open": 100, "high": 113, "low": 100, "close": 112},
+        ]
+    )
+
+    result = RollingBacktestEngine(ict_engine=fake_engine, min_candles=1).run(candles)
+
+    assert result.wins == 1
+    assert result.closed_by_state == 1
+    assert result.net_pnl == 12
+
+
+def test_stateful_trade_closes_sl_on_future_candle() -> None:
+    fake_engine = RecordingICTEngine(contexts=[_approved_context("BULLISH")])
+    candles = pd.DataFrame(
+        [
+            {"open": 100, "high": 101, "low": 99, "close": 100},
+            {"open": 100, "high": 101, "low": 94, "close": 95},
+        ]
+    )
+
+    result = RollingBacktestEngine(ict_engine=fake_engine, min_candles=1).run(candles)
+
+    assert result.losses == 1
+    assert result.closed_by_state == 1
+    assert result.net_pnl == -5
+
+
+def test_stateful_open_trade_at_end_counts_as_open() -> None:
+    fake_engine = RecordingICTEngine(contexts=[_approved_context("BULLISH")])
+    candles = pd.DataFrame(
+        [
+            {"open": 100, "high": 101, "low": 99, "close": 100},
+            {"open": 100, "high": 105, "low": 99, "close": 101},
+        ]
+    )
+
+    result = RollingBacktestEngine(ict_engine=fake_engine, min_candles=1).run(candles)
+
+    assert result.open_trades == 1
+    assert result.closed_trades == 0
+
+
+def test_non_stateful_mode_preserves_old_per_window_summary() -> None:
+    contexts = [
+        _context("PAPER_CLOSED_TP", 10),
+        _context("PAPER_CLOSED_SL", -5),
+        _context("PAPER_OPEN"),
+        _context("NO_PAPER_TRADE"),
+    ]
+    fake_engine = RecordingICTEngine(contexts=contexts)
+
+    result = RollingBacktestEngine(ict_engine=fake_engine, min_candles=1, stateful=False).run(_candles(4))
+
+    assert result.stateful_mode is False
+    assert result.total_paper_trades == 3
+    assert result.closed_trades == 2
+    assert result.open_trades == 1
+    assert result.net_pnl == 5
+
+
+def test_stateful_anti_lookahead_uses_growing_windows_when_no_open_trade() -> None:
+    fake_engine = RecordingICTEngine(contexts=[_context("NO_PAPER_TRADE") for _ in range(6)])
+
+    RollingBacktestEngine(ict_engine=fake_engine, min_candles=50).run(_candles(55))
+
+    assert fake_engine.call_lengths == [50, 51, 52, 53, 54, 55]

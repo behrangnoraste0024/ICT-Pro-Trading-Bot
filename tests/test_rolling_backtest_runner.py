@@ -40,6 +40,10 @@ def test_formatter_includes_key_metrics() -> None:
     assert "Win Rate" in report
     assert "Net PnL" in report
     assert "Max Drawdown" in report
+    assert "Stateful Mode" in report
+    assert "Opened Trades" in report
+    assert "Closed By State" in report
+    assert "Duplicates Skipped" in report
 
 
 def test_formatter_includes_fixture_path_and_min_candles() -> None:

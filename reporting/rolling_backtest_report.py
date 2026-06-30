@@ -9,16 +9,24 @@ def format_rolling_backtest_report(
     min_candles: int,
 ) -> str:
     failed_windows = getattr(result, "failed_windows", 0)
+    stateful_mode = getattr(result, "stateful_mode", False)
+    opened_trades = getattr(result, "opened_trades", 0)
+    closed_by_state = getattr(result, "closed_by_state", 0)
+    duplicate_signals_skipped = getattr(result, "duplicate_signals_skipped", 0)
 
     return "\n".join(
         [
             "===== ROLLING BACKTEST REPORT =====",
             f"Fixture           : {fixture_path}",
             f"Min Candles       : {min_candles}",
+            f"Stateful Mode     : {stateful_mode}",
             f"Total Windows     : {result.total_windows}",
             f"Processed Windows : {result.processed_windows}",
             f"Skipped Windows   : {result.skipped_windows}",
             f"Failed Windows    : {failed_windows}",
+            f"Opened Trades     : {opened_trades}",
+            f"Closed By State   : {closed_by_state}",
+            f"Duplicates Skipped: {duplicate_signals_skipped}",
             f"Total Trades      : {result.total_paper_trades}",
             f"Closed Trades     : {result.closed_trades}",
             f"Open Trades       : {result.open_trades}",
