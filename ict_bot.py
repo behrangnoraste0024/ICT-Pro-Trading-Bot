@@ -182,3 +182,21 @@ class ICTBot:
 
         if context.paper_trade:
             print(context.paper_trade)
+
+        print()
+        print("===== BACKTEST =====")
+        print()
+
+        print(f"Total Trades    : {context.backtest_total_trades}")
+        print(f"Closed Trades   : {context.backtest_closed_trades}")
+        print(f"Open Trades     : {context.backtest_open_trades}")
+        print(f"Wins            : {context.backtest_wins}")
+        print(f"Losses          : {context.backtest_losses}")
+        print(f"Win Rate        : {context.backtest_win_rate}")
+        print(f"Net PnL         : {context.backtest_net_pnl}")
+        print(f"Average PnL     : {context.backtest_average_pnl}")
+        print(f"Max Drawdown    : {context.backtest_max_drawdown}")
+        print(f"Ignored Contexts: {context.backtest_ignored_contexts}")
+
+        if context.backtest_result:
+            print(context.backtest_result)

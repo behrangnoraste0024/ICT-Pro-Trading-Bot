@@ -12,6 +12,7 @@ from engine.entry.entry_trigger_engine import EntryTriggerEngine
 from engine.trade_plan.trade_plan_engine import TradePlanEngine
 from engine.trade_quality.trade_quality_engine import TradeQualityEngine
 from engine.paper_trade.paper_trade_engine import PaperTradeEngine
+from engine.backtest.backtest_engine import BacktestEngine
 from engine.order_block.order_block_engine import OrderBlockEngine
 from engine.liquidity.liquidity_engine import LiquidityEngine
 from engine.structure.structure_engine_v2 import StructureEngineV2
@@ -40,6 +41,7 @@ def run_pipeline(df: pd.DataFrame) -> MarketContext:
     context = TradePlanEngine().detect(context)
     context = TradeQualityEngine().detect(context)
     context = PaperTradeEngine().detect(context)
+    context = BacktestEngine().detect(context)
     return context
 
 
@@ -124,6 +126,16 @@ def test_full_pipeline_regression_baseline() -> None:
     assert context.paper_pnl is None
     assert context.paper_trade_blockers == ["TRADE_QUALITY_NOT_APPROVED"]
     assert context.paper_trade_reasons == []
+    assert context.backtest_total_trades == 0
+    assert context.backtest_closed_trades == 0
+    assert context.backtest_open_trades == 0
+    assert context.backtest_wins == 0
+    assert context.backtest_losses == 0
+    assert context.backtest_win_rate == 0
+    assert context.backtest_net_pnl == 0
+    assert context.backtest_average_pnl == 0
+    assert context.backtest_max_drawdown == 0
+    assert context.backtest_ignored_contexts == 1
     assert context.trend == "DOWNTREND"
     assert context.external_high == 60780.57
     assert context.external_low == 59745.46

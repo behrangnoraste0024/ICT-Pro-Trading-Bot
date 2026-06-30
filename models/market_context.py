@@ -230,6 +230,32 @@ class MarketContext:
 
     paper_trade_reasons: list = field(default_factory=list)
 
+    # ==========================================================
+    # BACKTEST
+    # ==========================================================
+
+    backtest_result: Any = None
+
+    backtest_total_trades: int = 0
+
+    backtest_closed_trades: int = 0
+
+    backtest_open_trades: int = 0
+
+    backtest_wins: int = 0
+
+    backtest_losses: int = 0
+
+    backtest_win_rate: float = 0
+
+    backtest_net_pnl: float = 0
+
+    backtest_average_pnl: float = 0
+
+    backtest_max_drawdown: float = 0
+
+    backtest_ignored_contexts: int = 0
+
     stop_loss = None
 
     take_profit = None
