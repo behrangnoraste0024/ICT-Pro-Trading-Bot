@@ -88,6 +88,9 @@ def _format_diagnostics(diagnostics) -> list[str]:
     ote_diagnostics = getattr(diagnostics, "ote_diagnostics", None)
     if ote_diagnostics is not None:
         lines.extend(_format_ote_diagnostics(ote_diagnostics))
+    dealing_range_diagnostics = getattr(diagnostics, "dealing_range_diagnostics", None)
+    if dealing_range_diagnostics is not None:
+        lines.extend(_format_dealing_range_diagnostics(dealing_range_diagnostics))
     return lines
 
 
@@ -144,3 +147,69 @@ def _format_optional_float(value: float | None) -> str:
     if value is None:
         return "None"
     return str(value)
+
+
+def _format_dealing_range_diagnostics(diagnostics) -> list[str]:
+    return [
+        "",
+        "===== DEALING RANGE DIAGNOSTICS =====",
+        f"Windows Analyzed              : {diagnostics.windows_analyzed}",
+        f"Range Available               : {diagnostics.range_available_count}",
+        f"Range Missing                 : {diagnostics.range_missing_count}",
+        f"Invalid Range                 : {diagnostics.invalid_range_count}",
+        "",
+        "Range Size:",
+        f"Average Range Size            : {_format_optional_float(diagnostics.average_range_size)}",
+        f"Median Range Size             : {_format_optional_float(diagnostics.median_range_size)}",
+        f"Min Range Size                : {_format_optional_float(diagnostics.min_range_size)}",
+        f"Max Range Size                : {_format_optional_float(diagnostics.max_range_size)}",
+        f"Average Range Size %          : {_format_optional_float(diagnostics.average_range_size_percent)}",
+        f"Median Range Size %           : {_format_optional_float(diagnostics.median_range_size_percent)}",
+        f"Min Range Size %              : {_format_optional_float(diagnostics.min_range_size_percent)}",
+        f"Max Range Size %              : {_format_optional_float(diagnostics.max_range_size_percent)}",
+        "",
+        "Equilibrium Distance:",
+        f"Average Distance To EQ        : {_format_optional_float(diagnostics.average_distance_to_equilibrium)}",
+        f"Median Distance To EQ         : {_format_optional_float(diagnostics.median_distance_to_equilibrium)}",
+        f"Max Distance To EQ            : {_format_optional_float(diagnostics.max_distance_to_equilibrium)}",
+        f"Average Distance To EQ %      : {_format_optional_float(diagnostics.average_distance_to_equilibrium_percent)}",
+        f"Median Distance To EQ %       : {_format_optional_float(diagnostics.median_distance_to_equilibrium_percent)}",
+        f"Max Distance To EQ %          : {_format_optional_float(diagnostics.max_distance_to_equilibrium_percent)}",
+        "",
+        "Zone Counts:",
+        f"PREMIUM                       : {diagnostics.premium_count}",
+        f"DISCOUNT                      : {diagnostics.discount_count}",
+        f"EQUILIBRIUM                   : {diagnostics.equilibrium_count}",
+        f"UNKNOWN                       : {diagnostics.unknown_zone_count}",
+        "",
+        "Trend Counts:",
+        f"UPTREND                       : {diagnostics.uptrend_count}",
+        f"DOWNTREND                     : {diagnostics.downtrend_count}",
+        f"RANGE                         : {diagnostics.range_trend_count}",
+        f"UNKNOWN                       : {diagnostics.unknown_trend_count}",
+        "",
+        "Trend / Zone Matrix:",
+        *_format_matrix(diagnostics.trend_zone_counts),
+        "",
+        "OTE Direction / Zone Matrix:",
+        *_format_matrix(diagnostics.ote_direction_zone_counts),
+        "",
+        "Mismatch Counts:",
+        f"BEARISH_OTE_IN_DISCOUNT       : {diagnostics.bearish_ote_discount_count}",
+        f"BULLISH_OTE_IN_PREMIUM        : {diagnostics.bullish_ote_premium_count}",
+        f"DOWNTREND_IN_DISCOUNT         : {diagnostics.downtrend_discount_count}",
+        f"UPTREND_IN_PREMIUM            : {diagnostics.uptrend_premium_count}",
+        "",
+        "Range Age:",
+        f"Average External High Age     : {_format_optional_float(diagnostics.average_external_high_age)}",
+        f"Average External Low Age      : {_format_optional_float(diagnostics.average_external_low_age)}",
+        f"Max External High Age         : {_format_optional_float(diagnostics.max_external_high_age)}",
+        f"Max External Low Age          : {_format_optional_float(diagnostics.max_external_low_age)}",
+    ]
+
+
+def _format_matrix(counts: dict[str, int]) -> list[str]:
+    if not counts:
+        return ["None"]
+    items = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return [f"{key:<30}: {count}" for key, count in items]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from models.dealing_range_diagnostics import DealingRangeDiagnostics
 from models.ote_diagnostics import OTEDiagnostics
 
 
@@ -18,6 +19,7 @@ class BacktestDiagnostics:
     trade_quality_status_counts: dict[str, int] = field(default_factory=dict)
     paper_trade_status_counts: dict[str, int] = field(default_factory=dict)
     ote_diagnostics: OTEDiagnostics | None = None
+    dealing_range_diagnostics: DealingRangeDiagnostics | None = None
     windows_analyzed: int = 0
     event_type: str = "BACKTEST_DIAGNOSTICS"
 

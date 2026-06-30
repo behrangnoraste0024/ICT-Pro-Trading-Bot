@@ -4,6 +4,7 @@ import importlib
 from pathlib import Path
 
 from models.backtest_diagnostics import BacktestDiagnostics
+from models.dealing_range_diagnostics import DealingRangeDiagnostics
 from models.ote_diagnostics import OTEDiagnostics
 from models.rolling_backtest_result import RollingBacktestResult
 from reporting.rolling_backtest_report import format_rolling_backtest_report
@@ -64,6 +65,38 @@ def _result_with_diagnostics() -> RollingBacktestResult:
             max_distance_to_equilibrium=3,
             near_equilibrium_0_5_pct_count=1,
         ),
+        dealing_range_diagnostics=DealingRangeDiagnostics(
+            windows_analyzed=2,
+            range_available_count=2,
+            average_range_size=20,
+            median_range_size=20,
+            min_range_size=10,
+            max_range_size=30,
+            average_range_size_percent=0.2,
+            median_range_size_percent=0.2,
+            min_range_size_percent=0.1,
+            max_range_size_percent=0.3,
+            premium_count=1,
+            discount_count=1,
+            uptrend_count=1,
+            downtrend_count=1,
+            trend_zone_counts={"DOWNTREND|DISCOUNT": 3, "UPTREND|PREMIUM": 1},
+            ote_direction_zone_counts={"BEARISH|DISCOUNT": 3, "BULLISH|PREMIUM": 1},
+            bearish_ote_discount_count=3,
+            bullish_ote_premium_count=1,
+            downtrend_discount_count=3,
+            uptrend_premium_count=1,
+            average_distance_to_equilibrium=5,
+            median_distance_to_equilibrium=5,
+            max_distance_to_equilibrium=8,
+            average_distance_to_equilibrium_percent=0.05,
+            median_distance_to_equilibrium_percent=0.05,
+            max_distance_to_equilibrium_percent=0.08,
+            average_external_high_age=12,
+            average_external_low_age=10,
+            max_external_high_age=20,
+            max_external_low_age=15,
+        ),
         windows_analyzed=2,
     )
     return result
@@ -72,6 +105,15 @@ def _result_with_diagnostics() -> RollingBacktestResult:
 def _result_with_empty_ote_distances() -> RollingBacktestResult:
     result = _result()
     result.diagnostics = BacktestDiagnostics(ote_diagnostics=OTEDiagnostics(windows_analyzed=1), windows_analyzed=1)
+    return result
+
+
+def _result_with_empty_range_age() -> RollingBacktestResult:
+    result = _result()
+    result.diagnostics = BacktestDiagnostics(
+        dealing_range_diagnostics=DealingRangeDiagnostics(windows_analyzed=1),
+        windows_analyzed=1,
+    )
     return result
 
 
@@ -161,6 +203,40 @@ def test_none_distance_values_render_as_none() -> None:
 
     assert "Average Distance To OTE    : None" in report
     assert "Median Distance To EQ      : None" in report
+
+
+def test_report_includes_dealing_range_diagnostics() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "===== DEALING RANGE DIAGNOSTICS =====" in report
+
+
+def test_report_includes_trend_zone_matrix() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "Trend / Zone Matrix:" in report
+    assert "DOWNTREND|DISCOUNT" in report
+
+
+def test_report_includes_ote_direction_zone_matrix() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "OTE Direction / Zone Matrix:" in report
+    assert "BEARISH|DISCOUNT" in report
+
+
+def test_report_includes_mismatch_counts() -> None:
+    report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "Mismatch Counts:" in report
+    assert "BEARISH_OTE_IN_DISCOUNT" in report
+
+
+def test_none_range_age_values_render_as_none() -> None:
+    report = format_rolling_backtest_report(_result_with_empty_range_age(), FIXTURE_PATH, 50)
+
+    assert "Average External High Age     : None" in report
+    assert "Max External Low Age          : None" in report
 
 
 def test_runner_loads_fixture_and_returns_success(capsys) -> None:
