@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from core.swing import SwingDetector
+from engine.breaker.breaker_block_engine import BreakerBlockEngine
 from engine.fvg.fvg_engine import FVGEngine
 from engine.order_block.order_block_engine import OrderBlockEngine
 from engine.liquidity.liquidity_engine import LiquidityEngine
@@ -24,6 +25,7 @@ def run_pipeline(df: pd.DataFrame) -> MarketContext:
     context = LiquidityEngine().detect(context)
     context = FVGEngine().detect(context)
     context = OrderBlockEngine().detect(context)
+    context = BreakerBlockEngine().detect(context)
     return context
 
 
@@ -56,6 +58,10 @@ def test_full_pipeline_regression_baseline() -> None:
     assert len(context.order_blocks) == 3
     assert sum(1 for block in context.order_blocks if block.direction == "BULLISH") == 2
     assert sum(1 for block in context.order_blocks if block.direction == "BEARISH") == 1
+    assert len(context.breaker_blocks) == 2
+    assert sum(1 for block in context.breaker_blocks if block.direction == "BULLISH") == 1
+    assert sum(1 for block in context.breaker_blocks if block.direction == "BEARISH") == 1
+    assert sum(1 for block in context.order_blocks if block.invalidated) == 2
     assert context.trend == "DOWNTREND"
     assert context.external_high == 60780.57
     assert context.external_low == 59745.46

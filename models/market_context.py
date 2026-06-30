@@ -83,6 +83,12 @@ class MarketContext:
     order_blocks: list = field(default_factory=list)
 
     # ==========================================================
+    # BREAKER BLOCKS
+    # ==========================================================
+
+    breaker_blocks: list = field(default_factory=list)
+
+    # ==========================================================
     # PREMIUM / DISCOUNT
     # ==========================================================
 

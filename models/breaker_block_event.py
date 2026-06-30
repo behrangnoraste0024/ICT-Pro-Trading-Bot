@@ -1,27 +1,21 @@
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
-class OrderBlockEvent:
+class BreakerBlockEvent:
 
     index: int
-    trigger_index: int
+    source_order_block_index: int
+    source_trigger_index: int
+    invalidation_index: int
     direction: str
+    original_order_block_direction: str
     lower_bound: float
     upper_bound: float
-    open: float
-    high: float
-    low: float
-    close: float
     source_event_type: str
-    event_type: str = "ORDER_BLOCK"
-    mitigation_type: str = "NONE"
-    mitigation_index: Optional[int] = None
-    mitigated: bool = False
+    event_type: str = "BREAKER_BLOCK"
     active: bool = True
-    invalidated: bool = False
-    invalidation_index: Optional[int] = None
+    mitigated: bool = False
 
     def __str__(self):
 
@@ -32,6 +26,5 @@ class OrderBlockEvent:
             f"{self.direction} | "
             f"{self.lower_bound} - {self.upper_bound} | "
             f"{state} | "
-            f"{self.mitigation_type} | "
-            f"{self.source_event_type}"
+            f"FROM_{self.original_order_block_direction}_OB"
         )

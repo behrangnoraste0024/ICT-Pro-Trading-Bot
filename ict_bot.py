@@ -76,3 +76,10 @@ class ICTBot:
 
         for order_block in context.order_blocks:
             print(order_block)
+
+        print()
+        print("===== BREAKER BLOCKS =====")
+        print()
+
+        for breaker_block in context.breaker_blocks:
+            print(breaker_block)
