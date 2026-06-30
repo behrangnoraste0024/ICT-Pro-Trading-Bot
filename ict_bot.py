@@ -83,3 +83,13 @@ class ICTBot:
 
         for breaker_block in context.breaker_blocks:
             print(breaker_block)
+
+        print()
+        print("===== PREMIUM / DISCOUNT =====")
+        print()
+
+        print(f"Dealing Range High : {context.dealing_range_high}")
+        print(f"Dealing Range Low  : {context.dealing_range_low}")
+        print(f"Equilibrium        : {context.equilibrium}")
+        print(f"Current Price      : {context.current_price}")
+        print(f"Current Zone       : {context.current_price_zone}")

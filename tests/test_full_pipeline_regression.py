@@ -5,6 +5,7 @@ import pandas as pd
 from core.swing import SwingDetector
 from engine.breaker.breaker_block_engine import BreakerBlockEngine
 from engine.fvg.fvg_engine import FVGEngine
+from engine.premium_discount.premium_discount_engine import PremiumDiscountEngine
 from engine.order_block.order_block_engine import OrderBlockEngine
 from engine.liquidity.liquidity_engine import LiquidityEngine
 from engine.structure.structure_engine_v2 import StructureEngineV2
@@ -26,6 +27,7 @@ def run_pipeline(df: pd.DataFrame) -> MarketContext:
     context = FVGEngine().detect(context)
     context = OrderBlockEngine().detect(context)
     context = BreakerBlockEngine().detect(context)
+    context = PremiumDiscountEngine().detect(context)
     return context
 
 
@@ -62,6 +64,13 @@ def test_full_pipeline_regression_baseline() -> None:
     assert sum(1 for block in context.breaker_blocks if block.direction == "BULLISH") == 1
     assert sum(1 for block in context.breaker_blocks if block.direction == "BEARISH") == 1
     assert sum(1 for block in context.order_blocks if block.invalidated) == 2
+    assert context.dealing_range_high == 60780.57
+    assert context.dealing_range_low == 59745.46
+    assert context.equilibrium == 60263.015
+    assert context.current_price == 59796.0
+    assert context.current_price_zone == "DISCOUNT"
+    assert context.premium_zone == {"lower_bound": 60263.015, "upper_bound": 60780.57}
+    assert context.discount_zone == {"lower_bound": 59745.46, "upper_bound": 60263.015}
     assert context.trend == "DOWNTREND"
     assert context.external_high == 60780.57
     assert context.external_low == 59745.46

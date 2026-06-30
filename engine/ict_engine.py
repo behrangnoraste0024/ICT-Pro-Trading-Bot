@@ -2,6 +2,7 @@ from models.market_context import MarketContext
 from core.swing import SwingDetector
 from engine.fvg.fvg_engine import FVGEngine
 from engine.breaker.breaker_block_engine import BreakerBlockEngine
+from engine.premium_discount.premium_discount_engine import PremiumDiscountEngine
 from engine.order_block.order_block_engine import OrderBlockEngine
 from engine.liquidity.liquidity_engine import LiquidityEngine
 from engine.structure.structure_engine_v2 import StructureEngineV2
@@ -17,6 +18,7 @@ class ICTEngine:
         self.fvg_engine = FVGEngine()
         self.order_block_engine = OrderBlockEngine()
         self.breaker_block_engine = BreakerBlockEngine()
+        self.premium_discount_engine = PremiumDiscountEngine()
 
     def analyze(self, df):
 
@@ -31,5 +33,6 @@ class ICTEngine:
         context = self.fvg_engine.detect(context)
         context = self.order_block_engine.detect(context)
         context = self.breaker_block_engine.detect(context)
+        context = self.premium_discount_engine.detect(context)
 
         return context

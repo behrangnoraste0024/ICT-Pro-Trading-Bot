@@ -92,11 +92,23 @@ class MarketContext:
     # PREMIUM / DISCOUNT
     # ==========================================================
 
+    dealing_range_high: Optional[float] = None
+
+    dealing_range_low: Optional[float] = None
+
+    equilibrium: Optional[float] = None
+
+    premium_zone = None
+
+    discount_zone = None
+
+    current_price: Optional[float] = None
+
+    current_price_zone: str = "UNKNOWN"
+
     premium = None
 
     discount = None
-
-    equilibrium = None
 
     # ==========================================================
     # OTE
