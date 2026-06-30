@@ -27,6 +27,8 @@ class RollingBacktestResult:
     duplicate_signals_skipped: int = 0
     diagnostics: BacktestDiagnostics | None = None
     diagnostics_windows_analyzed: int = 0
+    dealing_range_mode: str = "current_external"
+    range_mode_fallback_count: int = 0
     event_type: str = "ROLLING_BACKTEST_RESULT"
 
     def __str__(self) -> str:

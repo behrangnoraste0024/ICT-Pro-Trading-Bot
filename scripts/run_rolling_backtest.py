@@ -22,6 +22,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-candles", type=int, default=50)
     parser.add_argument("--progress-every", type=int, default=100)
     parser.add_argument("--max-windows", type=int, default=None)
+    parser.add_argument("--dealing-range-mode", choices=["current_external", "recent_50"], default="current_external")
     args = parser.parse_args(argv)
 
     if args.min_candles <= 0:
@@ -51,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         progress_callback=progress_callback,
         progress_every=args.progress_every,
         max_windows=args.max_windows,
+        dealing_range_mode=args.dealing_range_mode,
     ).run(candles)
     report = format_rolling_backtest_report(result, str(fixture_path), args.min_candles, args.max_windows)
     print(report)

@@ -172,6 +172,12 @@ def test_formatter_includes_max_windows_when_provided() -> None:
     assert "Max Windows       : 5" in report
 
 
+def test_formatter_includes_dealing_range_mode() -> None:
+    report = format_rolling_backtest_report(_result(), FIXTURE_PATH, 50)
+
+    assert "Dealing Range Mode : current_external" in report
+
+
 def test_report_includes_backtest_diagnostics_section() -> None:
     report = format_rolling_backtest_report(_result_with_diagnostics(), FIXTURE_PATH, 50)
 
@@ -354,6 +360,31 @@ def test_runner_accepts_progress_every_zero(capsys) -> None:
     captured = capsys.readouterr()
     assert return_code == 0
     assert "[rolling]" not in captured.out
+
+
+def test_runner_accepts_recent_50_dealing_range_mode(capsys) -> None:
+    return_code = main(
+        ["--fixture", FIXTURE_PATH, "--min-candles", "50", "--progress-every", "0", "--dealing-range-mode", "recent_50"]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Dealing Range Mode : recent_50" in captured.out
+
+
+def test_runner_default_report_includes_current_external_mode(capsys) -> None:
+    return_code = main(["--fixture", FIXTURE_PATH, "--min-candles", "50", "--progress-every", "0"])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Dealing Range Mode : current_external" in captured.out
+
+
+def test_invalid_dealing_range_mode_choice_fails(capsys) -> None:
+    try:
+        main(["--fixture", FIXTURE_PATH, "--dealing-range-mode", "bad_mode"])
+    except SystemExit as exc:
+        assert exc.code == 2
 
 
 def test_invalid_progress_every_returns_failure(capsys) -> None:

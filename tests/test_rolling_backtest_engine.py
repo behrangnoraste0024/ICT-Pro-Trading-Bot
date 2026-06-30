@@ -413,3 +413,39 @@ def test_non_stateful_mode_collects_diagnostics() -> None:
 
     assert result.diagnostics is not None
     assert result.diagnostics.windows_analyzed == 2
+
+
+def test_default_dealing_range_mode_is_current_external() -> None:
+    result = RollingBacktestEngine(ict_engine=RecordingICTEngine(), min_candles=1).run(_candles(1))
+
+    assert result.dealing_range_mode == "current_external"
+
+
+def test_dealing_range_mode_recent_50_reaches_default_ict_engine_config() -> None:
+    engine = RollingBacktestEngine(min_candles=50, dealing_range_mode="recent_50")
+
+    assert engine.ict_engine.config.dealing_range_mode == "recent_50"
+
+
+def test_result_reports_recent_50_dealing_range_mode() -> None:
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(),
+        min_candles=1,
+        dealing_range_mode="recent_50",
+    ).run(_candles(1))
+
+    assert result.dealing_range_mode == "recent_50"
+
+
+def test_range_mode_fallback_count_is_reported() -> None:
+    context = _context("NO_PAPER_TRADE")
+    context.dealing_range_mode_requested = "recent_50"
+    context.dealing_range_mode_applied = "current_external"
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=[context]),
+        min_candles=1,
+        dealing_range_mode="recent_50",
+    ).run(_candles(1))
+
+    assert result.range_mode_fallback_count == 1

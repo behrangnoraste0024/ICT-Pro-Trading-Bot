@@ -9,6 +9,7 @@ from engine.backtest.backtest_diagnostics_engine import BacktestDiagnosticsEngin
 from engine.backtest.backtest_engine import BacktestEngine
 from engine.ict_engine import ICTEngine
 from engine.rolling_backtest.trade_state_manager import TradeStateManager
+from models.engine_config import EngineConfig
 from models.market_context import MarketContext
 from models.rolling_trade_state import RollingTradeState
 from models.rolling_backtest_result import RollingBacktestResult
@@ -25,8 +26,13 @@ class RollingBacktestEngine:
         progress_callback: ProgressCallback | None = None,
         progress_every: int = 100,
         max_windows: int | None = None,
+        config: EngineConfig | None = None,
+        dealing_range_mode: str | None = None,
     ):
-        self.ict_engine = ict_engine if ict_engine is not None else ICTEngine()
+        self.config = config if config is not None else EngineConfig()
+        if dealing_range_mode is not None:
+            self.config.dealing_range_mode = dealing_range_mode
+        self.ict_engine = ict_engine if ict_engine is not None else ICTEngine(config=self.config)
         self.min_candles = min_candles
         self.stateful = stateful
         self.progress_callback = progress_callback
@@ -279,6 +285,7 @@ class RollingBacktestEngine:
         summary = self.backtest_engine.summarize_contexts(contexts)
         diagnostics_source = contexts if diagnostic_contexts is None else diagnostic_contexts
         diagnostics = self.diagnostics_engine.summarize_contexts(diagnostics_source)
+        fallback_count = self._range_mode_fallback_count(diagnostics_source)
         return RollingBacktestResult(
             total_windows=total_windows,
             processed_windows=processed_windows,
@@ -301,4 +308,14 @@ class RollingBacktestEngine:
             duplicate_signals_skipped=duplicate_signals_skipped,
             diagnostics=diagnostics,
             diagnostics_windows_analyzed=diagnostics.windows_analyzed,
+            dealing_range_mode=self.config.dealing_range_mode,
+            range_mode_fallback_count=fallback_count,
+        )
+
+    def _range_mode_fallback_count(self, contexts: list[MarketContext]) -> int:
+        return sum(
+            1
+            for context in contexts
+            if getattr(context, "dealing_range_mode_requested", self.config.dealing_range_mode)
+            != getattr(context, "dealing_range_mode_applied", self.config.dealing_range_mode)
         )
