@@ -121,3 +121,16 @@ class ICTBot:
 
         if context.active_setup:
             print(context.active_setup)
+
+        print()
+        print("===== ENTRY TRIGGER =====")
+        print()
+
+        print(f"Entry Status  : {context.entry_status}")
+        print(f"Entry Direction: {context.entry_direction}")
+        print(f"Trigger Type  : {context.entry_trigger_type}")
+        print(f"Confirmed     : {context.entry_confirmed}")
+        print(f"Blockers      : {context.entry_blockers}")
+
+        if context.entry_trigger:
+            print(context.entry_trigger)

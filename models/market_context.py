@@ -150,6 +150,18 @@ class MarketContext:
     # ENTRY
     # ==========================================================
 
+    entry_trigger: Any = None
+
+    entry_status: str = "NOT_CONFIRMED"
+
+    entry_direction: str = "NONE"
+
+    entry_trigger_type: str = "NONE"
+
+    entry_confirmed: bool = False
+
+    entry_blockers: list = field(default_factory=list)
+
     entry = None
 
     stop_loss = None
