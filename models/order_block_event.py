@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -15,6 +16,8 @@ class OrderBlockEvent:
     close: float
     source_event_type: str
     event_type: str = "ORDER_BLOCK"
+    mitigation_type: str = "NONE"
+    mitigation_index: Optional[int] = None
     mitigated: bool = False
     active: bool = True
 
@@ -27,5 +30,6 @@ class OrderBlockEvent:
             f"{self.direction} | "
             f"{self.lower_bound} - {self.upper_bound} | "
             f"{state} | "
+            f"{self.mitigation_type} | "
             f"{self.source_event_type}"
         )
