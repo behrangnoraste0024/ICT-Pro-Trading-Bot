@@ -1,9 +1,9 @@
 import pandas as pd
 
-from engine.fvg_engine import FVGEngine
+from engine.fvg.fvg_engine import FVGEngine
 from engine.ict_engine import ICTEngine
-from engine.liquidity_engine import LiquidityEngine
-from engine.structure_engine_v2 import StructureEngineV2
+from engine.liquidity.liquidity_engine import LiquidityEngine
+from engine.structure.structure_engine_v2 import StructureEngineV2
 from models.market_context import MarketContext
 from models.structure_event import StructureEvent
 

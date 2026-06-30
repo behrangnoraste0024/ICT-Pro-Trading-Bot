@@ -1,6 +1,6 @@
 import pandas as pd
 
-from engine.structure_engine_v2 import StructureEngineV2
+from engine.structure.structure_engine_v2 import StructureEngineV2
 from models.bos_event import BOSEvent
 from models.market_context import MarketContext
 from models.structure_event import StructureEvent

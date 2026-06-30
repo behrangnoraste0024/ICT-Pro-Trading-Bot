@@ -1,8 +1,8 @@
 from models.market_context import MarketContext
 from core.swing import SwingDetector
-from engine.fvg_engine import FVGEngine
-from engine.liquidity_engine import LiquidityEngine
-from engine.structure_engine_v2 import StructureEngineV2
+from engine.fvg.fvg_engine import FVGEngine
+from engine.liquidity.liquidity_engine import LiquidityEngine
+from engine.structure.structure_engine_v2 import StructureEngineV2
 
 
 class ICTEngine:
