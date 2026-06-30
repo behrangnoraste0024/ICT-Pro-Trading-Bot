@@ -202,6 +202,34 @@ class MarketContext:
 
     trade_quality_reasons: list = field(default_factory=list)
 
+    # ==========================================================
+    # PAPER TRADE
+    # ==========================================================
+
+    paper_trade: Any = None
+
+    paper_trade_status: str = "NO_PAPER_TRADE"
+
+    paper_trade_direction: str = "NONE"
+
+    paper_entry_price: Optional[float] = None
+
+    paper_stop_loss: Optional[float] = None
+
+    paper_take_profit: Optional[float] = None
+
+    paper_entry_index: Optional[int] = None
+
+    paper_exit_price: Optional[float] = None
+
+    paper_exit_index: Optional[int] = None
+
+    paper_pnl: Optional[float] = None
+
+    paper_trade_blockers: list = field(default_factory=list)
+
+    paper_trade_reasons: list = field(default_factory=list)
+
     stop_loss = None
 
     take_profit = None

@@ -163,3 +163,22 @@ class ICTBot:
 
         if context.trade_quality:
             print(context.trade_quality)
+
+        print()
+        print("===== PAPER TRADE =====")
+        print()
+
+        print(f"Paper Status    : {context.paper_trade_status}")
+        print(f"Paper Direction : {context.paper_trade_direction}")
+        print(f"Entry Price     : {context.paper_entry_price}")
+        print(f"Stop Loss       : {context.paper_stop_loss}")
+        print(f"Take Profit     : {context.paper_take_profit}")
+        print(f"Entry Index     : {context.paper_entry_index}")
+        print(f"Exit Price      : {context.paper_exit_price}")
+        print(f"Exit Index      : {context.paper_exit_index}")
+        print(f"Paper PnL       : {context.paper_pnl}")
+        print(f"Reasons         : {context.paper_trade_reasons}")
+        print(f"Blockers        : {context.paper_trade_blockers}")
+
+        if context.paper_trade:
+            print(context.paper_trade)
