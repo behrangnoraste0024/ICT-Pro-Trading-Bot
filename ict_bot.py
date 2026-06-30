@@ -200,3 +200,9 @@ class ICTBot:
 
         if context.backtest_result:
             print(context.backtest_result)
+
+        print()
+        print("===== ROLLING BACKTEST =====")
+        print()
+        print("Rolling Backtest : available via RollingBacktestEngine")
+        print("Default main.py does not run rolling backtest automatically.")
