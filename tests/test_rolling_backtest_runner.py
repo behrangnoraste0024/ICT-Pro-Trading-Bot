@@ -53,6 +53,12 @@ def test_formatter_includes_fixture_path_and_min_candles() -> None:
     assert "Min Candles       : 50" in report
 
 
+def test_formatter_includes_max_windows_when_provided() -> None:
+    report = format_rolling_backtest_report(_result(), FIXTURE_PATH, 50, 5)
+
+    assert "Max Windows       : 5" in report
+
+
 def test_runner_loads_fixture_and_returns_success(capsys) -> None:
     return_code = main(["--fixture", FIXTURE_PATH, "--min-candles", "50"])
 
@@ -75,6 +81,56 @@ def test_invalid_min_candles_returns_failure(capsys) -> None:
     captured = capsys.readouterr()
     assert return_code == 1
     assert "--min-candles must be greater than 0" in captured.out
+
+
+def test_runner_accepts_max_windows(capsys) -> None:
+    return_code = main(["--fixture", FIXTURE_PATH, "--min-candles", "50", "--max-windows", "5"])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Max Windows       : 5" in captured.out
+
+
+def test_runner_accepts_progress_every_zero(capsys) -> None:
+    return_code = main(["--fixture", FIXTURE_PATH, "--min-candles", "50", "--progress-every", "0"])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "[rolling]" not in captured.out
+
+
+def test_invalid_progress_every_returns_failure(capsys) -> None:
+    return_code = main(["--fixture", FIXTURE_PATH, "--progress-every", "-1"])
+
+    captured = capsys.readouterr()
+    assert return_code == 1
+    assert "--progress-every must be greater than or equal to 0" in captured.out
+
+
+def test_invalid_max_windows_returns_failure(capsys) -> None:
+    return_code = main(["--fixture", FIXTURE_PATH, "--max-windows", "0"])
+
+    captured = capsys.readouterr()
+    assert return_code == 1
+    assert "--max-windows must be greater than 0" in captured.out
+
+
+def test_stdout_contains_progress_when_progress_every_is_small(capsys) -> None:
+    return_code = main(
+        ["--fixture", FIXTURE_PATH, "--min-candles", "50", "--max-windows", "5", "--progress-every", "2"]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "[rolling]" in captured.out
+
+
+def test_stdout_does_not_contain_progress_when_progress_every_zero(capsys) -> None:
+    return_code = main(["--fixture", FIXTURE_PATH, "--min-candles", "50", "--progress-every", "0"])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "[rolling]" not in captured.out
 
 
 def test_no_live_network_uses_fixture_only() -> None:

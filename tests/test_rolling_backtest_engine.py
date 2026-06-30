@@ -272,3 +272,68 @@ def test_stateful_anti_lookahead_uses_growing_windows_when_no_open_trade() -> No
     RollingBacktestEngine(ict_engine=fake_engine, min_candles=50).run(_candles(55))
 
     assert fake_engine.call_lengths == [50, 51, 52, 53, 54, 55]
+
+
+def test_progress_callback_is_called() -> None:
+    progress_events: list[dict[str, int]] = []
+
+    RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(),
+        min_candles=50,
+        progress_callback=progress_events.append,
+        progress_every=5,
+    ).run(_candles(60))
+
+    assert progress_events
+    assert progress_events[-1]["processed_windows"] == 11
+
+
+def test_progress_every_zero_disables_callback() -> None:
+    progress_events: list[dict[str, int]] = []
+
+    RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(),
+        min_candles=50,
+        progress_callback=progress_events.append,
+        progress_every=0,
+    ).run(_candles(60))
+
+    assert progress_events == []
+
+
+def test_max_windows_limits_processed_windows() -> None:
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(),
+        min_candles=50,
+        max_windows=10,
+    ).run(_candles(100))
+
+    assert result.processed_windows == 10
+
+
+def test_max_windows_does_not_change_total_windows() -> None:
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(),
+        min_candles=50,
+        max_windows=10,
+    ).run(_candles(100))
+
+    assert result.total_windows == 100
+
+
+def test_max_windows_still_counts_warmup_skipped_windows() -> None:
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(),
+        min_candles=50,
+        max_windows=10,
+    ).run(_candles(100))
+
+    assert result.skipped_windows == 49
+
+
+def test_max_windows_preserves_growing_windows_without_lookahead() -> None:
+    fake_engine = RecordingICTEngine()
+
+    RollingBacktestEngine(ict_engine=fake_engine, min_candles=50, max_windows=3).run(_candles(100))
+
+    assert fake_engine.call_lengths == [50, 51, 52]
