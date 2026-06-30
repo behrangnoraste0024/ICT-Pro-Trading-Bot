@@ -4,18 +4,16 @@ import argparse
 import sys
 from pathlib import Path
 
-import pandas as pd
-
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from data.historical_data_utils import load_candles_json
 from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngine
 from reporting.rolling_backtest_report import format_rolling_backtest_report
 
 
 DEFAULT_FIXTURE = "tests/fixtures/btcusdt_100_candles.json"
-REQUIRED_COLUMNS = {"open", "high", "low", "close"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -34,15 +32,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        candles = pd.read_json(fixture_path)
+        candles = load_candles_json(fixture_path)
     except Exception as exc:
         print(f"Error: failed to load fixture: {exc}")
-        return 1
-
-    missing_columns = REQUIRED_COLUMNS.difference(candles.columns)
-    if missing_columns:
-        missing = ", ".join(sorted(missing_columns))
-        print(f"Error: fixture missing required columns: {missing}")
         return 1
 
     result = RollingBacktestEngine(min_candles=args.min_candles).run(candles)
