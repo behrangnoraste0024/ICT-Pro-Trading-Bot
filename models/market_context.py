@@ -188,6 +188,20 @@ class MarketContext:
 
     trade_plan_blockers: list = field(default_factory=list)
 
+    # ==========================================================
+    # TRADE QUALITY
+    # ==========================================================
+
+    trade_quality: Any = None
+
+    trade_quality_status: str = "REJECTED"
+
+    trade_quality_score: int = 0
+
+    trade_quality_blockers: list = field(default_factory=list)
+
+    trade_quality_reasons: list = field(default_factory=list)
+
     stop_loss = None
 
     take_profit = None

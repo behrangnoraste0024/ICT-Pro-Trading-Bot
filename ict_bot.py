@@ -151,3 +151,15 @@ class ICTBot:
 
         if context.trade_plan:
             print(context.trade_plan)
+
+        print()
+        print("===== TRADE QUALITY =====")
+        print()
+
+        print(f"Quality Status : {context.trade_quality_status}")
+        print(f"Quality Score  : {context.trade_quality_score}")
+        print(f"Reasons        : {context.trade_quality_reasons}")
+        print(f"Blockers       : {context.trade_quality_blockers}")
+
+        if context.trade_quality:
+            print(context.trade_quality)

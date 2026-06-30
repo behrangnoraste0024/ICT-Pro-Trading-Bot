@@ -7,6 +7,7 @@ from engine.ote.ote_engine import OTEEngine
 from engine.setup.setup_engine import SetupEngine
 from engine.entry.entry_trigger_engine import EntryTriggerEngine
 from engine.trade_plan.trade_plan_engine import TradePlanEngine
+from engine.trade_quality.trade_quality_engine import TradeQualityEngine
 from engine.order_block.order_block_engine import OrderBlockEngine
 from engine.liquidity.liquidity_engine import LiquidityEngine
 from engine.structure.structure_engine_v2 import StructureEngineV2
@@ -27,6 +28,7 @@ class ICTEngine:
         self.setup_engine = SetupEngine()
         self.entry_trigger_engine = EntryTriggerEngine()
         self.trade_plan_engine = TradePlanEngine()
+        self.trade_quality_engine = TradeQualityEngine()
 
     def analyze(self, df):
 
@@ -46,5 +48,6 @@ class ICTEngine:
         context = self.setup_engine.detect(context)
         context = self.entry_trigger_engine.detect(context)
         context = self.trade_plan_engine.detect(context)
+        context = self.trade_quality_engine.detect(context)
 
         return context
