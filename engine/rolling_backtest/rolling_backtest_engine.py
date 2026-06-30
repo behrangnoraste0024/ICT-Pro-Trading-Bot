@@ -7,6 +7,7 @@ import pandas as pd
 
 from engine.backtest.backtest_diagnostics_engine import BacktestDiagnosticsEngine
 from engine.backtest.backtest_engine import BacktestEngine
+from engine.backtest.trade_outcome_diagnostics_engine import TradeOutcomeDiagnosticsEngine
 from engine.ict_engine import ICTEngine
 from engine.rolling_backtest.trade_state_manager import TradeStateManager
 from models.engine_config import EngineConfig
@@ -40,6 +41,7 @@ class RollingBacktestEngine:
         self.max_windows = max_windows
         self.backtest_engine = BacktestEngine()
         self.diagnostics_engine = BacktestDiagnosticsEngine()
+        self.trade_outcome_diagnostics_engine = TradeOutcomeDiagnosticsEngine()
         self.trade_state_manager = TradeStateManager()
 
     def run(self, candles: pd.DataFrame) -> RollingBacktestResult:
@@ -286,6 +288,7 @@ class RollingBacktestEngine:
         diagnostics_source = contexts if diagnostic_contexts is None else diagnostic_contexts
         diagnostics = self.diagnostics_engine.summarize_contexts(diagnostics_source)
         fallback_count = self._range_mode_fallback_count(diagnostics_source)
+        trade_outcomes = self.trade_outcome_diagnostics_engine.summarize_contexts(contexts)
         return RollingBacktestResult(
             total_windows=total_windows,
             processed_windows=processed_windows,
@@ -310,6 +313,7 @@ class RollingBacktestEngine:
             diagnostics_windows_analyzed=diagnostics.windows_analyzed,
             dealing_range_mode=self.config.dealing_range_mode,
             range_mode_fallback_count=fallback_count,
+            trade_outcome_diagnostics=trade_outcomes,
         )
 
     def _range_mode_fallback_count(self, contexts: list[MarketContext]) -> int:

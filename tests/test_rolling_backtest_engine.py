@@ -449,3 +449,45 @@ def test_range_mode_fallback_count_is_reported() -> None:
     ).run(_candles(1))
 
     assert result.range_mode_fallback_count == 1
+
+
+def test_rolling_result_includes_trade_outcome_diagnostics() -> None:
+    result = RollingBacktestEngine(ict_engine=RecordingICTEngine(), min_candles=1).run(_candles(1))
+
+    assert result.trade_outcome_diagnostics is not None
+
+
+def test_trade_outcome_total_trades_matches_result_total_trades() -> None:
+    contexts = [_context("PAPER_CLOSED_TP", 10), _context("PAPER_CLOSED_SL", -5)]
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=contexts),
+        min_candles=1,
+        stateful=False,
+    ).run(_candles(2))
+
+    assert result.trade_outcome_diagnostics is not None
+    assert result.trade_outcome_diagnostics.total_trades == result.total_paper_trades
+
+
+def test_stateful_open_trades_are_included_as_open_records() -> None:
+    fake_engine = RecordingICTEngine(contexts=[_approved_context("BULLISH")])
+    candles = pd.DataFrame(
+        [
+            {"open": 100, "high": 101, "low": 99, "close": 100},
+            {"open": 100, "high": 105, "low": 99, "close": 101},
+        ]
+    )
+
+    result = RollingBacktestEngine(ict_engine=fake_engine, min_candles=1).run(candles)
+
+    assert result.trade_outcome_diagnostics is not None
+    assert result.trade_outcome_diagnostics.open_trades == 1
+    assert result.trade_outcome_diagnostics.trades[0].result == "OPEN"
+
+
+def test_no_trades_produces_empty_trade_outcome_diagnostics() -> None:
+    result = RollingBacktestEngine(ict_engine=RecordingICTEngine(), min_candles=1).run(_candles(1))
+
+    assert result.trade_outcome_diagnostics is not None
+    assert result.trade_outcome_diagnostics.total_trades == 0

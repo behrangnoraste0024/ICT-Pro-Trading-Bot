@@ -8,6 +8,7 @@ from models.dealing_range_diagnostics import DealingRangeDiagnostics
 from models.ote_diagnostics import OTEDiagnostics
 from models.range_candidate_diagnostics import RangeCandidateDiagnostics, RangeCandidateStats
 from models.rolling_backtest_result import RollingBacktestResult
+from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics, TradeOutcomeRecord
 from reporting.rolling_backtest_report import format_rolling_backtest_report
 from scripts.run_rolling_backtest import main
 
@@ -117,6 +118,45 @@ def _result_with_diagnostics() -> RollingBacktestResult:
     return result
 
 
+def _result_with_trade_outcomes() -> RollingBacktestResult:
+    result = _result()
+    result.trade_outcome_diagnostics = TradeOutcomeDiagnostics(
+        trades=[
+            TradeOutcomeRecord(
+                trade_number=1,
+                direction="LONG",
+                status="PAPER_CLOSED_TP",
+                entry_price=100,
+                stop_loss=90,
+                take_profit=120,
+                exit_price=120,
+                pnl=20,
+                result="WIN",
+                risk_reward=2,
+                setup_score=80,
+                entry_trigger_type="CONFIRMATION",
+                current_price_zone="DISCOUNT",
+                in_ote_zone=True,
+                matched_poi_count=1,
+                matched_poi_types=["ORDER_BLOCK"],
+            )
+        ],
+        total_trades=1,
+        closed_trades=1,
+        wins=1,
+        net_pnl=20,
+        average_pnl=20,
+        win_rate=100,
+    )
+    return result
+
+
+def _result_with_empty_trade_outcomes() -> RollingBacktestResult:
+    result = _result()
+    result.trade_outcome_diagnostics = TradeOutcomeDiagnostics()
+    return result
+
+
 def _result_with_empty_ote_distances() -> RollingBacktestResult:
     result = _result()
     result.diagnostics = BacktestDiagnostics(ote_diagnostics=OTEDiagnostics(windows_analyzed=1), windows_analyzed=1)
@@ -176,6 +216,44 @@ def test_formatter_includes_dealing_range_mode() -> None:
     report = format_rolling_backtest_report(_result(), FIXTURE_PATH, 50)
 
     assert "Dealing Range Mode : current_external" in report
+
+
+def test_report_includes_trade_outcome_diagnostics() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "===== TRADE OUTCOME DIAGNOSTICS =====" in report
+
+
+def test_trade_outcome_summary_appears_by_default() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "Total Trades        : 1" in report
+
+
+def test_detailed_trade_log_is_hidden_by_default() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "#1 | LONG | WIN" not in report
+    assert "Hidden. Use --show-trades" in report
+
+
+def test_show_trades_prints_trade_log() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50, show_trades=True)
+
+    assert "#1 | LONG | WIN" in report
+
+
+def test_no_trades_prints_no_trades() -> None:
+    report = format_rolling_backtest_report(_result_with_empty_trade_outcomes(), FIXTURE_PATH, 50, show_trades=True)
+
+    assert "No trades." in report
+
+
+def test_report_includes_direction_summary() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "Direction Summary:" in report
+    assert "LONG" in report
 
 
 def test_report_includes_backtest_diagnostics_section() -> None:
@@ -370,6 +448,27 @@ def test_runner_accepts_recent_50_dealing_range_mode(capsys) -> None:
     captured = capsys.readouterr()
     assert return_code == 0
     assert "Dealing Range Mode : recent_50" in captured.out
+
+
+def test_runner_show_trades_prints_trade_log(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--dealing-range-mode",
+            "recent_50",
+            "--show-trades",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Trade Log:" in captured.out
+    assert "#1 |" in captured.out
 
 
 def test_runner_default_report_includes_current_external_mode(capsys) -> None:

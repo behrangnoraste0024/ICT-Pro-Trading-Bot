@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from models.backtest_diagnostics import BacktestDiagnostics
+from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics
 
 
 @dataclass
@@ -29,6 +30,7 @@ class RollingBacktestResult:
     diagnostics_windows_analyzed: int = 0
     dealing_range_mode: str = "current_external"
     range_mode_fallback_count: int = 0
+    trade_outcome_diagnostics: TradeOutcomeDiagnostics | None = None
     event_type: str = "ROLLING_BACKTEST_RESULT"
 
     def __str__(self) -> str:

@@ -8,6 +8,7 @@ def format_rolling_backtest_report(
     fixture_path: str,
     min_candles: int,
     max_windows: int | None = None,
+    show_trades: bool = False,
 ) -> str:
     failed_windows = getattr(result, "failed_windows", 0)
     stateful_mode = getattr(result, "stateful_mode", False)
@@ -47,10 +48,64 @@ def format_rolling_backtest_report(
             f"Max Drawdown      : {result.max_drawdown}",
         ]
     )
+    trade_outcomes = getattr(result, "trade_outcome_diagnostics", None)
+    if trade_outcomes is not None:
+        lines.extend(_format_trade_outcome_diagnostics(trade_outcomes, show_trades=show_trades))
     diagnostics = getattr(result, "diagnostics", None)
     if diagnostics is not None:
         lines.extend(_format_diagnostics(diagnostics))
     return "\n".join(lines)
+
+
+def _format_trade_outcome_diagnostics(diagnostics, show_trades: bool = False) -> list[str]:
+    lines = [
+        "",
+        "===== TRADE OUTCOME DIAGNOSTICS =====",
+        f"Total Trades        : {diagnostics.total_trades}",
+        f"Closed Trades       : {diagnostics.closed_trades}",
+        f"Open Trades         : {diagnostics.open_trades}",
+        f"Wins                : {diagnostics.wins}",
+        f"Losses              : {diagnostics.losses}",
+        f"Win Rate            : {diagnostics.win_rate}",
+        f"Net PnL             : {diagnostics.net_pnl}",
+        f"Average PnL         : {diagnostics.average_pnl}",
+        f"Average Win         : {_format_optional_float(diagnostics.average_win)}",
+        f"Average Loss        : {_format_optional_float(diagnostics.average_loss)}",
+        f"Largest Win         : {_format_optional_float(diagnostics.largest_win)}",
+        f"Largest Loss        : {_format_optional_float(diagnostics.largest_loss)}",
+        f"Average RR          : {_format_optional_float(diagnostics.average_rr)}",
+        f"Average Setup Score : {_format_optional_float(diagnostics.average_setup_score)}",
+        "",
+        "Direction Summary:",
+    ]
+    direction_counts = diagnostics.trades_by_direction()
+    direction_pnl = diagnostics.pnl_by_direction()
+    if direction_counts:
+        for direction in sorted(direction_counts):
+            lines.append(f"{direction:<20}: count={direction_counts[direction]}, pnl={direction_pnl.get(direction, 0.0)}")
+    else:
+        lines.append("None")
+
+    lines.extend(["", "Trade Log:"])
+    if not diagnostics.trades:
+        lines.append("No trades.")
+    elif not show_trades:
+        lines.append("Hidden. Use --show-trades to display trade log rows.")
+    else:
+        for trade in diagnostics.trades:
+            lines.append(_format_trade_row(trade))
+    return lines
+
+
+def _format_trade_row(trade) -> str:
+    poi_types = ",".join(trade.matched_poi_types) if trade.matched_poi_types else "None"
+    return (
+        f"#{trade.trade_number} | {trade.direction} | {trade.result} | "
+        f"entry={trade.entry_price} | sl={trade.stop_loss} | tp={trade.take_profit} | "
+        f"exit={trade.exit_price} | pnl={trade.pnl} | rr={trade.risk_reward} | "
+        f"setup_score={trade.setup_score} | trigger={trade.entry_trigger_type} | "
+        f"zone={trade.current_price_zone} | in_ote={trade.in_ote_zone} | poi={trade.matched_poi_count}:{poi_types}"
+    )
 
 
 def _format_diagnostics(diagnostics) -> list[str]:
