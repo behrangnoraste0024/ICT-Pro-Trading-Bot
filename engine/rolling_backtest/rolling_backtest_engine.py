@@ -34,6 +34,7 @@ class RollingBacktestEngine:
         dealing_range_mode: str | None = None,
         exit_mode: str | None = None,
         min_risk_reward: float | None = None,
+        direction_mode: str | None = None,
         enable_diagnostics: bool = True,
     ):
         self.config = config if config is not None else EngineConfig()
@@ -49,6 +50,10 @@ class RollingBacktestEngine:
             if min_risk_reward <= 0:
                 raise ValueError(f"Unsupported min risk reward: {min_risk_reward}")
             self.config.min_risk_reward = min_risk_reward
+        if direction_mode is not None:
+            if direction_mode not in EngineConfig.VALID_DIRECTION_MODES:
+                raise ValueError(f"Unsupported direction mode: {direction_mode}")
+            self.config.direction_mode = direction_mode
         self.ict_engine = ict_engine if ict_engine is not None else ICTEngine(config=self.config)
         self.min_candles = min_candles
         self.stateful = stateful
@@ -308,6 +313,7 @@ class RollingBacktestEngine:
         diagnostics_source = contexts if diagnostic_contexts is None else diagnostic_contexts
         fallback_count = self._range_mode_fallback_count(diagnostics_source)
         exit_mode_fallback_counts = self._exit_mode_fallback_counts(diagnostics_source)
+        direction_mode_fallback_counts = self._direction_mode_fallback_counts(diagnostics_source)
         diagnostics = None
         diagnostics_windows_analyzed = 0
         trade_outcomes = None
@@ -348,6 +354,8 @@ class RollingBacktestEngine:
             exit_mode=self.config.exit_mode,
             exit_mode_fallback_counts=exit_mode_fallback_counts,
             min_risk_reward=self.config.min_risk_reward,
+            direction_mode=self.config.direction_mode,
+            direction_mode_fallback_counts=direction_mode_fallback_counts,
             trade_outcome_diagnostics=trade_outcomes,
             sl_tp_outcome_diagnostics=sl_tp_outcomes,
             entry_followthrough_diagnostics=entry_followthrough,
@@ -367,6 +375,15 @@ class RollingBacktestEngine:
         counts: dict[str, int] = {}
         for context in contexts:
             reason = getattr(context, "exit_mode_fallback_reason", None)
+            if reason is None:
+                continue
+            counts[reason] = counts.get(reason, 0) + 1
+        return counts
+
+    def _direction_mode_fallback_counts(self, contexts: list[MarketContext]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for context in contexts:
+            reason = getattr(context, "direction_mode_fallback_reason", None)
             if reason is None:
                 continue
             counts[reason] = counts.get(reason, 0) + 1

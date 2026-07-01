@@ -65,6 +65,26 @@ def test_lower_minimum_rr_approves_1_5r_trade() -> None:
     assert context.trade_quality_blockers == []
 
 
+def test_direction_mode_blocked_trade_is_rejected() -> None:
+    context = _planned_context()
+    context.direction_mode_allowed = False
+
+    context = TradeQualityEngine().detect(context)
+
+    assert context.trade_quality_status == "REJECTED"
+    assert "DIRECTION_MODE_BLOCKED" in context.trade_quality_blockers
+
+
+def test_direction_mode_allowed_true_keeps_previous_behavior() -> None:
+    context = _planned_context()
+    context.direction_mode_allowed = True
+
+    context = TradeQualityEngine().detect(context)
+
+    assert context.trade_quality_status == "APPROVED"
+    assert "DIRECTION_MODE_BLOCKED" not in context.trade_quality_blockers
+
+
 def test_risk_too_tight_rejected() -> None:
     context = _planned_context()
     context.planned_risk = 0.01

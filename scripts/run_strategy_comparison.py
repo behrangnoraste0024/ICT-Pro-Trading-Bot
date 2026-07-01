@@ -14,6 +14,7 @@ from engine.backtest.strategy_comparison_engine import (
     StrategyComparisonEngine,
     build_current_external_only_specs,
     build_default_strategy_specs,
+    build_direction_modes_recent_50_fixed_1_5r_specs,
     build_exit_modes_recent_50_specs,
 )
 from models.engine_config import EngineConfig
@@ -135,13 +136,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout-per-strategy", type=float, default=None)
     parser.add_argument(
         "--strategy-set",
-        choices=["default", "exit_modes_recent_50", "current_external_only", "custom"],
+        choices=["default", "exit_modes_recent_50", "direction_modes_recent_50_fixed_1_5r", "current_external_only", "custom"],
         default="default",
     )
     parser.add_argument("--include-original", action="store_true")
     parser.add_argument("--dealing-range-modes", default="current_external,recent_50")
     parser.add_argument("--exit-modes", default="fixed_1r,fixed_1_5r,fixed_2r,fixed_3r")
     parser.add_argument("--min-risk-rewards", default="1.0,1.5,2.0,3.0")
+    parser.add_argument("--direction-modes", default="all")
     parser.add_argument(
         "--sort-by",
         choices=["net_pnl", "average_pnl", "win_rate", "max_drawdown", "profit_factor", "total_trades"],
@@ -160,12 +162,15 @@ def build_strategy_specs(args) -> list[StrategyConfigSpec]:
         return build_default_strategy_specs()
     if args.strategy_set == "exit_modes_recent_50":
         return build_exit_modes_recent_50_specs()
+    if args.strategy_set == "direction_modes_recent_50_fixed_1_5r":
+        return build_direction_modes_recent_50_fixed_1_5r_specs()
     if args.strategy_set == "current_external_only":
         return build_current_external_only_specs()
     return build_custom_strategy_specs(
         dealing_range_modes=args.dealing_range_modes,
         exit_modes=args.exit_modes,
         min_risk_rewards=args.min_risk_rewards,
+        direction_modes=args.direction_modes,
         include_original=args.include_original,
     )
 
@@ -174,17 +179,22 @@ def build_custom_strategy_specs(
     dealing_range_modes: str,
     exit_modes: str,
     min_risk_rewards: str,
+    direction_modes: str = "all",
     include_original: bool = False,
 ) -> list[StrategyConfigSpec]:
     dr_modes = _parse_csv(dealing_range_modes)
     exits = _parse_csv(exit_modes)
     min_rrs = _parse_float_csv(min_risk_rewards)
+    directions = _parse_csv(direction_modes)
     for mode in dr_modes:
         if mode not in EngineConfig.VALID_DEALING_RANGE_MODES:
             raise ValueError(f"Unsupported dealing range mode: {mode}")
     for exit_mode in exits:
         if exit_mode not in EngineConfig.VALID_EXIT_MODES:
             raise ValueError(f"Unsupported exit mode: {exit_mode}")
+    for direction_mode in directions:
+        if direction_mode not in EngineConfig.VALID_DIRECTION_MODES:
+            raise ValueError(f"Unsupported direction mode: {direction_mode}")
 
     if include_original and "original" not in exits:
         exits = ["original", *exits]
@@ -194,8 +204,9 @@ def build_custom_strategy_specs(
         for exit_mode in exits:
             rr_values = [2.0] if exit_mode == "original" else min_rrs
             for min_rr in rr_values:
-                name = f"{dr_mode}|{exit_mode}|min_rr={min_rr}"
-                specs.append(StrategyConfigSpec(name, dr_mode, exit_mode, min_rr))
+                for direction_mode in directions:
+                    name = f"{dr_mode}|{exit_mode}|min_rr={min_rr}|dir={direction_mode}"
+                    specs.append(StrategyConfigSpec(name, dr_mode, exit_mode, min_rr, direction_mode))
 
     if len(specs) > MAX_CUSTOM_COMBINATIONS:
         raise ValueError(f"custom strategy set too large: {len(specs)} combinations")

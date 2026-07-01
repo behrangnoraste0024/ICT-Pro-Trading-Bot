@@ -14,33 +14,51 @@ ComparisonProgressCallback = Callable[[dict], None]
 
 def build_default_strategy_specs() -> list[StrategyConfigSpec]:
     return [
-        StrategyConfigSpec("current_external|original|min_rr=2.0", "current_external", "original", 2.0),
-        StrategyConfigSpec("current_external|fixed_1_5r|min_rr=1.5", "current_external", "fixed_1_5r", 1.5),
-        StrategyConfigSpec("recent_50|original|min_rr=2.0", "recent_50", "original", 2.0),
-        StrategyConfigSpec("recent_50|fixed_1r|min_rr=1.0", "recent_50", "fixed_1r", 1.0),
-        StrategyConfigSpec("recent_50|fixed_1_5r|min_rr=1.5", "recent_50", "fixed_1_5r", 1.5),
-        StrategyConfigSpec("recent_50|fixed_2r|min_rr=2.0", "recent_50", "fixed_2r", 2.0),
-        StrategyConfigSpec("recent_50|fixed_3r|min_rr=3.0", "recent_50", "fixed_3r", 3.0),
+        _spec("current_external", "original", 2.0),
+        _spec("current_external", "fixed_1_5r", 1.5),
+        _spec("recent_50", "original", 2.0),
+        _spec("recent_50", "fixed_1r", 1.0),
+        _spec("recent_50", "fixed_1_5r", 1.5),
+        _spec("recent_50", "fixed_2r", 2.0),
+        _spec("recent_50", "fixed_3r", 3.0),
     ]
 
 
 def build_exit_modes_recent_50_specs() -> list[StrategyConfigSpec]:
     return [
-        StrategyConfigSpec("recent_50|original|min_rr=2.0", "recent_50", "original", 2.0),
-        StrategyConfigSpec("recent_50|fixed_1r|min_rr=1.0", "recent_50", "fixed_1r", 1.0),
-        StrategyConfigSpec("recent_50|fixed_1_5r|min_rr=1.5", "recent_50", "fixed_1_5r", 1.5),
-        StrategyConfigSpec("recent_50|fixed_2r|min_rr=2.0", "recent_50", "fixed_2r", 2.0),
-        StrategyConfigSpec("recent_50|fixed_3r|min_rr=3.0", "recent_50", "fixed_3r", 3.0),
+        _spec("recent_50", "original", 2.0),
+        _spec("recent_50", "fixed_1r", 1.0),
+        _spec("recent_50", "fixed_1_5r", 1.5),
+        _spec("recent_50", "fixed_2r", 2.0),
+        _spec("recent_50", "fixed_3r", 3.0),
+    ]
+
+
+def build_direction_modes_recent_50_fixed_1_5r_specs() -> list[StrategyConfigSpec]:
+    return [
+        _spec("recent_50", "fixed_1_5r", 1.5, "all"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "long_only"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "short_only"),
     ]
 
 
 def build_current_external_only_specs() -> list[StrategyConfigSpec]:
     return [
-        StrategyConfigSpec("current_external|original|min_rr=2.0", "current_external", "original", 2.0),
-        StrategyConfigSpec("current_external|fixed_1r|min_rr=1.0", "current_external", "fixed_1r", 1.0),
-        StrategyConfigSpec("current_external|fixed_1_5r|min_rr=1.5", "current_external", "fixed_1_5r", 1.5),
-        StrategyConfigSpec("current_external|fixed_2r|min_rr=2.0", "current_external", "fixed_2r", 2.0),
+        _spec("current_external", "original", 2.0),
+        _spec("current_external", "fixed_1r", 1.0),
+        _spec("current_external", "fixed_1_5r", 1.5),
+        _spec("current_external", "fixed_2r", 2.0),
     ]
+
+
+def _spec(
+    dealing_range_mode: str,
+    exit_mode: str,
+    min_risk_reward: float,
+    direction_mode: str = "all",
+) -> StrategyConfigSpec:
+    name = f"{dealing_range_mode}|{exit_mode}|min_rr={min_risk_reward}|dir={direction_mode}"
+    return StrategyConfigSpec(name, dealing_range_mode, exit_mode, min_risk_reward, direction_mode)
 
 
 class StrategyComparisonEngine:
@@ -87,6 +105,7 @@ class StrategyComparisonEngine:
                     dealing_range_mode=spec.dealing_range_mode,
                     exit_mode=spec.exit_mode,
                     min_risk_reward=spec.min_risk_reward,
+                    direction_mode=spec.direction_mode,
                 ),
             ).run(candles)
             elapsed_seconds = time.perf_counter() - started_at
@@ -147,6 +166,7 @@ class StrategyComparisonEngine:
             dealing_range_mode=spec.dealing_range_mode,
             exit_mode=spec.exit_mode,
             min_risk_reward=spec.min_risk_reward,
+            direction_mode=spec.direction_mode,
             total_windows=result.total_windows,
             processed_windows=result.processed_windows,
             failed_windows=result.failed_windows,

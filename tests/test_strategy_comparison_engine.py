@@ -7,6 +7,7 @@ from models.strategy_comparison import StrategyComparisonReport, StrategyCompari
 from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics, TradeOutcomeRecord
 from engine.backtest.strategy_comparison_engine import (
     StrategyComparisonEngine,
+    build_direction_modes_recent_50_fixed_1_5r_specs,
     build_default_strategy_specs,
     build_exit_modes_recent_50_specs,
 )
@@ -72,13 +73,13 @@ def _result_with_trades() -> RollingBacktestResult:
 def test_strategy_config_spec_string_contains_modes() -> None:
     spec = StrategyConfigSpec("recent", "recent_50", "fixed_1_5r", 1.5)
 
-    assert str(spec) == "recent_50|fixed_1_5r|min_rr=1.5"
+    assert str(spec) == "recent_50|fixed_1_5r|min_rr=1.5|dir=all"
 
 
 def test_strategy_comparison_row_string_contains_name_and_pnl() -> None:
-    row = StrategyComparisonRow("recent_50|fixed_1_5r|min_rr=1.5", rank=1, total_trades=10, net_pnl=500.98)
+    row = StrategyComparisonRow("recent_50|fixed_1_5r|min_rr=1.5|dir=all", rank=1, total_trades=10, net_pnl=500.98)
 
-    assert "#1 recent_50|fixed_1_5r|min_rr=1.5" in str(row)
+    assert "#1 recent_50|fixed_1_5r|min_rr=1.5|dir=all" in str(row)
     assert "pnl=500.98" in str(row)
 
 
@@ -159,11 +160,12 @@ def test_direction_pnl_extraction_from_records() -> None:
 def test_run_single_strategy_returns_expected_fixture_fields() -> None:
     row = StrategyComparisonEngine().run_single_strategy(
         FIXTURE_PATH,
-        StrategyConfigSpec("recent_50|fixed_1_5r|min_rr=1.5", "recent_50", "fixed_1_5r", 1.5),
+        StrategyConfigSpec("recent_50|fixed_1_5r|min_rr=1.5|dir=all", "recent_50", "fixed_1_5r", 1.5),
         min_candles=50,
     )
 
-    assert row.strategy_name == "recent_50|fixed_1_5r|min_rr=1.5"
+    assert row.strategy_name == "recent_50|fixed_1_5r|min_rr=1.5|dir=all"
+    assert row.direction_mode == "all"
     assert row.total_windows == 100
     assert row.processed_windows == 51
     assert row.elapsed_seconds is not None
@@ -183,13 +185,24 @@ def test_run_comparison_returns_same_number_of_rows_as_specs() -> None:
 def test_default_strategy_specs_include_recent_50_fixed_1_5r() -> None:
     names = [spec.name for spec in build_default_strategy_specs()]
 
-    assert "recent_50|fixed_1_5r|min_rr=1.5" in names
+    assert "recent_50|fixed_1_5r|min_rr=1.5|dir=all" in names
 
 
 def test_exit_modes_recent_50_specs_include_fixed_modes() -> None:
     exit_modes = {spec.exit_mode for spec in build_exit_modes_recent_50_specs()}
+    direction_modes = {spec.direction_mode for spec in build_exit_modes_recent_50_specs()}
 
     assert {"fixed_1r", "fixed_1_5r", "fixed_2r", "fixed_3r"}.issubset(exit_modes)
+    assert direction_modes == {"all"}
+
+
+def test_direction_modes_recent_50_fixed_1_5r_specs_include_all_modes() -> None:
+    specs = build_direction_modes_recent_50_fixed_1_5r_specs()
+
+    assert [spec.direction_mode for spec in specs] == ["all", "long_only", "short_only"]
+    assert all(spec.dealing_range_mode == "recent_50" for spec in specs)
+    assert all(spec.exit_mode == "fixed_1_5r" for spec in specs)
+    assert all(spec.min_risk_reward == 1.5 for spec in specs)
 
 
 def test_no_trades_strategy_row_does_not_crash() -> None:
@@ -232,7 +245,7 @@ def test_fast_mode_still_returns_comparison_rows() -> None:
 
 
 def test_fast_mode_key_metrics_match_normal_fixture() -> None:
-    spec = StrategyConfigSpec("recent_50|fixed_1_5r|min_rr=1.5", "recent_50", "fixed_1_5r", 1.5)
+    spec = StrategyConfigSpec("recent_50|fixed_1_5r|min_rr=1.5|dir=all", "recent_50", "fixed_1_5r", 1.5)
     engine = StrategyComparisonEngine()
 
     normal = engine.run_single_strategy(FIXTURE_PATH, spec, min_candles=50)

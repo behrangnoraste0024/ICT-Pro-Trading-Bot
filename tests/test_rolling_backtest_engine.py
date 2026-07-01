@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngine
 from models.entry_trigger_event import EntryTriggerEvent
@@ -681,6 +682,7 @@ def test_default_exit_mode_is_original() -> None:
 
     assert result.exit_mode == "original"
     assert result.min_risk_reward == 2.0
+    assert result.direction_mode == "all"
 
 
 def test_exit_mode_reaches_default_ict_engine_config() -> None:
@@ -708,6 +710,42 @@ def test_result_reports_custom_min_risk_reward() -> None:
     ).run(_candles(1))
 
     assert result.min_risk_reward == 1.5
+
+
+def test_direction_mode_reaches_default_ict_engine_config() -> None:
+    engine = RollingBacktestEngine(min_candles=50, direction_mode="short_only")
+
+    assert engine.config.direction_mode == "short_only"
+    assert engine.ict_engine.config.direction_mode == "short_only"
+
+
+def test_result_reports_direction_mode() -> None:
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(),
+        min_candles=1,
+        direction_mode="long_only",
+    ).run(_candles(1))
+
+    assert result.direction_mode == "long_only"
+
+
+def test_invalid_direction_mode_rejected() -> None:
+    with pytest.raises(ValueError, match="Unsupported direction mode"):
+        RollingBacktestEngine(direction_mode="sideways_only")
+
+
+def test_direction_mode_fallback_counts_are_reported() -> None:
+    context = MarketContext()
+    context.direction_mode_fallback_reason = "DIRECTION_MODE_BLOCKED"
+    fake_engine = RecordingICTEngine([context])
+
+    result = RollingBacktestEngine(
+        ict_engine=fake_engine,
+        min_candles=1,
+        direction_mode="short_only",
+    ).run(_candles(1))
+
+    assert result.direction_mode_fallback_counts == {"DIRECTION_MODE_BLOCKED": 1}
 
 
 def test_exit_mode_fallback_counts_are_reported() -> None:

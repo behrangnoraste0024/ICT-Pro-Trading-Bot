@@ -10,10 +10,11 @@ class StrategyConfigSpec:
     dealing_range_mode: str
     exit_mode: str
     min_risk_reward: float
+    direction_mode: str = "all"
     event_type: str = "STRATEGY_CONFIG_SPEC"
 
     def __str__(self) -> str:
-        return f"{self.dealing_range_mode}|{self.exit_mode}|min_rr={self.min_risk_reward}"
+        return f"{self.dealing_range_mode}|{self.exit_mode}|min_rr={self.min_risk_reward}|dir={self.direction_mode}"
 
 
 @dataclass
@@ -23,6 +24,7 @@ class StrategyComparisonRow:
     dealing_range_mode: str = "current_external"
     exit_mode: str = "original"
     min_risk_reward: float = 2.0
+    direction_mode: str = "all"
     total_windows: int = 0
     processed_windows: int = 0
     failed_windows: int = 0

@@ -35,8 +35,30 @@ def test_exit_modes_recent_50_strategy_set_works(capsys) -> None:
 
     captured = capsys.readouterr()
     assert return_code == 0
-    assert "recent_50|fixed_1r|min_rr=1.0" in captured.out
-    assert "recent_50|fixed_3r|min_rr=3.0" in captured.out
+    assert "recent_50|fixed_1r|min_rr=1.0|dir=all" in captured.out
+    assert "recent_50|fixed_3r|min_rr=3.0|dir=all" in captured.out
+
+
+def test_direction_modes_recent_50_fixed_1_5r_strategy_set_works(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "direction_modes_recent_50_fixed_1_5r",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategies   : 3" in captured.out
+    assert "dir=all" in captured.out
+    assert "dir=long_only" in captured.out
+    assert "dir=short_only" in captured.out
+    assert "Rank | Strategy | DR Mode | Exit | MinRR | Dir" in captured.out
 
 
 def test_current_external_only_strategy_set_works(capsys) -> None:
@@ -45,7 +67,7 @@ def test_current_external_only_strategy_set_works(capsys) -> None:
     captured = capsys.readouterr()
     assert return_code == 0
     assert "Strategies   : 4" in captured.out
-    assert "current_external|fixed_1_5r|min_rr=1.5" in captured.out
+    assert "current_external|fixed_1_5r|min_rr=1.5|dir=all" in captured.out
 
 
 def test_custom_strategy_set_works(capsys) -> None:
@@ -69,7 +91,34 @@ def test_custom_strategy_set_works(capsys) -> None:
     captured = capsys.readouterr()
     assert return_code == 0
     assert "Strategies   : 4" in captured.out
-    assert "recent_50|fixed_1_5r|min_rr=1.5" in captured.out
+    assert "recent_50|fixed_1_5r|min_rr=1.5|dir=all" in captured.out
+
+
+def test_custom_strategy_set_accepts_direction_modes(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "custom",
+            "--dealing-range-modes",
+            "recent_50",
+            "--exit-modes",
+            "fixed_1_5r",
+            "--min-risk-rewards",
+            "1.5",
+            "--direction-modes",
+            "all,short_only",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategies   : 2" in captured.out
+    assert "recent_50|fixed_1_5r|min_rr=1.5|dir=short_only" in captured.out
 
 
 def test_fast_mode_exits_successfully(capsys) -> None:
@@ -132,6 +181,7 @@ def test_output_json_writes_valid_json(tmp_path) -> None:
     assert data["event_type"] == "STRATEGY_COMPARISON_REPORT"
     assert data["strategies"]
     assert "elapsed_seconds" in data["strategies"][0]
+    assert "direction_mode" in data["strategies"][0]
 
 
 def test_output_csv_writes_headers(tmp_path) -> None:
@@ -155,6 +205,7 @@ def test_output_csv_writes_headers(tmp_path) -> None:
     assert "strategy_name" in text.splitlines()[0]
     assert "net_pnl" in text.splitlines()[0]
     assert "elapsed_seconds" in text.splitlines()[0]
+    assert "direction_mode" in text.splitlines()[0]
 
 
 def test_invalid_strategy_set_rejected_by_argparse() -> None:
@@ -183,6 +234,29 @@ def test_invalid_exit_mode_in_custom_returns_error(capsys) -> None:
     captured = capsys.readouterr()
     assert return_code == 1
     assert "Unsupported exit mode" in captured.out
+
+
+def test_invalid_direction_mode_in_custom_returns_error(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--strategy-set",
+            "custom",
+            "--dealing-range-modes",
+            "recent_50",
+            "--exit-modes",
+            "fixed_1_5r",
+            "--min-risk-rewards",
+            "1.5",
+            "--direction-modes",
+            "sideways_only",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 1
+    assert "Unsupported direction mode" in captured.out
 
 
 def test_script_does_not_require_historical_file(capsys) -> None:

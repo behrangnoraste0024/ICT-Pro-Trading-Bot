@@ -24,6 +24,7 @@ class TradeQualityEngine:
             self._mark_no_planned_trade(context)
             return context
 
+        direction_mode_blocked = getattr(context, "direction_mode_allowed", None) is False
         score = 0
         reasons: list[str] = []
         blockers: list[str] = []
@@ -49,6 +50,9 @@ class TradeQualityEngine:
             reasons.append("RR_OK")
         else:
             blockers.append("RR_TOO_LOW")
+
+        if direction_mode_blocked:
+            blockers.append("DIRECTION_MODE_BLOCKED")
 
         if risk_percent is not None:
             if risk_percent < self.min_risk_percent:

@@ -737,6 +737,7 @@ def test_runner_default_report_includes_current_external_mode(capsys) -> None:
     assert "Dealing Range Mode : current_external" in captured.out
     assert "Exit Mode         : original" in captured.out
     assert "Min Risk Reward   : 2.0" in captured.out
+    assert "Direction Mode    : all" in captured.out
 
 
 def test_runner_accepts_original_exit_mode(capsys) -> None:
@@ -795,6 +796,44 @@ def test_runner_accepts_min_risk_reward(capsys) -> None:
     captured = capsys.readouterr()
     assert return_code == 0
     assert "Min Risk Reward   : 1.5" in captured.out
+
+
+def test_runner_accepts_direction_mode_all(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--direction-mode",
+            "all",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Direction Mode    : all" in captured.out
+
+
+def test_runner_accepts_direction_mode_short_only(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--direction-mode",
+            "short_only",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Direction Mode    : short_only" in captured.out
 
 
 def test_runner_accepts_recent_50_with_fixed_1_5r_exit_mode(capsys) -> None:
@@ -880,6 +919,13 @@ def test_invalid_exit_mode_choice_fails(capsys) -> None:
 def test_invalid_min_risk_reward_choice_fails(capsys) -> None:
     try:
         main(["--fixture", FIXTURE_PATH, "--min-risk-reward", "0"])
+    except SystemExit as exc:
+        assert exc.code == 2
+
+
+def test_invalid_direction_mode_choice_fails(capsys) -> None:
+    try:
+        main(["--fixture", FIXTURE_PATH, "--direction-mode", "sideways_only"])
     except SystemExit as exc:
         assert exc.code == 2
 

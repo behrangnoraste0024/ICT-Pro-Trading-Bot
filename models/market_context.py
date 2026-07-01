@@ -205,6 +205,20 @@ class MarketContext:
     exit_mode_fallback_reason: str = "ORIGINAL_MODE"
 
     # ==========================================================
+    # DIRECTION MODE
+    # ==========================================================
+
+    direction_mode_requested: Optional[str] = None
+
+    direction_mode_applied: Optional[str] = None
+
+    direction_mode_allowed: Optional[bool] = None
+
+    direction_mode_blocked_direction: Optional[str] = None
+
+    direction_mode_fallback_reason: Optional[str] = None
+
+    # ==========================================================
     # TRADE QUALITY
     # ==========================================================
 

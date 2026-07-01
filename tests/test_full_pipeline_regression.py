@@ -10,6 +10,7 @@ from engine.ote.ote_engine import OTEEngine
 from engine.setup.setup_engine import SetupEngine
 from engine.entry.entry_trigger_engine import EntryTriggerEngine
 from engine.trade_plan.trade_plan_engine import TradePlanEngine
+from engine.trade_management.direction_mode_engine import DirectionModeEngine
 from engine.trade_management.exit_mode_engine import ExitModeEngine
 from engine.trade_quality.trade_quality_engine import TradeQualityEngine
 from engine.paper_trade.paper_trade_engine import PaperTradeEngine
@@ -41,6 +42,7 @@ def run_pipeline(df: pd.DataFrame) -> MarketContext:
     context = EntryTriggerEngine().detect(context)
     context = TradePlanEngine().detect(context)
     context = ExitModeEngine().apply(context, "original")
+    context = DirectionModeEngine().apply(context, "all")
     context = TradeQualityEngine().detect(context)
     context = PaperTradeEngine().detect(context)
     context = BacktestEngine().detect(context)
@@ -119,6 +121,11 @@ def test_full_pipeline_regression_baseline() -> None:
     assert context.exit_mode_original_take_profit is None
     assert context.exit_mode_new_take_profit is None
     assert context.exit_mode_fallback_reason == "ORIGINAL_MODE"
+    assert context.direction_mode_requested == "all"
+    assert context.direction_mode_applied == "all"
+    assert context.direction_mode_allowed is None
+    assert context.direction_mode_blocked_direction is None
+    assert context.direction_mode_fallback_reason == "ALL_MODE"
     assert context.trade_quality_status == "REJECTED"
     assert context.trade_quality_score == 0
     assert context.trade_quality_blockers == ["NO_PLANNED_TRADE"]
