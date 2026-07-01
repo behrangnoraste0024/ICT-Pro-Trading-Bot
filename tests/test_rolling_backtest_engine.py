@@ -684,6 +684,10 @@ def test_default_exit_mode_is_original() -> None:
     assert result.min_risk_reward == 2.0
     assert result.direction_mode == "all"
     assert result.auto_trend_fallback == "all"
+    assert result.regime_mode == "rolling_return"
+    assert result.regime_lookback == 200
+    assert result.regime_threshold_pct == 0.0
+    assert result.regime_fallback == "all"
 
 
 def test_exit_mode_reaches_default_ict_engine_config() -> None:
@@ -727,6 +731,25 @@ def test_auto_trend_fallback_reaches_default_ict_engine_config() -> None:
     assert engine.ict_engine.config.auto_trend_fallback == "block"
 
 
+def test_regime_settings_reach_default_ict_engine_config() -> None:
+    engine = RollingBacktestEngine(
+        min_candles=50,
+        direction_mode="regime_trend",
+        regime_lookback=50,
+        regime_threshold_pct=0.01,
+        regime_fallback="block",
+    )
+
+    assert engine.config.direction_mode == "regime_trend"
+    assert engine.ict_engine.config.direction_mode == "regime_trend"
+    assert engine.config.regime_lookback == 50
+    assert engine.ict_engine.config.regime_lookback == 50
+    assert engine.config.regime_threshold_pct == 0.01
+    assert engine.ict_engine.config.regime_threshold_pct == 0.01
+    assert engine.config.regime_fallback == "block"
+    assert engine.ict_engine.config.regime_fallback == "block"
+
+
 def test_result_reports_direction_mode() -> None:
     result = RollingBacktestEngine(
         ict_engine=RecordingICTEngine(),
@@ -749,6 +772,23 @@ def test_result_reports_auto_trend_fallback() -> None:
     assert result.auto_trend_fallback == "block"
 
 
+def test_result_reports_regime_settings() -> None:
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(),
+        min_candles=1,
+        direction_mode="regime_trend",
+        regime_lookback=50,
+        regime_threshold_pct=0.01,
+        regime_fallback="block",
+    ).run(_candles(1))
+
+    assert result.direction_mode == "regime_trend"
+    assert result.regime_mode == "rolling_return"
+    assert result.regime_lookback == 50
+    assert result.regime_threshold_pct == 0.01
+    assert result.regime_fallback == "block"
+
+
 def test_invalid_direction_mode_rejected() -> None:
     with pytest.raises(ValueError, match="Unsupported direction mode"):
         RollingBacktestEngine(direction_mode="sideways_only")
@@ -757,6 +797,11 @@ def test_invalid_direction_mode_rejected() -> None:
 def test_invalid_auto_trend_fallback_rejected() -> None:
     with pytest.raises(ValueError, match="Unsupported auto trend fallback"):
         RollingBacktestEngine(auto_trend_fallback="sideways")
+
+
+def test_invalid_regime_lookback_rejected() -> None:
+    with pytest.raises(ValueError, match="Unsupported regime lookback"):
+        RollingBacktestEngine(regime_lookback=0)
 
 
 def test_direction_mode_fallback_counts_are_reported() -> None:

@@ -81,6 +81,26 @@ def test_trend_direction_recent_50_fixed_1_5r_strategy_set_works(capsys) -> None
     assert "dir=auto_trend|trend_fallback=block" in captured.out
 
 
+def test_regime_direction_recent_50_fixed_1_5r_strategy_set_works(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "regime_direction_recent_50_fixed_1_5r",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategies   : 9" in captured.out
+    assert "dir=regime_trend|regime=rolling_return|lookback=100|thr=0.0|regime_fb=all" in captured.out
+    assert "dir=regime_trend|regime=rolling_return|lookback=200|thr=0.0|regime_fb=block" in captured.out
+
+
 def test_current_external_only_strategy_set_works(capsys) -> None:
     return_code = main(["--fixture", FIXTURE_PATH, "--min-candles", "50", "--strategy-set", "current_external_only"])
 
@@ -171,6 +191,39 @@ def test_custom_strategy_set_accepts_auto_trend_fallbacks(capsys) -> None:
     assert "recent_50|fixed_1_5r|min_rr=1.5|dir=auto_trend|trend_fallback=block" in captured.out
 
 
+def test_custom_strategy_set_accepts_regime_options(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "custom",
+            "--dealing-range-modes",
+            "recent_50",
+            "--exit-modes",
+            "fixed_1_5r",
+            "--min-risk-rewards",
+            "1.5",
+            "--direction-modes",
+            "regime_trend",
+            "--regime-lookbacks",
+            "50",
+            "--regime-threshold-pcts",
+            "0.01",
+            "--regime-fallbacks",
+            "block",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategies   : 1" in captured.out
+    assert "recent_50|fixed_1_5r|min_rr=1.5|dir=regime_trend|regime=rolling_return|lookback=50|thr=0.01|regime_fb=block" in captured.out
+
+
 def test_fast_mode_exits_successfully(capsys) -> None:
     return_code = main(
         [
@@ -233,6 +286,10 @@ def test_output_json_writes_valid_json(tmp_path) -> None:
     assert "elapsed_seconds" in data["strategies"][0]
     assert "direction_mode" in data["strategies"][0]
     assert "auto_trend_fallback" in data["strategies"][0]
+    assert "regime_mode" in data["strategies"][0]
+    assert "regime_lookback" in data["strategies"][0]
+    assert "regime_threshold_pct" in data["strategies"][0]
+    assert "regime_fallback" in data["strategies"][0]
 
 
 def test_output_csv_writes_headers(tmp_path) -> None:
@@ -258,6 +315,10 @@ def test_output_csv_writes_headers(tmp_path) -> None:
     assert "elapsed_seconds" in text.splitlines()[0]
     assert "direction_mode" in text.splitlines()[0]
     assert "auto_trend_fallback" in text.splitlines()[0]
+    assert "regime_mode" in text.splitlines()[0]
+    assert "regime_lookback" in text.splitlines()[0]
+    assert "regime_threshold_pct" in text.splitlines()[0]
+    assert "regime_fallback" in text.splitlines()[0]
 
 
 def test_invalid_strategy_set_rejected_by_argparse() -> None:
@@ -334,6 +395,31 @@ def test_invalid_auto_trend_fallback_in_custom_returns_error(capsys) -> None:
     captured = capsys.readouterr()
     assert return_code == 1
     assert "Unsupported auto trend fallback" in captured.out
+
+
+def test_invalid_regime_fallback_in_custom_returns_error(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--strategy-set",
+            "custom",
+            "--dealing-range-modes",
+            "recent_50",
+            "--exit-modes",
+            "fixed_1_5r",
+            "--min-risk-rewards",
+            "1.5",
+            "--direction-modes",
+            "regime_trend",
+            "--regime-fallbacks",
+            "sideways",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 1
+    assert "Unsupported regime fallback" in captured.out
 
 
 def test_script_does_not_require_historical_file(capsys) -> None:

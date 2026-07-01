@@ -739,6 +739,10 @@ def test_runner_default_report_includes_current_external_mode(capsys) -> None:
     assert "Min Risk Reward   : 2.0" in captured.out
     assert "Direction Mode    : all" in captured.out
     assert "Auto Trend Fallback: all" in captured.out
+    assert "Regime Mode       : rolling_return" in captured.out
+    assert "Regime Lookback   : 200" in captured.out
+    assert "Regime Threshold  : 0.0" in captured.out
+    assert "Regime Fallback   : all" in captured.out
 
 
 def test_runner_accepts_original_exit_mode(capsys) -> None:
@@ -855,6 +859,34 @@ def test_runner_accepts_direction_mode_auto_trend(capsys) -> None:
     assert return_code == 0
     assert "Direction Mode    : auto_trend" in captured.out
     assert "Auto Trend Fallback: all" in captured.out
+
+
+def test_runner_accepts_direction_mode_regime_trend(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--direction-mode",
+            "regime_trend",
+            "--regime-lookback",
+            "50",
+            "--regime-threshold-pct",
+            "0.01",
+            "--regime-fallback",
+            "block",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Direction Mode    : regime_trend" in captured.out
+    assert "Regime Lookback   : 50" in captured.out
+    assert "Regime Threshold  : 0.01" in captured.out
+    assert "Regime Fallback   : block" in captured.out
 
 
 def test_runner_accepts_auto_trend_fallback_block(capsys) -> None:
@@ -974,6 +1006,21 @@ def test_invalid_direction_mode_choice_fails(capsys) -> None:
         main(["--fixture", FIXTURE_PATH, "--direction-mode", "sideways_only"])
     except SystemExit as exc:
         assert exc.code == 2
+
+
+def test_invalid_regime_fallback_choice_fails(capsys) -> None:
+    try:
+        main(["--fixture", FIXTURE_PATH, "--regime-fallback", "sideways"])
+    except SystemExit as exc:
+        assert exc.code == 2
+
+
+def test_invalid_regime_lookback_returns_failure(capsys) -> None:
+    return_code = main(["--fixture", FIXTURE_PATH, "--regime-lookback", "0"])
+
+    captured = capsys.readouterr()
+    assert return_code == 1
+    assert "--regime-lookback must be greater than 0" in captured.out
 
 
 def test_invalid_auto_trend_fallback_choice_fails(capsys) -> None:

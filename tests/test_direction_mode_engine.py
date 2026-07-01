@@ -217,3 +217,70 @@ def test_auto_trend_sets_debug_values() -> None:
     assert context.debug["direction_mode_resolved_direction"] == "LONG"
     assert context.debug["auto_trend_source_trend"] == "UPTREND"
     assert context.debug["auto_trend_fallback"] == "all"
+
+
+def test_regime_trend_bullish_allows_long() -> None:
+    context = _planned_context("BULLISH")
+    context.market_regime = "BULLISH"
+
+    context = DirectionModeEngine().apply(context, "regime_trend")
+
+    assert context.direction_mode_allowed is True
+    assert context.direction_mode_resolved_direction == "LONG"
+    assert context.regime_source_regime == "BULLISH"
+    assert context.direction_mode_fallback_reason == "REGIME_TREND_BULLISH_LONG_ONLY"
+
+
+def test_regime_trend_bullish_blocks_short() -> None:
+    context = _planned_context("BEARISH")
+    context.market_regime = "BULLISH"
+
+    context = DirectionModeEngine().apply(context, "regime_trend")
+
+    assert context.direction_mode_allowed is False
+    assert context.direction_mode_blocked_direction == "BEARISH"
+    assert context.direction_mode_resolved_direction == "LONG"
+
+
+def test_regime_trend_bearish_allows_short() -> None:
+    context = _planned_context("BEARISH")
+    context.market_regime = "BEARISH"
+
+    context = DirectionModeEngine().apply(context, "regime_trend")
+
+    assert context.direction_mode_allowed is True
+    assert context.direction_mode_resolved_direction == "SHORT"
+    assert context.direction_mode_fallback_reason == "REGIME_TREND_BEARISH_SHORT_ONLY"
+
+
+def test_regime_trend_range_fallback_all_allows_planned_trade() -> None:
+    context = _planned_context("BULLISH")
+    context.market_regime = "RANGE"
+
+    context = DirectionModeEngine().apply(context, "regime_trend", regime_fallback="all")
+
+    assert context.direction_mode_allowed is True
+    assert context.direction_mode_resolved_direction == "ALL"
+    assert context.direction_mode_fallback_reason == "REGIME_TREND_FALLBACK_ALL"
+
+
+def test_regime_trend_range_fallback_block_blocks_planned_trade() -> None:
+    context = _planned_context("BULLISH")
+    context.market_regime = "RANGE"
+
+    context = DirectionModeEngine().apply(context, "regime_trend", regime_fallback="block")
+
+    assert context.direction_mode_allowed is False
+    assert context.direction_mode_resolved_direction == "NONE"
+    assert context.direction_mode_fallback_reason == "REGIME_TREND_FALLBACK_BLOCK"
+
+
+def test_regime_trend_sets_debug_values() -> None:
+    context = _planned_context("BEARISH")
+    context.market_regime = "BEARISH"
+
+    context = DirectionModeEngine().apply(context, "regime_trend", regime_fallback="block")
+
+    assert context.debug["direction_mode_requested"] == "regime_trend"
+    assert context.debug["regime_source_regime"] == "BEARISH"
+    assert context.debug["regime_fallback"] == "block"

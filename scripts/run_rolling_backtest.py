@@ -37,8 +37,16 @@ def main(argv: list[str] | None = None) -> int:
         default="original",
     )
     parser.add_argument("--min-risk-reward", type=positive_float, default=2.0)
-    parser.add_argument("--direction-mode", choices=["all", "long_only", "short_only", "auto_trend"], default="all")
+    parser.add_argument(
+        "--direction-mode",
+        choices=["all", "long_only", "short_only", "auto_trend", "regime_trend"],
+        default="all",
+    )
     parser.add_argument("--auto-trend-fallback", choices=["all", "block"], default="all")
+    parser.add_argument("--regime-mode", choices=["rolling_return"], default="rolling_return")
+    parser.add_argument("--regime-lookback", type=int, default=200)
+    parser.add_argument("--regime-threshold-pct", type=float, default=0.0)
+    parser.add_argument("--regime-fallback", choices=["all", "block"], default="all")
     parser.add_argument("--show-trades", action="store_true")
     parser.add_argument("--debug-first-trade-metadata", action="store_true")
     args = parser.parse_args(argv)
@@ -51,6 +59,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if args.max_windows is not None and args.max_windows <= 0:
         print("Error: --max-windows must be greater than 0.")
+        return 1
+    if args.regime_lookback <= 0:
+        print("Error: --regime-lookback must be greater than 0.")
+        return 1
+    if args.regime_threshold_pct < 0:
+        print("Error: --regime-threshold-pct must be greater than or equal to 0.")
         return 1
 
     fixture_path = Path(args.fixture)
@@ -75,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
         min_risk_reward=args.min_risk_reward,
         direction_mode=args.direction_mode,
         auto_trend_fallback=args.auto_trend_fallback,
+        regime_mode=args.regime_mode,
+        regime_lookback=args.regime_lookback,
+        regime_threshold_pct=args.regime_threshold_pct,
+        regime_fallback=args.regime_fallback,
     ).run(candles)
     report = format_rolling_backtest_report(
         result,

@@ -13,6 +13,10 @@ def test_engine_config_defaults() -> None:
     assert config.min_risk_reward == 2.0
     assert config.direction_mode == "all"
     assert config.auto_trend_fallback == "all"
+    assert config.regime_mode == "rolling_return"
+    assert config.regime_lookback == 200
+    assert config.regime_threshold_pct == 0.0
+    assert config.regime_fallback == "all"
 
 
 @pytest.mark.parametrize("exit_mode", ["original", "fixed_1r", "fixed_1_5r", "fixed_2r", "fixed_3r"])
@@ -22,7 +26,7 @@ def test_engine_config_accepts_valid_exit_modes(exit_mode: str) -> None:
     assert config.exit_mode == exit_mode
 
 
-@pytest.mark.parametrize("direction_mode", ["all", "long_only", "short_only", "auto_trend"])
+@pytest.mark.parametrize("direction_mode", ["all", "long_only", "short_only", "auto_trend", "regime_trend"])
 def test_engine_config_accepts_valid_direction_modes(direction_mode: str) -> None:
     config = EngineConfig(direction_mode=direction_mode)
 
@@ -54,6 +58,42 @@ def test_engine_config_accepts_valid_auto_trend_fallbacks(auto_trend_fallback: s
 def test_engine_config_rejects_invalid_auto_trend_fallback() -> None:
     with pytest.raises(ValueError, match="Unsupported auto trend fallback"):
         EngineConfig(auto_trend_fallback="sideways")
+
+
+def test_engine_config_accepts_regime_settings() -> None:
+    config = EngineConfig(
+        direction_mode="regime_trend",
+        regime_mode="rolling_return",
+        regime_lookback=50,
+        regime_threshold_pct=0.01,
+        regime_fallback="block",
+    )
+
+    assert config.regime_mode == "rolling_return"
+    assert config.regime_lookback == 50
+    assert config.regime_threshold_pct == 0.01
+    assert config.regime_fallback == "block"
+
+
+def test_engine_config_rejects_invalid_regime_mode() -> None:
+    with pytest.raises(ValueError, match="Unsupported regime mode"):
+        EngineConfig(regime_mode="future")
+
+
+@pytest.mark.parametrize("regime_lookback", [0, -1])
+def test_engine_config_rejects_invalid_regime_lookback(regime_lookback: int) -> None:
+    with pytest.raises(ValueError, match="Unsupported regime lookback"):
+        EngineConfig(regime_lookback=regime_lookback)
+
+
+def test_engine_config_rejects_invalid_regime_threshold() -> None:
+    with pytest.raises(ValueError, match="Unsupported regime threshold pct"):
+        EngineConfig(regime_threshold_pct=-0.01)
+
+
+def test_engine_config_rejects_invalid_regime_fallback() -> None:
+    with pytest.raises(ValueError, match="Unsupported regime fallback"):
+        EngineConfig(regime_fallback="sideways")
 
 
 def test_engine_config_accepts_custom_min_risk_reward() -> None:

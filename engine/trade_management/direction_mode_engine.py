@@ -4,18 +4,24 @@ from models.market_context import MarketContext
 
 
 class DirectionModeEngine:
-    VALID_MODES = {"all", "long_only", "short_only", "auto_trend"}
+    VALID_MODES = {"all", "long_only", "short_only", "auto_trend", "regime_trend"}
     VALID_AUTO_TREND_FALLBACKS = {"all", "block"}
+    VALID_REGIME_FALLBACKS = {"all", "block"}
 
     def apply(
         self,
         context: MarketContext,
         direction_mode: str = "all",
         auto_trend_fallback: str = "all",
+        regime_fallback: str = "all",
     ) -> MarketContext:
-        self._reset_metadata(context, direction_mode, auto_trend_fallback)
+        self._reset_metadata(context, direction_mode, auto_trend_fallback, regime_fallback)
 
-        if direction_mode not in self.VALID_MODES or auto_trend_fallback not in self.VALID_AUTO_TREND_FALLBACKS:
+        if (
+            direction_mode not in self.VALID_MODES
+            or auto_trend_fallback not in self.VALID_AUTO_TREND_FALLBACKS
+            or regime_fallback not in self.VALID_REGIME_FALLBACKS
+        ):
             context.direction_mode_fallback_reason = "INVALID_DIRECTION"
             self._update_debug(context)
             return context
@@ -31,6 +37,9 @@ class DirectionModeEngine:
 
         if direction_mode == "auto_trend":
             return self._apply_auto_trend(context, auto_trend_fallback)
+
+        if direction_mode == "regime_trend":
+            return self._apply_regime_trend(context, regime_fallback)
 
         if context.trade_plan_status != "PLANNED":
             context.direction_mode_fallback_reason = "NO_PLANNED_TRADE"
@@ -56,7 +65,13 @@ class DirectionModeEngine:
         self._update_debug(context)
         return context
 
-    def _reset_metadata(self, context: MarketContext, direction_mode: str, auto_trend_fallback: str) -> None:
+    def _reset_metadata(
+        self,
+        context: MarketContext,
+        direction_mode: str,
+        auto_trend_fallback: str,
+        regime_fallback: str,
+    ) -> None:
         context.direction_mode_requested = direction_mode
         context.direction_mode_applied = None
         context.direction_mode_allowed = None
@@ -65,6 +80,8 @@ class DirectionModeEngine:
         context.direction_mode_resolved_direction = None
         context.auto_trend_source_trend = None
         context.auto_trend_fallback = auto_trend_fallback
+        context.regime_source_regime = None
+        context.regime_fallback = regime_fallback
 
     def _is_allowed(self, direction: str, direction_mode: str) -> bool:
         if direction_mode == "long_only":
@@ -102,6 +119,40 @@ class DirectionModeEngine:
         self._update_debug(context)
         return context
 
+    def _apply_regime_trend(self, context: MarketContext, regime_fallback: str) -> MarketContext:
+        regime = self._normalize_regime(getattr(context, "market_regime", None))
+        context.regime_source_regime = regime
+
+        if regime == "BULLISH":
+            context.direction_mode_resolved_direction = "LONG"
+            context.direction_mode_fallback_reason = "REGIME_TREND_BULLISH_LONG_ONLY"
+            return self._apply_resolved_direction(context, allowed_direction="BULLISH")
+
+        if regime == "BEARISH":
+            context.direction_mode_resolved_direction = "SHORT"
+            context.direction_mode_fallback_reason = "REGIME_TREND_BEARISH_SHORT_ONLY"
+            return self._apply_resolved_direction(context, allowed_direction="BEARISH")
+
+        if regime not in ("RANGE", "UNKNOWN"):
+            context.direction_mode_fallback_reason = "REGIME_TREND_UNKNOWN_REGIME"
+
+        if regime_fallback == "all":
+            context.direction_mode_resolved_direction = "ALL"
+            context.direction_mode_allowed = True if context.trade_plan_status == "PLANNED" else None
+            if context.direction_mode_fallback_reason is None:
+                context.direction_mode_fallback_reason = "REGIME_TREND_FALLBACK_ALL"
+            self._update_debug(context)
+            return context
+
+        context.direction_mode_resolved_direction = "NONE"
+        if context.trade_plan_status == "PLANNED":
+            context.direction_mode_allowed = False
+            context.direction_mode_blocked_direction = self._blocked_direction(context.trade_direction)
+        if context.direction_mode_fallback_reason is None:
+            context.direction_mode_fallback_reason = "REGIME_TREND_FALLBACK_BLOCK"
+        self._update_debug(context)
+        return context
+
     def _apply_resolved_direction(self, context: MarketContext, allowed_direction: str) -> MarketContext:
         if context.trade_plan_status != "PLANNED":
             self._update_debug(context)
@@ -126,6 +177,12 @@ class DirectionModeEngine:
             return value
         return "UNKNOWN"
 
+    def _normalize_regime(self, regime) -> str:
+        value = str(regime or "UNKNOWN").upper()
+        if value in ("BULLISH", "BEARISH", "RANGE", "UNKNOWN"):
+            return value
+        return "UNKNOWN"
+
     def _blocked_direction(self, direction: str) -> str | None:
         return direction if direction in ("BULLISH", "BEARISH") else None
 
@@ -141,3 +198,5 @@ class DirectionModeEngine:
         context.debug["direction_mode_resolved_direction"] = context.direction_mode_resolved_direction
         context.debug["auto_trend_source_trend"] = context.auto_trend_source_trend
         context.debug["auto_trend_fallback"] = context.auto_trend_fallback
+        context.debug["regime_source_regime"] = context.regime_source_regime
+        context.debug["regime_fallback"] = context.regime_fallback

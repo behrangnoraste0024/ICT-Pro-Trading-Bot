@@ -224,6 +224,28 @@ class MarketContext:
 
     auto_trend_fallback: Optional[str] = None
 
+    regime_source_regime: Optional[str] = None
+
+    regime_fallback: Optional[str] = None
+
+    # ==========================================================
+    # MARKET REGIME
+    # ==========================================================
+
+    market_regime: Optional[str] = None
+
+    market_regime_mode: Optional[str] = None
+
+    market_regime_lookback: Optional[int] = None
+
+    market_regime_threshold_pct: Optional[float] = None
+
+    market_regime_return_pct: Optional[float] = None
+
+    market_regime_fallback: Optional[str] = None
+
+    market_regime_reason: Optional[str] = None
+
     # ==========================================================
     # TRADE QUALITY
     # ==========================================================

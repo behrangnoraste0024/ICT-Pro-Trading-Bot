@@ -13,6 +13,9 @@ def _report() -> StrategyComparisonReport:
                 "recent_50|fixed_1_5r|min_rr=1.5|dir=auto_trend|trend_fallback=block",
                 direction_mode="auto_trend",
                 auto_trend_fallback="block",
+                regime_lookback=50,
+                regime_threshold_pct=0.01,
+                regime_fallback="all",
                 total_trades=10,
                 wins=5,
                 losses=5,
@@ -55,9 +58,12 @@ def test_report_includes_comparison_table() -> None:
 
     assert "Comparison Table:" in output
     assert "Rank | Strategy | DR Mode | Exit | MinRR | Dir | TrendFB" in output
+    assert "Regime | Lookback | Thr | RegimeFB" in output
     assert "Elapsed" in output
     assert "auto_trend" in output
     assert "block" in output
+    assert "rolling_return" in output
+    assert "50" in output
 
 
 def test_report_includes_diagnostics_table() -> None:

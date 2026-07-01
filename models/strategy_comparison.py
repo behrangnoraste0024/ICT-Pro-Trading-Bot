@@ -12,12 +12,21 @@ class StrategyConfigSpec:
     min_risk_reward: float
     direction_mode: str = "all"
     auto_trend_fallback: str = "all"
+    regime_mode: str = "rolling_return"
+    regime_lookback: int = 200
+    regime_threshold_pct: float = 0.0
+    regime_fallback: str = "all"
     event_type: str = "STRATEGY_CONFIG_SPEC"
 
     def __str__(self) -> str:
         value = f"{self.dealing_range_mode}|{self.exit_mode}|min_rr={self.min_risk_reward}|dir={self.direction_mode}"
         if self.direction_mode == "auto_trend":
             value = f"{value}|trend_fallback={self.auto_trend_fallback}"
+        if self.direction_mode == "regime_trend":
+            value = (
+                f"{value}|regime={self.regime_mode}|lookback={self.regime_lookback}|"
+                f"thr={self.regime_threshold_pct}|regime_fb={self.regime_fallback}"
+            )
         return value
 
 
@@ -30,6 +39,10 @@ class StrategyComparisonRow:
     min_risk_reward: float = 2.0
     direction_mode: str = "all"
     auto_trend_fallback: str = "all"
+    regime_mode: str = "rolling_return"
+    regime_lookback: int = 200
+    regime_threshold_pct: float = 0.0
+    regime_fallback: str = "all"
     total_windows: int = 0
     processed_windows: int = 0
     failed_windows: int = 0

@@ -36,6 +36,10 @@ class RollingBacktestEngine:
         min_risk_reward: float | None = None,
         direction_mode: str | None = None,
         auto_trend_fallback: str | None = None,
+        regime_mode: str | None = None,
+        regime_lookback: int | None = None,
+        regime_threshold_pct: float | None = None,
+        regime_fallback: str | None = None,
         enable_diagnostics: bool = True,
     ):
         self.config = config if config is not None else EngineConfig()
@@ -59,6 +63,22 @@ class RollingBacktestEngine:
             if auto_trend_fallback not in EngineConfig.VALID_AUTO_TREND_FALLBACKS:
                 raise ValueError(f"Unsupported auto trend fallback: {auto_trend_fallback}")
             self.config.auto_trend_fallback = auto_trend_fallback
+        if regime_mode is not None:
+            if regime_mode not in EngineConfig.VALID_REGIME_MODES:
+                raise ValueError(f"Unsupported regime mode: {regime_mode}")
+            self.config.regime_mode = regime_mode
+        if regime_lookback is not None:
+            if regime_lookback <= 0:
+                raise ValueError(f"Unsupported regime lookback: {regime_lookback}")
+            self.config.regime_lookback = regime_lookback
+        if regime_threshold_pct is not None:
+            if regime_threshold_pct < 0:
+                raise ValueError(f"Unsupported regime threshold pct: {regime_threshold_pct}")
+            self.config.regime_threshold_pct = regime_threshold_pct
+        if regime_fallback is not None:
+            if regime_fallback not in EngineConfig.VALID_REGIME_FALLBACKS:
+                raise ValueError(f"Unsupported regime fallback: {regime_fallback}")
+            self.config.regime_fallback = regime_fallback
         self.ict_engine = ict_engine if ict_engine is not None else ICTEngine(config=self.config)
         self.min_candles = min_candles
         self.stateful = stateful
@@ -361,6 +381,10 @@ class RollingBacktestEngine:
             min_risk_reward=self.config.min_risk_reward,
             direction_mode=self.config.direction_mode,
             auto_trend_fallback=self.config.auto_trend_fallback,
+            regime_mode=self.config.regime_mode,
+            regime_lookback=self.config.regime_lookback,
+            regime_threshold_pct=self.config.regime_threshold_pct,
+            regime_fallback=self.config.regime_fallback,
             direction_mode_fallback_counts=direction_mode_fallback_counts,
             trade_outcome_diagnostics=trade_outcomes,
             sl_tp_outcome_diagnostics=sl_tp_outcomes,

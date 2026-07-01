@@ -10,6 +10,7 @@ from engine.entry.entry_trigger_engine import EntryTriggerEngine
 from engine.trade_plan.trade_plan_engine import TradePlanEngine
 from engine.trade_management.direction_mode_engine import DirectionModeEngine
 from engine.trade_management.exit_mode_engine import ExitModeEngine
+from engine.market_regime.market_regime_engine import MarketRegimeEngine
 from engine.trade_quality.trade_quality_engine import TradeQualityEngine
 from engine.paper_trade.paper_trade_engine import PaperTradeEngine
 from engine.backtest.backtest_engine import BacktestEngine
@@ -37,6 +38,7 @@ class ICTEngine:
         self.entry_trigger_engine = EntryTriggerEngine()
         self.trade_plan_engine = TradePlanEngine()
         self.exit_mode_engine = ExitModeEngine()
+        self.market_regime_engine = MarketRegimeEngine()
         self.direction_mode_engine = DirectionModeEngine()
         self.trade_quality_engine = TradeQualityEngine(minimum_rr=self.config.min_risk_reward)
         self.paper_trade_engine = PaperTradeEngine()
@@ -62,10 +64,18 @@ class ICTEngine:
         context = self.entry_trigger_engine.detect(context)
         context = self.trade_plan_engine.detect(context)
         context = self.exit_mode_engine.apply(context, self.config.exit_mode)
+        context = self.market_regime_engine.detect(
+            context,
+            self.config.regime_mode,
+            self.config.regime_lookback,
+            self.config.regime_threshold_pct,
+            self.config.regime_fallback,
+        )
         context = self.direction_mode_engine.apply(
             context,
             self.config.direction_mode,
             self.config.auto_trend_fallback,
+            self.config.regime_fallback,
         )
         context = self.trade_quality_engine.detect(context)
         context = self.paper_trade_engine.detect(context)

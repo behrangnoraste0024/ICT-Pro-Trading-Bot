@@ -22,6 +22,10 @@ def format_rolling_backtest_report(
     min_risk_reward = getattr(result, "min_risk_reward", 2.0)
     direction_mode = getattr(result, "direction_mode", "all")
     auto_trend_fallback = getattr(result, "auto_trend_fallback", "all")
+    regime_mode = getattr(result, "regime_mode", "rolling_return")
+    regime_lookback = getattr(result, "regime_lookback", 200)
+    regime_threshold_pct = getattr(result, "regime_threshold_pct", 0.0)
+    regime_fallback = getattr(result, "regime_fallback", "all")
     direction_mode_fallback_counts = getattr(result, "direction_mode_fallback_counts", {})
 
     lines = [
@@ -35,6 +39,10 @@ def format_rolling_backtest_report(
             f"Min Risk Reward   : {min_risk_reward}",
             f"Direction Mode    : {direction_mode}",
             f"Auto Trend Fallback: {auto_trend_fallback}",
+            f"Regime Mode       : {regime_mode}",
+            f"Regime Lookback   : {regime_lookback}",
+            f"Regime Threshold  : {regime_threshold_pct}",
+            f"Regime Fallback   : {regime_fallback}",
             f"Direction Mode Fallbacks: {_format_exit_mode_fallbacks(direction_mode_fallback_counts)}",
     ]
     if max_windows is not None:
