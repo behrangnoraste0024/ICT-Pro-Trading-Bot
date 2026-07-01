@@ -1,0 +1,199 @@
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from engine.backtest.strategy_comparison_engine import (
+    StrategyComparisonEngine,
+    build_current_external_only_specs,
+    build_default_strategy_specs,
+    build_exit_modes_recent_50_specs,
+)
+from models.engine_config import EngineConfig
+from models.strategy_comparison import StrategyComparisonReport, StrategyConfigSpec
+from reporting.strategy_comparison_report import format_strategy_comparison_report
+
+
+DEFAULT_FIXTURE = "tests/fixtures/btcusdt_100_candles.json"
+MAX_CUSTOM_COMBINATIONS = 50
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _parser()
+    args = parser.parse_args(argv)
+
+    if args.min_candles <= 0:
+        print("Error: --min-candles must be greater than 0.")
+        return 1
+    if args.progress_every < 0:
+        print("Error: --progress-every must be greater than or equal to 0.")
+        return 1
+    if args.max_windows is not None and args.max_windows <= 0:
+        print("Error: --max-windows must be greater than 0.")
+        return 1
+
+    fixture_path = Path(args.fixture)
+    if not fixture_path.exists():
+        print(f"Error: fixture not found: {fixture_path}")
+        return 1
+
+    try:
+        specs = build_strategy_specs(args)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    try:
+        descending = _resolve_descending(args.sort_by, args.descending, args.ascending)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 1
+    report = StrategyComparisonEngine().run_comparison(
+        fixture_path=str(fixture_path),
+        strategy_specs=specs,
+        min_candles=args.min_candles,
+        progress_every=args.progress_every,
+        max_windows=args.max_windows,
+    )
+    output = format_strategy_comparison_report(
+        report,
+        sort_by=args.sort_by,
+        descending=descending,
+        show_all=args.show_all,
+    )
+    print(output)
+    if args.output_json:
+        _write_json(report, args.output_json)
+    if args.output_csv:
+        _write_csv(report, args.output_csv)
+    return 0
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Compare rolling backtest strategy configurations.")
+    parser.add_argument("--fixture", default=DEFAULT_FIXTURE)
+    parser.add_argument("--min-candles", type=int, default=50)
+    parser.add_argument("--progress-every", type=int, default=0)
+    parser.add_argument("--max-windows", type=int, default=None)
+    parser.add_argument(
+        "--strategy-set",
+        choices=["default", "exit_modes_recent_50", "current_external_only", "custom"],
+        default="default",
+    )
+    parser.add_argument("--include-original", action="store_true")
+    parser.add_argument("--dealing-range-modes", default="current_external,recent_50")
+    parser.add_argument("--exit-modes", default="fixed_1r,fixed_1_5r,fixed_2r,fixed_3r")
+    parser.add_argument("--min-risk-rewards", default="1.0,1.5,2.0,3.0")
+    parser.add_argument(
+        "--sort-by",
+        choices=["net_pnl", "average_pnl", "win_rate", "max_drawdown", "profit_factor", "total_trades"],
+        default="net_pnl",
+    )
+    parser.add_argument("--descending", action="store_true")
+    parser.add_argument("--ascending", action="store_true")
+    parser.add_argument("--show-all", action="store_true")
+    parser.add_argument("--output-json", default=None)
+    parser.add_argument("--output-csv", default=None)
+    return parser
+
+
+def build_strategy_specs(args) -> list[StrategyConfigSpec]:
+    if args.strategy_set == "default":
+        return build_default_strategy_specs()
+    if args.strategy_set == "exit_modes_recent_50":
+        return build_exit_modes_recent_50_specs()
+    if args.strategy_set == "current_external_only":
+        return build_current_external_only_specs()
+    return build_custom_strategy_specs(
+        dealing_range_modes=args.dealing_range_modes,
+        exit_modes=args.exit_modes,
+        min_risk_rewards=args.min_risk_rewards,
+        include_original=args.include_original,
+    )
+
+
+def build_custom_strategy_specs(
+    dealing_range_modes: str,
+    exit_modes: str,
+    min_risk_rewards: str,
+    include_original: bool = False,
+) -> list[StrategyConfigSpec]:
+    dr_modes = _parse_csv(dealing_range_modes)
+    exits = _parse_csv(exit_modes)
+    min_rrs = _parse_float_csv(min_risk_rewards)
+    for mode in dr_modes:
+        if mode not in EngineConfig.VALID_DEALING_RANGE_MODES:
+            raise ValueError(f"Unsupported dealing range mode: {mode}")
+    for exit_mode in exits:
+        if exit_mode not in EngineConfig.VALID_EXIT_MODES:
+            raise ValueError(f"Unsupported exit mode: {exit_mode}")
+
+    if include_original and "original" not in exits:
+        exits = ["original", *exits]
+
+    specs: list[StrategyConfigSpec] = []
+    for dr_mode in dr_modes:
+        for exit_mode in exits:
+            rr_values = [2.0] if exit_mode == "original" else min_rrs
+            for min_rr in rr_values:
+                name = f"{dr_mode}|{exit_mode}|min_rr={min_rr}"
+                specs.append(StrategyConfigSpec(name, dr_mode, exit_mode, min_rr))
+
+    if len(specs) > MAX_CUSTOM_COMBINATIONS:
+        raise ValueError(f"custom strategy set too large: {len(specs)} combinations")
+    return specs
+
+
+def _parse_csv(value: str) -> list[str]:
+    parsed = [item.strip() for item in value.split(",") if item.strip()]
+    if not parsed:
+        raise ValueError("comma-separated list must not be empty")
+    return parsed
+
+
+def _parse_float_csv(value: str) -> list[float]:
+    parsed = []
+    for item in _parse_csv(value):
+        number = float(item)
+        if number <= 0:
+            raise ValueError(f"min risk reward must be greater than 0: {number}")
+        parsed.append(number)
+    return parsed
+
+
+def _resolve_descending(sort_by: str, descending: bool, ascending: bool) -> bool:
+    if descending and ascending:
+        raise ValueError("--descending and --ascending cannot both be set")
+    if descending:
+        return True
+    if ascending:
+        return False
+    return sort_by != "max_drawdown"
+
+
+def _write_json(report: StrategyComparisonReport, output_path: str) -> None:
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+
+
+def _write_csv(report: StrategyComparisonReport, output_path: str) -> None:
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [row.to_dict() for row in report.strategies]
+    fieldnames = list(rows[0].keys()) if rows else ["strategy_name"]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
