@@ -166,6 +166,7 @@ def test_run_single_strategy_returns_expected_fixture_fields() -> None:
     assert row.strategy_name == "recent_50|fixed_1_5r|min_rr=1.5"
     assert row.total_windows == 100
     assert row.processed_windows == 51
+    assert row.elapsed_seconds is not None
 
 
 def test_run_comparison_returns_same_number_of_rows_as_specs() -> None:
@@ -214,3 +215,52 @@ def test_no_trades_strategy_row_does_not_crash() -> None:
 
     assert row.total_trades == 0
     assert row.profit_factor is None
+
+
+def test_fast_mode_still_returns_comparison_rows() -> None:
+    spec = StrategyConfigSpec("recent_50|fixed_1r|min_rr=1.0", "recent_50", "fixed_1r", 1.0)
+
+    report = StrategyComparisonEngine().run_comparison(
+        FIXTURE_PATH,
+        [spec],
+        min_candles=50,
+        enable_diagnostics=False,
+    )
+
+    assert len(report.strategies) == 1
+    assert report.strategies[0].strategy_name == spec.name
+
+
+def test_fast_mode_key_metrics_match_normal_fixture() -> None:
+    spec = StrategyConfigSpec("recent_50|fixed_1_5r|min_rr=1.5", "recent_50", "fixed_1_5r", 1.5)
+    engine = StrategyComparisonEngine()
+
+    normal = engine.run_single_strategy(FIXTURE_PATH, spec, min_candles=50)
+    fast = engine.run_single_strategy(FIXTURE_PATH, spec, min_candles=50, enable_diagnostics=False)
+
+    assert fast.total_trades == normal.total_trades
+    assert fast.wins == normal.wins
+    assert fast.losses == normal.losses
+    assert fast.net_pnl == normal.net_pnl
+    assert fast.max_drawdown == normal.max_drawdown
+    assert fast.long_pnl == normal.long_pnl
+    assert fast.short_pnl == normal.short_pnl
+
+
+def test_progress_callback_receives_start_finish_and_rolling_events() -> None:
+    events: list[str] = []
+    spec = StrategyConfigSpec("recent_50|fixed_1r|min_rr=1.0", "recent_50", "fixed_1r", 1.0)
+
+    StrategyComparisonEngine().run_comparison(
+        FIXTURE_PATH,
+        [spec],
+        min_candles=50,
+        progress_every=25,
+        enable_diagnostics=False,
+        progress_callback=lambda payload: events.append(payload["event"]),
+    )
+
+    assert "comparison_start" in events
+    assert "strategy_start" in events
+    assert "rolling_progress" in events
+    assert "strategy_finish" in events

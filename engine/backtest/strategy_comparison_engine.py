@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+
 from data.historical_data_utils import load_candles_json
 from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngine
 from models.engine_config import EngineConfig
 from models.rolling_backtest_result import RollingBacktestResult
 from models.strategy_comparison import StrategyComparisonReport, StrategyComparisonRow, StrategyConfigSpec
+
+ComparisonProgressCallback = Callable[[dict], None]
 
 
 def build_default_strategy_specs() -> list[StrategyConfigSpec]:
@@ -46,21 +51,60 @@ class StrategyComparisonEngine:
         min_candles: int = 50,
         progress_every: int = 0,
         max_windows: int | None = None,
+        enable_diagnostics: bool = True,
+        progress_callback: ComparisonProgressCallback | None = None,
+        timeout_per_strategy: float | None = None,
     ) -> StrategyComparisonReport:
         candles = load_candles_json(fixture_path)
         rows: list[StrategyComparisonRow] = []
-        for spec in strategy_specs:
+        total_strategies = len(strategy_specs)
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "event": "comparison_start",
+                    "strategies": total_strategies,
+                    "fixture": fixture_path,
+                }
+            )
+        for index, spec in enumerate(strategy_specs, start=1):
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "event": "strategy_start",
+                        "index": index,
+                        "total": total_strategies,
+                        "strategy": spec.name,
+                    }
+                )
+            started_at = time.perf_counter()
             result = RollingBacktestEngine(
                 min_candles=min_candles,
                 progress_every=progress_every,
                 max_windows=max_windows,
+                progress_callback=self._rolling_progress_callback(progress_callback, spec, index, total_strategies),
+                enable_diagnostics=enable_diagnostics,
                 config=EngineConfig(
                     dealing_range_mode=spec.dealing_range_mode,
                     exit_mode=spec.exit_mode,
                     min_risk_reward=spec.min_risk_reward,
                 ),
             ).run(candles)
-            rows.append(self.row_from_result(spec, result))
+            elapsed_seconds = time.perf_counter() - started_at
+            row = self.row_from_result(spec, result, elapsed_seconds=elapsed_seconds)
+            rows.append(row)
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "event": "strategy_finish",
+                        "index": index,
+                        "total": total_strategies,
+                        "strategy": spec.name,
+                        "trades": row.total_trades,
+                        "pnl": row.net_pnl,
+                        "elapsed_seconds": elapsed_seconds,
+                        "timeout_warning": timeout_per_strategy is not None and elapsed_seconds > timeout_per_strategy,
+                    }
+                )
 
         report = StrategyComparisonReport(fixture=fixture_path, min_candles=min_candles, strategies=rows)
         report.populate_best_fields()
@@ -73,6 +117,7 @@ class StrategyComparisonEngine:
         min_candles: int = 50,
         progress_every: int = 0,
         max_windows: int | None = None,
+        enable_diagnostics: bool = True,
     ) -> StrategyComparisonRow:
         return self.run_comparison(
             fixture_path=fixture_path,
@@ -80,15 +125,21 @@ class StrategyComparisonEngine:
             min_candles=min_candles,
             progress_every=progress_every,
             max_windows=max_windows,
+            enable_diagnostics=enable_diagnostics,
         ).strategies[0]
 
-    def row_from_result(self, spec: StrategyConfigSpec, result: RollingBacktestResult) -> StrategyComparisonRow:
+    def row_from_result(
+        self,
+        spec: StrategyConfigSpec,
+        result: RollingBacktestResult,
+        elapsed_seconds: float | None = None,
+    ) -> StrategyComparisonRow:
         trade_outcomes = result.trade_outcome_diagnostics
         sl_tp = result.sl_tp_outcome_diagnostics
         followthrough = result.entry_followthrough_diagnostics
-        trades = [] if trade_outcomes is None else trade_outcomes.trades
-        direction_counts = {} if trade_outcomes is None else trade_outcomes.trades_by_direction()
-        direction_pnl = {} if trade_outcomes is None else trade_outcomes.pnl_by_direction()
+        trades = self._trade_records(result)
+        direction_counts = self._direction_counts(result)
+        direction_pnl = self._direction_pnl(result)
         profit_factor = self._profit_factor(trades)
 
         return StrategyComparisonRow(
@@ -126,10 +177,15 @@ class StrategyComparisonEngine:
             high_rr_losses=0 if sl_tp is None else sl_tp.high_rr_loss_count,
             next_candle_continuation=0 if followthrough is None else followthrough.next_candle_continuation_count,
             next_candle_rejection=0 if followthrough is None else followthrough.next_candle_rejection_count,
+            elapsed_seconds=elapsed_seconds,
         )
 
     def _profit_factor(self, trades) -> float | None:
-        closed_pnls = [float(trade.pnl) for trade in trades if trade.pnl is not None and trade.result in ("WIN", "LOSS")]
+        closed_pnls = [
+            float(pnl)
+            for trade in trades
+            if (pnl := self._closed_pnl(trade)) is not None
+        ]
         if not closed_pnls:
             return None
         gross_profit = sum(pnl for pnl in closed_pnls if pnl > 0)
@@ -139,3 +195,72 @@ class StrategyComparisonEngine:
         if gross_profit > 0:
             return None
         return None
+
+    def _closed_pnl(self, trade) -> float | None:
+        result = getattr(trade, "result", None)
+        if result in ("WIN", "LOSS"):
+            return getattr(trade, "pnl", None)
+        status = getattr(trade, "paper_trade_status", None)
+        if status in ("PAPER_CLOSED_TP", "PAPER_CLOSED_SL"):
+            return getattr(trade, "paper_pnl", None)
+        return None
+
+    def _trade_records(self, result: RollingBacktestResult) -> list:
+        if result.trade_outcome_diagnostics is not None:
+            return result.trade_outcome_diagnostics.trades
+        return result.trade_outcome_contexts
+
+    def _direction_counts(self, result: RollingBacktestResult) -> dict[str, int]:
+        if result.trade_outcome_diagnostics is not None:
+            return result.trade_outcome_diagnostics.trades_by_direction()
+        counts: dict[str, int] = {}
+        for context in result.trade_outcome_contexts:
+            direction = self._direction_from_context(context)
+            if direction is None:
+                continue
+            counts[direction] = counts.get(direction, 0) + 1
+        return counts
+
+    def _direction_pnl(self, result: RollingBacktestResult) -> dict[str, float]:
+        if result.trade_outcome_diagnostics is not None:
+            return result.trade_outcome_diagnostics.pnl_by_direction()
+        pnl: dict[str, float] = {}
+        for context in result.trade_outcome_contexts:
+            direction = self._direction_from_context(context)
+            if direction is None:
+                continue
+            pnl[direction] = pnl.get(direction, 0.0) + float(getattr(context, "paper_pnl", 0) or 0)
+        return pnl
+
+    def _direction_from_context(self, context) -> str | None:
+        direction = getattr(context, "paper_trade_direction", None)
+        if direction == "BULLISH":
+            return "LONG"
+        if direction == "BEARISH":
+            return "SHORT"
+        if direction in ("LONG", "SHORT"):
+            return direction
+        return None
+
+    def _rolling_progress_callback(
+        self,
+        progress_callback: ComparisonProgressCallback | None,
+        spec: StrategyConfigSpec,
+        index: int,
+        total: int,
+    ):
+        if progress_callback is None:
+            return None
+
+        def callback(payload: dict) -> None:
+            progress_callback(
+                {
+                    "event": "rolling_progress",
+                    "index": index,
+                    "total": total,
+                    "strategy": spec.name,
+                    **payload,
+                }
+            )
+
+        return callback

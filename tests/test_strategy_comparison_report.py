@@ -27,6 +27,7 @@ def _report() -> StrategyComparisonReport:
                 high_rr_losses=3,
                 next_candle_continuation=4,
                 next_candle_rejection=5,
+                elapsed_seconds=12.345,
             )
         ],
     )
@@ -52,6 +53,7 @@ def test_report_includes_comparison_table() -> None:
 
     assert "Comparison Table:" in output
     assert "Rank | Strategy | DR Mode | Exit | MinRR" in output
+    assert "Elapsed" in output
 
 
 def test_report_includes_diagnostics_table() -> None:
@@ -68,6 +70,7 @@ def test_report_rounds_floats_to_two_decimals() -> None:
     assert "50.10" in output
     assert "596.44" in output
     assert "1.23" in output
+    assert "12.35" in output
 
 
 def test_report_displays_long_and_short_pnl() -> None:

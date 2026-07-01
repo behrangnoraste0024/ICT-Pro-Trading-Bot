@@ -34,6 +34,7 @@ class RollingBacktestEngine:
         dealing_range_mode: str | None = None,
         exit_mode: str | None = None,
         min_risk_reward: float | None = None,
+        enable_diagnostics: bool = True,
     ):
         self.config = config if config is not None else EngineConfig()
         if dealing_range_mode is not None:
@@ -54,6 +55,7 @@ class RollingBacktestEngine:
         self.progress_callback = progress_callback
         self.progress_every = progress_every
         self.max_windows = max_windows
+        self.enable_diagnostics = enable_diagnostics
         self.backtest_engine = BacktestEngine()
         self.diagnostics_engine = BacktestDiagnosticsEngine()
         self.trade_outcome_diagnostics_engine = TradeOutcomeDiagnosticsEngine()
@@ -304,13 +306,21 @@ class RollingBacktestEngine:
     ) -> RollingBacktestResult:
         summary = self.backtest_engine.summarize_contexts(contexts)
         diagnostics_source = contexts if diagnostic_contexts is None else diagnostic_contexts
-        diagnostics = self.diagnostics_engine.summarize_contexts(diagnostics_source)
         fallback_count = self._range_mode_fallback_count(diagnostics_source)
         exit_mode_fallback_counts = self._exit_mode_fallback_counts(diagnostics_source)
-        trade_outcomes = self.trade_outcome_diagnostics_engine.summarize_contexts(contexts)
-        sl_tp_outcomes = self.sl_tp_outcome_diagnostics_engine.summarize_trade_contexts(contexts)
-        entry_followthrough = self.entry_followthrough_diagnostics_engine.summarize_trade_contexts(contexts)
-        virtual_exit = self.virtual_exit_diagnostics_engine.summarize_trade_contexts(contexts)
+        diagnostics = None
+        diagnostics_windows_analyzed = 0
+        trade_outcomes = None
+        sl_tp_outcomes = None
+        entry_followthrough = None
+        virtual_exit = None
+        if self.enable_diagnostics:
+            diagnostics = self.diagnostics_engine.summarize_contexts(diagnostics_source)
+            diagnostics_windows_analyzed = diagnostics.windows_analyzed
+            trade_outcomes = self.trade_outcome_diagnostics_engine.summarize_contexts(contexts)
+            sl_tp_outcomes = self.sl_tp_outcome_diagnostics_engine.summarize_trade_contexts(contexts)
+            entry_followthrough = self.entry_followthrough_diagnostics_engine.summarize_trade_contexts(contexts)
+            virtual_exit = self.virtual_exit_diagnostics_engine.summarize_trade_contexts(contexts)
         return RollingBacktestResult(
             total_windows=total_windows,
             processed_windows=processed_windows,
@@ -332,7 +342,7 @@ class RollingBacktestEngine:
             closed_by_state=closed_by_state,
             duplicate_signals_skipped=duplicate_signals_skipped,
             diagnostics=diagnostics,
-            diagnostics_windows_analyzed=diagnostics.windows_analyzed,
+            diagnostics_windows_analyzed=diagnostics_windows_analyzed,
             dealing_range_mode=self.config.dealing_range_mode,
             range_mode_fallback_count=fallback_count,
             exit_mode=self.config.exit_mode,

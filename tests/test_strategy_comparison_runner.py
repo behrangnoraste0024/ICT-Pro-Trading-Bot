@@ -24,6 +24,8 @@ def test_default_run_on_fixture_exits_successfully(capsys) -> None:
 
     captured = capsys.readouterr()
     assert return_code == 0
+    assert "[strategy-comparison] starting" in captured.out
+    assert "[strategy-comparison] finished" in captured.out
     assert "===== STRATEGY COMPARISON REPORT =====" in captured.out
     assert "Strategies   : 7" in captured.out
 
@@ -70,6 +72,45 @@ def test_custom_strategy_set_works(capsys) -> None:
     assert "recent_50|fixed_1_5r|min_rr=1.5" in captured.out
 
 
+def test_fast_mode_exits_successfully(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "current_external_only",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "===== STRATEGY COMPARISON REPORT =====" in captured.out
+
+
+def test_progress_every_prints_rolling_progress(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "exit_modes_recent_50",
+            "--progress-every",
+            "25",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "processed=" in captured.out
+    assert "duplicates=" in captured.out
+
+
 def test_output_json_writes_valid_json(tmp_path) -> None:
     output_path = tmp_path / "comparison.json"
 
@@ -90,6 +131,7 @@ def test_output_json_writes_valid_json(tmp_path) -> None:
     assert return_code == 0
     assert data["event_type"] == "STRATEGY_COMPARISON_REPORT"
     assert data["strategies"]
+    assert "elapsed_seconds" in data["strategies"][0]
 
 
 def test_output_csv_writes_headers(tmp_path) -> None:
@@ -112,6 +154,7 @@ def test_output_csv_writes_headers(tmp_path) -> None:
     assert return_code == 0
     assert "strategy_name" in text.splitlines()[0]
     assert "net_pnl" in text.splitlines()[0]
+    assert "elapsed_seconds" in text.splitlines()[0]
 
 
 def test_invalid_strategy_set_rejected_by_argparse() -> None:

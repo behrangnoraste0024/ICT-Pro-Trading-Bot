@@ -38,6 +38,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.max_windows is not None and args.max_windows <= 0:
         print("Error: --max-windows must be greater than 0.")
         return 1
+    if args.timeout_per_strategy is not None and args.timeout_per_strategy <= 0:
+        print("Error: --timeout-per-strategy must be greater than 0.")
+        return 1
 
     fixture_path = Path(args.fixture)
     if not fixture_path.exists():
@@ -61,6 +64,9 @@ def main(argv: list[str] | None = None) -> int:
         min_candles=args.min_candles,
         progress_every=args.progress_every,
         max_windows=args.max_windows,
+        enable_diagnostics=not args.fast,
+        progress_callback=_print_progress,
+        timeout_per_strategy=args.timeout_per_strategy,
     )
     output = format_strategy_comparison_report(
         report,
@@ -76,12 +82,57 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _print_progress(payload: dict) -> None:
+    event = payload.get("event")
+    if event == "comparison_start":
+        print(
+            f"[strategy-comparison] strategies={payload['strategies']} fixture={payload['fixture']}",
+            flush=True,
+        )
+        print(
+            "[strategy-comparison] This may take several minutes. Use --fast or --max-windows for quicker checks.",
+            flush=True,
+        )
+        return
+    if event == "strategy_start":
+        print(
+            f"[strategy-comparison] starting {payload['index']}/{payload['total']} {payload['strategy']}",
+            flush=True,
+        )
+        return
+    if event == "strategy_finish":
+        print(
+            f"[strategy-comparison] finished {payload['index']}/{payload['total']} "
+            f"{payload['strategy']} trades={payload['trades']} pnl={payload['pnl']:.2f} "
+            f"elapsed={payload['elapsed_seconds']:.2f}s",
+            flush=True,
+        )
+        if payload.get("timeout_warning"):
+            print(
+                f"[strategy-comparison] warning {payload['strategy']} exceeded timeout-per-strategy",
+                flush=True,
+            )
+        return
+    if event == "rolling_progress":
+        print(
+            "[strategy-comparison] "
+            f"{payload['index']}/{payload['total']} {payload['strategy']} "
+            f"processed={payload['processed_windows']} skipped={payload['skipped_windows']} "
+            f"failed={payload['failed_windows']} opened={payload['opened_trades']} "
+            f"closed={payload['closed_by_state']} duplicates={payload['duplicate_signals_skipped']} "
+            f"/ total={payload['total_windows']}",
+            flush=True,
+        )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Compare rolling backtest strategy configurations.")
     parser.add_argument("--fixture", default=DEFAULT_FIXTURE)
     parser.add_argument("--min-candles", type=int, default=50)
     parser.add_argument("--progress-every", type=int, default=0)
     parser.add_argument("--max-windows", type=int, default=None)
+    parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--timeout-per-strategy", type=float, default=None)
     parser.add_argument(
         "--strategy-set",
         choices=["default", "exit_modes_recent_50", "current_external_only", "custom"],

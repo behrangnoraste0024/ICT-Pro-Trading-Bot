@@ -53,6 +53,7 @@ class StrategyComparisonRow:
     high_rr_losses: int = 0
     next_candle_continuation: int = 0
     next_candle_rejection: int = 0
+    elapsed_seconds: float | None = None
     event_type: str = "STRATEGY_COMPARISON_ROW"
 
     def to_dict(self) -> dict[str, Any]:
