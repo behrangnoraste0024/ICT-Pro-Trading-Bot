@@ -17,6 +17,13 @@ from reporting.rolling_backtest_report import format_rolling_backtest_report
 DEFAULT_FIXTURE = "tests/fixtures/btcusdt_100_candles.json"
 
 
+def positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than 0")
+    return parsed
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run deterministic rolling backtest from a candle fixture.")
     parser.add_argument("--fixture", default=DEFAULT_FIXTURE)
@@ -24,6 +31,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--progress-every", type=int, default=100)
     parser.add_argument("--max-windows", type=int, default=None)
     parser.add_argument("--dealing-range-mode", choices=["current_external", "recent_50"], default="current_external")
+    parser.add_argument(
+        "--exit-mode",
+        choices=["original", "fixed_1r", "fixed_1_5r", "fixed_2r", "fixed_3r"],
+        default="original",
+    )
+    parser.add_argument("--min-risk-reward", type=positive_float, default=2.0)
     parser.add_argument("--show-trades", action="store_true")
     parser.add_argument("--debug-first-trade-metadata", action="store_true")
     args = parser.parse_args(argv)
@@ -56,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
         progress_every=args.progress_every,
         max_windows=args.max_windows,
         dealing_range_mode=args.dealing_range_mode,
+        exit_mode=args.exit_mode,
+        min_risk_reward=args.min_risk_reward,
     ).run(candles)
     report = format_rolling_backtest_report(
         result,

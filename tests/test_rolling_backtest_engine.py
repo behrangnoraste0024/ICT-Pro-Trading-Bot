@@ -674,3 +674,51 @@ def test_no_trades_produces_empty_trade_outcome_diagnostics() -> None:
 
     assert result.trade_outcome_diagnostics is not None
     assert result.trade_outcome_diagnostics.total_trades == 0
+
+
+def test_default_exit_mode_is_original() -> None:
+    result = RollingBacktestEngine(ict_engine=RecordingICTEngine(), min_candles=1).run(_candles(1))
+
+    assert result.exit_mode == "original"
+    assert result.min_risk_reward == 2.0
+
+
+def test_exit_mode_reaches_default_ict_engine_config() -> None:
+    engine = RollingBacktestEngine(min_candles=50, exit_mode="fixed_1_5r")
+
+    assert engine.config.exit_mode == "fixed_1_5r"
+    assert engine.ict_engine.config.exit_mode == "fixed_1_5r"
+
+
+def test_result_reports_fixed_exit_mode() -> None:
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(),
+        min_candles=1,
+        exit_mode="fixed_1_5r",
+    ).run(_candles(1))
+
+    assert result.exit_mode == "fixed_1_5r"
+
+
+def test_result_reports_custom_min_risk_reward() -> None:
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(),
+        min_candles=1,
+        min_risk_reward=1.5,
+    ).run(_candles(1))
+
+    assert result.min_risk_reward == 1.5
+
+
+def test_exit_mode_fallback_counts_are_reported() -> None:
+    context = _context("NO_PAPER_TRADE")
+    context.exit_mode_fallback_reason = "NO_PLANNED_TRADE"
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=[context]),
+        min_candles=1,
+        stateful=False,
+        exit_mode="fixed_1_5r",
+    ).run(_candles(1))
+
+    assert result.exit_mode_fallback_counts == {"NO_PLANNED_TRADE": 1}

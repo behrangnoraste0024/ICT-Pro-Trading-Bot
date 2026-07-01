@@ -34,6 +34,9 @@ class RollingBacktestResult:
     diagnostics_windows_analyzed: int = 0
     dealing_range_mode: str = "current_external"
     range_mode_fallback_count: int = 0
+    exit_mode: str = "original"
+    exit_mode_fallback_counts: dict[str, int] = field(default_factory=dict)
+    min_risk_reward: float = 2.0
     trade_outcome_diagnostics: TradeOutcomeDiagnostics | None = None
     sl_tp_outcome_diagnostics: SLTPOutcomeDiagnostics | None = None
     entry_followthrough_diagnostics: EntryFollowthroughDiagnostics | None = None

@@ -189,6 +189,22 @@ class MarketContext:
     trade_plan_blockers: list = field(default_factory=list)
 
     # ==========================================================
+    # EXIT MODE
+    # ==========================================================
+
+    exit_mode_requested: str = "original"
+
+    exit_mode_applied: str = "original"
+
+    exit_mode_target_r: Optional[float] = None
+
+    exit_mode_original_take_profit: Optional[float] = None
+
+    exit_mode_new_take_profit: Optional[float] = None
+
+    exit_mode_fallback_reason: str = "ORIGINAL_MODE"
+
+    # ==========================================================
     # TRADE QUALITY
     # ==========================================================
 

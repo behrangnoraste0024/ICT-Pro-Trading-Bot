@@ -8,6 +8,7 @@ from engine.ote.ote_engine import OTEEngine
 from engine.setup.setup_engine import SetupEngine
 from engine.entry.entry_trigger_engine import EntryTriggerEngine
 from engine.trade_plan.trade_plan_engine import TradePlanEngine
+from engine.trade_management.exit_mode_engine import ExitModeEngine
 from engine.trade_quality.trade_quality_engine import TradeQualityEngine
 from engine.paper_trade.paper_trade_engine import PaperTradeEngine
 from engine.backtest.backtest_engine import BacktestEngine
@@ -34,7 +35,8 @@ class ICTEngine:
         self.setup_engine = SetupEngine()
         self.entry_trigger_engine = EntryTriggerEngine()
         self.trade_plan_engine = TradePlanEngine()
-        self.trade_quality_engine = TradeQualityEngine()
+        self.exit_mode_engine = ExitModeEngine()
+        self.trade_quality_engine = TradeQualityEngine(minimum_rr=self.config.min_risk_reward)
         self.paper_trade_engine = PaperTradeEngine()
         self.backtest_engine = BacktestEngine()
 
@@ -57,6 +59,7 @@ class ICTEngine:
         context = self.setup_engine.detect(context)
         context = self.entry_trigger_engine.detect(context)
         context = self.trade_plan_engine.detect(context)
+        context = self.exit_mode_engine.apply(context, self.config.exit_mode)
         context = self.trade_quality_engine.detect(context)
         context = self.paper_trade_engine.detect(context)
         context = self.backtest_engine.detect(context)

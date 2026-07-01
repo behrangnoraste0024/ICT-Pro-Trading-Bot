@@ -52,6 +52,19 @@ def test_rr_too_low_rejected() -> None:
     assert "RR_TOO_LOW" in context.trade_quality_blockers
 
 
+def test_lower_minimum_rr_approves_1_5r_trade() -> None:
+    context = _planned_context()
+    context.planned_take_profit = 103
+    context.planned_reward = 3
+    context.planned_risk_reward = 1.5
+
+    context = TradeQualityEngine(minimum_rr=1.5).detect(context)
+
+    assert context.trade_quality_status == "APPROVED"
+    assert context.trade_quality_score == 100
+    assert context.trade_quality_blockers == []
+
+
 def test_risk_too_tight_rejected() -> None:
     context = _planned_context()
     context.planned_risk = 0.01

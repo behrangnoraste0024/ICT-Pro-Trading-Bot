@@ -32,10 +32,22 @@ class RollingBacktestEngine:
         max_windows: int | None = None,
         config: EngineConfig | None = None,
         dealing_range_mode: str | None = None,
+        exit_mode: str | None = None,
+        min_risk_reward: float | None = None,
     ):
         self.config = config if config is not None else EngineConfig()
         if dealing_range_mode is not None:
+            if dealing_range_mode not in EngineConfig.VALID_DEALING_RANGE_MODES:
+                raise ValueError(f"Unsupported dealing range mode: {dealing_range_mode}")
             self.config.dealing_range_mode = dealing_range_mode
+        if exit_mode is not None:
+            if exit_mode not in EngineConfig.VALID_EXIT_MODES:
+                raise ValueError(f"Unsupported exit mode: {exit_mode}")
+            self.config.exit_mode = exit_mode
+        if min_risk_reward is not None:
+            if min_risk_reward <= 0:
+                raise ValueError(f"Unsupported min risk reward: {min_risk_reward}")
+            self.config.min_risk_reward = min_risk_reward
         self.ict_engine = ict_engine if ict_engine is not None else ICTEngine(config=self.config)
         self.min_candles = min_candles
         self.stateful = stateful
@@ -294,6 +306,7 @@ class RollingBacktestEngine:
         diagnostics_source = contexts if diagnostic_contexts is None else diagnostic_contexts
         diagnostics = self.diagnostics_engine.summarize_contexts(diagnostics_source)
         fallback_count = self._range_mode_fallback_count(diagnostics_source)
+        exit_mode_fallback_counts = self._exit_mode_fallback_counts(diagnostics_source)
         trade_outcomes = self.trade_outcome_diagnostics_engine.summarize_contexts(contexts)
         sl_tp_outcomes = self.sl_tp_outcome_diagnostics_engine.summarize_trade_contexts(contexts)
         entry_followthrough = self.entry_followthrough_diagnostics_engine.summarize_trade_contexts(contexts)
@@ -322,6 +335,9 @@ class RollingBacktestEngine:
             diagnostics_windows_analyzed=diagnostics.windows_analyzed,
             dealing_range_mode=self.config.dealing_range_mode,
             range_mode_fallback_count=fallback_count,
+            exit_mode=self.config.exit_mode,
+            exit_mode_fallback_counts=exit_mode_fallback_counts,
+            min_risk_reward=self.config.min_risk_reward,
             trade_outcome_diagnostics=trade_outcomes,
             sl_tp_outcome_diagnostics=sl_tp_outcomes,
             entry_followthrough_diagnostics=entry_followthrough,
@@ -336,3 +352,12 @@ class RollingBacktestEngine:
             if getattr(context, "dealing_range_mode_requested", self.config.dealing_range_mode)
             != getattr(context, "dealing_range_mode_applied", self.config.dealing_range_mode)
         )
+
+    def _exit_mode_fallback_counts(self, contexts: list[MarketContext]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for context in contexts:
+            reason = getattr(context, "exit_mode_fallback_reason", None)
+            if reason is None:
+                continue
+            counts[reason] = counts.get(reason, 0) + 1
+        return counts

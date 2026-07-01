@@ -735,11 +735,151 @@ def test_runner_default_report_includes_current_external_mode(capsys) -> None:
     captured = capsys.readouterr()
     assert return_code == 0
     assert "Dealing Range Mode : current_external" in captured.out
+    assert "Exit Mode         : original" in captured.out
+    assert "Min Risk Reward   : 2.0" in captured.out
+
+
+def test_runner_accepts_original_exit_mode(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--exit-mode",
+            "original",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Exit Mode         : original" in captured.out
+
+
+def test_runner_accepts_fixed_1_5r_exit_mode(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--exit-mode",
+            "fixed_1_5r",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Exit Mode         : fixed_1_5r" in captured.out
+    assert "Min Risk Reward   : 2.0" in captured.out
+
+
+def test_runner_accepts_min_risk_reward(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--min-risk-reward",
+            "1.5",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Min Risk Reward   : 1.5" in captured.out
+
+
+def test_runner_accepts_recent_50_with_fixed_1_5r_exit_mode(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--dealing-range-mode",
+            "recent_50",
+            "--exit-mode",
+            "fixed_1_5r",
+            "--show-trades",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Dealing Range Mode : recent_50" in captured.out
+    assert "Exit Mode         : fixed_1_5r" in captured.out
+    assert "Trade Quality Blockers:" in captured.out
+    assert "RR_TOO_LOW" in captured.out
+
+
+def test_runner_fixed_1_5r_with_lower_min_rr_produces_fixture_trade(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--dealing-range-mode",
+            "recent_50",
+            "--exit-mode",
+            "fixed_1_5r",
+            "--min-risk-reward",
+            "1.5",
+            "--show-trades",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Exit Mode         : fixed_1_5r" in captured.out
+    assert "Min Risk Reward   : 1.5" in captured.out
+    assert "Total Trades      : 1" in captured.out
+    assert "tp=60084.115" in captured.out
+    assert "rr=1.5" in captured.out
+
+
+def test_formatter_includes_exit_mode() -> None:
+    result = _result()
+    result.exit_mode = "fixed_1_5r"
+    result.exit_mode_fallback_counts = {"NO_PLANNED_TRADE": 2}
+    result.min_risk_reward = 1.5
+
+    report = format_rolling_backtest_report(result, FIXTURE_PATH, min_candles=50)
+
+    assert "Exit Mode         : fixed_1_5r" in report
+    assert "Exit Mode Fallbacks: NO_PLANNED_TRADE=2" in report
+    assert "Min Risk Reward   : 1.5" in report
 
 
 def test_invalid_dealing_range_mode_choice_fails(capsys) -> None:
     try:
         main(["--fixture", FIXTURE_PATH, "--dealing-range-mode", "bad_mode"])
+    except SystemExit as exc:
+        assert exc.code == 2
+
+
+def test_invalid_exit_mode_choice_fails(capsys) -> None:
+    try:
+        main(["--fixture", FIXTURE_PATH, "--exit-mode", "fixed_4r"])
+    except SystemExit as exc:
+        assert exc.code == 2
+
+
+def test_invalid_min_risk_reward_choice_fails(capsys) -> None:
+    try:
+        main(["--fixture", FIXTURE_PATH, "--min-risk-reward", "0"])
     except SystemExit as exc:
         assert exc.code == 2
 

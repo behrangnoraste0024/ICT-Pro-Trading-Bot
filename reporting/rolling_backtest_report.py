@@ -17,6 +17,9 @@ def format_rolling_backtest_report(
     duplicate_signals_skipped = getattr(result, "duplicate_signals_skipped", 0)
     dealing_range_mode = getattr(result, "dealing_range_mode", "current_external")
     range_mode_fallback_count = getattr(result, "range_mode_fallback_count", 0)
+    exit_mode = getattr(result, "exit_mode", "original")
+    exit_mode_fallback_counts = getattr(result, "exit_mode_fallback_counts", {})
+    min_risk_reward = getattr(result, "min_risk_reward", 2.0)
 
     lines = [
         "===== ROLLING BACKTEST REPORT =====",
@@ -24,6 +27,9 @@ def format_rolling_backtest_report(
             f"Min Candles       : {min_candles}",
             f"Dealing Range Mode : {dealing_range_mode}",
             f"Range Mode Fallbacks: {range_mode_fallback_count}",
+            f"Exit Mode         : {exit_mode}",
+            f"Exit Mode Fallbacks: {_format_exit_mode_fallbacks(exit_mode_fallback_counts)}",
+            f"Min Risk Reward   : {min_risk_reward}",
     ]
     if max_windows is not None:
         lines.append(f"Max Windows       : {max_windows}")
@@ -115,6 +121,12 @@ def _format_trade_row(trade) -> str:
         f"setup_score={trade.setup_score} | trigger={trade.entry_trigger_type} | "
         f"zone={trade.current_price_zone} | in_ote={trade.in_ote_zone} | poi={trade.matched_poi_count}:{poi_types}"
     )
+
+
+def _format_exit_mode_fallbacks(fallback_counts: dict[str, int] | None) -> str:
+    if not fallback_counts:
+        return "None"
+    return ", ".join(f"{reason}={count}" for reason, count in sorted(fallback_counts.items()))
 
 
 def _format_sl_tp_outcome_diagnostics(diagnostics, show_trades: bool = False) -> list[str]:
