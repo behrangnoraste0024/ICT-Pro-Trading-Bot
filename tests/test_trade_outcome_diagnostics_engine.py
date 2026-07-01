@@ -225,6 +225,45 @@ def test_missing_trade_metadata_stays_none_instead_of_context_defaults() -> None
     assert record.in_ote_zone is None
 
 
+def test_collect_from_context_extracts_regime_and_direction_metadata() -> None:
+    context = _trade_context()
+    context.market_regime = "BEARISH"
+    context.market_regime_mode = "rolling_return"
+    context.market_regime_lookback = 200
+    context.market_regime_threshold_pct = 0.01
+    context.market_regime_return_pct = -0.0234
+    context.market_regime_fallback = "all"
+    context.market_regime_reason = "BEARISH_ROLLING_RETURN"
+    context.direction_mode_requested = "regime_trend"
+    context.direction_mode_applied = "regime_trend"
+    context.direction_mode_allowed = True
+    context.direction_mode_fallback_reason = "REGIME_TREND_BEARISH_SHORT_ONLY"
+    context.direction_mode_resolved_direction = "SHORT"
+    context.regime_source_regime = "BEARISH"
+    context.regime_fallback = "all"
+
+    record = TradeOutcomeDiagnosticsEngine().collect_from_context(context, 1)
+
+    assert record.market_regime == "BEARISH"
+    assert record.market_regime_return_pct == -0.0234
+    assert record.market_regime_reason == "BEARISH_ROLLING_RETURN"
+    assert record.direction_mode_applied == "regime_trend"
+    assert record.direction_mode_allowed is True
+    assert record.direction_mode_resolved_direction == "SHORT"
+    assert record.regime_source_regime == "BEARISH"
+
+
+def test_collect_from_context_preserves_unknown_market_regime() -> None:
+    context = _trade_context()
+    context.market_regime = "UNKNOWN"
+    context.market_regime_reason = "INSUFFICIENT_CANDLES"
+
+    record = TradeOutcomeDiagnosticsEngine().collect_from_context(context, 1)
+
+    assert record.market_regime == "UNKNOWN"
+    assert record.market_regime_reason == "INSUFFICIENT_CANDLES"
+
+
 def test_blockers_and_reasons_copied_safely() -> None:
     context = _trade_context()
     context.setup_blockers = ["A"]

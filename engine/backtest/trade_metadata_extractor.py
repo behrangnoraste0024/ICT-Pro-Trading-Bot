@@ -165,6 +165,23 @@ METADATA_PATHS: dict[str, list[str]] = {
         "latest_confirmed_entry_trigger.current_price",
         "latest_entry_trigger.current_price",
     ],
+    "market_regime": ["market_regime"],
+    "market_regime_mode": ["market_regime_mode"],
+    "market_regime_lookback": ["market_regime_lookback"],
+    "market_regime_threshold_pct": ["market_regime_threshold_pct"],
+    "market_regime_return_pct": ["market_regime_return_pct"],
+    "market_regime_fallback": ["market_regime_fallback"],
+    "market_regime_reason": ["market_regime_reason"],
+    "direction_mode_requested": ["direction_mode_requested"],
+    "direction_mode_applied": ["direction_mode_applied"],
+    "direction_mode_allowed": ["direction_mode_allowed"],
+    "direction_mode_blocked_direction": ["direction_mode_blocked_direction"],
+    "direction_mode_fallback_reason": ["direction_mode_fallback_reason"],
+    "direction_mode_resolved_direction": ["direction_mode_resolved_direction"],
+    "auto_trend_source_trend": ["auto_trend_source_trend"],
+    "auto_trend_fallback": ["auto_trend_fallback"],
+    "regime_source_regime": ["regime_source_regime"],
+    "regime_fallback": ["regime_fallback"],
 }
 
 MISSING_VALUES: dict[str, set[Any]] = {
@@ -194,6 +211,8 @@ CANDIDATE_TOKENS = (
     "premium",
     "discount",
     "range",
+    "regime",
+    "direction",
 )
 
 NESTED_CANDIDATE_FIELDS = (

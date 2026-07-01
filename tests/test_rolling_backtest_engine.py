@@ -621,6 +621,57 @@ def test_rolling_result_includes_virtual_exit_diagnostics() -> None:
     assert result.virtual_exit_diagnostics is not None
 
 
+def test_rolling_result_includes_regime_direction_diagnostics() -> None:
+    result = RollingBacktestEngine(ict_engine=RecordingICTEngine(), min_candles=1).run(_candles(1))
+
+    assert result.regime_direction_diagnostics is not None
+
+
+def test_regime_direction_diagnostics_computed_with_trades() -> None:
+    context = _context("PAPER_CLOSED_TP", 10)
+    context.paper_trade_direction = "BEARISH"
+    context.market_regime = "BEARISH"
+    context.market_regime_reason = "BEARISH_ROLLING_RETURN"
+    context.direction_mode_fallback_reason = "REGIME_TREND_BEARISH_SHORT_ONLY"
+    context.direction_mode_resolved_direction = "SHORT"
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=[context]),
+        min_candles=1,
+        stateful=False,
+    ).run(_candles(1))
+
+    assert result.regime_direction_diagnostics is not None
+    assert result.regime_direction_diagnostics.by_direction_regime["SHORT|BEARISH"].pnl == 10
+
+
+def test_regime_direction_diagnostics_no_trades_does_not_crash() -> None:
+    result = RollingBacktestEngine(ict_engine=RecordingICTEngine(), min_candles=1).run(_candles(1))
+
+    assert result.regime_direction_diagnostics is not None
+    assert result.regime_direction_diagnostics.total_trades == 0
+
+
+def test_regime_direction_diagnostics_available_in_fast_mode() -> None:
+    context = _context("PAPER_CLOSED_TP", 10)
+    context.paper_trade_direction = "BEARISH"
+    context.market_regime = "BEARISH"
+    context.market_regime_reason = "BEARISH_ROLLING_RETURN"
+    context.direction_mode_fallback_reason = "ALL_MODE"
+    context.direction_mode_resolved_direction = "ALL"
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=[context]),
+        min_candles=1,
+        stateful=False,
+        enable_diagnostics=False,
+    ).run(_candles(1))
+
+    assert result.trade_outcome_diagnostics is not None
+    assert result.regime_direction_diagnostics is not None
+    assert result.regime_direction_diagnostics.total_trades == 1
+
+
 def test_virtual_exit_total_trades_matches_trade_outcomes() -> None:
     context = _context("PAPER_CLOSED_SL", -10)
     context.paper_trade_direction = "BULLISH"

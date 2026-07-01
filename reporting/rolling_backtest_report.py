@@ -71,6 +71,9 @@ def format_rolling_backtest_report(
     trade_outcomes = getattr(result, "trade_outcome_diagnostics", None)
     if trade_outcomes is not None:
         lines.extend(_format_trade_outcome_diagnostics(trade_outcomes, show_trades=show_trades))
+    regime_direction = getattr(result, "regime_direction_diagnostics", None)
+    if regime_direction is not None:
+        lines.extend(_format_regime_direction_diagnostics(regime_direction))
     sl_tp_outcomes = getattr(result, "sl_tp_outcome_diagnostics", None)
     if sl_tp_outcomes is not None:
         lines.extend(_format_sl_tp_outcome_diagnostics(sl_tp_outcomes, show_trades=show_trades))
@@ -133,7 +136,10 @@ def _format_trade_row(trade) -> str:
         f"entry={trade.entry_price} | sl={trade.stop_loss} | tp={trade.take_profit} | "
         f"exit={trade.exit_price} | pnl={trade.pnl} | rr={trade.risk_reward} | "
         f"setup_score={trade.setup_score} | trigger={trade.entry_trigger_type} | "
-        f"zone={trade.current_price_zone} | in_ote={trade.in_ote_zone} | poi={trade.matched_poi_count}:{poi_types}"
+        f"zone={trade.current_price_zone} | in_ote={trade.in_ote_zone} | poi={trade.matched_poi_count}:{poi_types} | "
+        f"regime={trade.market_regime} | regime_ret={trade.market_regime_return_pct} | "
+        f"regime_reason={trade.market_regime_reason} | dir_mode={trade.direction_mode_applied} | "
+        f"resolved={trade.direction_mode_resolved_direction} | dir_reason={trade.direction_mode_fallback_reason}"
     )
 
 
@@ -141,6 +147,46 @@ def _format_exit_mode_fallbacks(fallback_counts: dict[str, int] | None) -> str:
     if not fallback_counts:
         return "None"
     return ", ".join(f"{reason}={count}" for reason, count in sorted(fallback_counts.items()))
+
+
+def _format_regime_direction_diagnostics(diagnostics) -> list[str]:
+    return [
+        "",
+        "===== REGIME DIRECTION DIAGNOSTICS =====",
+        f"Total Trades              : {diagnostics.total_trades}",
+        f"Trades With Regime        : {diagnostics.trades_with_regime}",
+        f"Trades Missing Regime     : {diagnostics.trades_missing_regime}",
+        f"Long In Bearish Count     : {diagnostics.long_in_bearish_count}",
+        f"Long In Bearish PnL       : {diagnostics.long_in_bearish_pnl}",
+        f"Short In Bullish Count    : {diagnostics.short_in_bullish_count}",
+        f"Short In Bullish PnL      : {diagnostics.short_in_bullish_pnl}",
+        f"Missing Metadata Count    : {diagnostics.missing_metadata_count}",
+        "",
+        "PnL by Direction / Regime:",
+        *_format_regime_buckets(diagnostics.by_direction_regime),
+        "",
+        "PnL by Regime Reason:",
+        *_format_regime_buckets(diagnostics.by_regime_reason),
+        "",
+        "PnL by Direction Mode Reason:",
+        *_format_regime_buckets(diagnostics.by_direction_mode_reason),
+        "",
+        "PnL by Resolved Direction:",
+        *_format_regime_buckets(diagnostics.by_resolved_direction),
+    ]
+
+
+def _format_regime_buckets(buckets) -> list[str]:
+    if not buckets:
+        return ["None"]
+    lines = []
+    for key in sorted(buckets):
+        bucket = buckets[key]
+        lines.append(
+            f"{key:<35}: count={bucket.count}, wins={bucket.wins}, "
+            f"losses={bucket.losses}, open={bucket.open_trades}, pnl={bucket.pnl}"
+        )
+    return lines
 
 
 def _format_sl_tp_outcome_diagnostics(diagnostics, show_trades: bool = False) -> list[str]:

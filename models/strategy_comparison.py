@@ -73,6 +73,10 @@ class StrategyComparisonRow:
     high_rr_losses: int = 0
     next_candle_continuation: int = 0
     next_candle_rejection: int = 0
+    long_in_bearish_count: int = 0
+    long_in_bearish_pnl: float = 0.0
+    short_in_bullish_count: int = 0
+    short_in_bullish_pnl: float = 0.0
     elapsed_seconds: float | None = None
     event_type: str = "STRATEGY_COMPARISON_ROW"
 

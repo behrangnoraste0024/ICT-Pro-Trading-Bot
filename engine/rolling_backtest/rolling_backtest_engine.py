@@ -11,6 +11,7 @@ from engine.backtest.entry_followthrough_diagnostics_engine import EntryFollowth
 from engine.backtest.sl_tp_outcome_diagnostics_engine import SLTPOutcomeDiagnosticsEngine
 from engine.backtest.trade_outcome_diagnostics_engine import TradeOutcomeDiagnosticsEngine
 from engine.backtest.virtual_exit_diagnostics_engine import VirtualExitDiagnosticsEngine
+from engine.diagnostics.regime_direction_diagnostics_engine import RegimeDirectionDiagnosticsEngine
 from engine.ict_engine import ICTEngine
 from engine.rolling_backtest.trade_state_manager import TradeStateManager
 from models.engine_config import EngineConfig
@@ -92,6 +93,7 @@ class RollingBacktestEngine:
         self.sl_tp_outcome_diagnostics_engine = SLTPOutcomeDiagnosticsEngine()
         self.entry_followthrough_diagnostics_engine = EntryFollowthroughDiagnosticsEngine()
         self.virtual_exit_diagnostics_engine = VirtualExitDiagnosticsEngine()
+        self.regime_direction_diagnostics_engine = RegimeDirectionDiagnosticsEngine()
         self.trade_state_manager = TradeStateManager()
 
     def run(self, candles: pd.DataFrame) -> RollingBacktestResult:
@@ -345,6 +347,7 @@ class RollingBacktestEngine:
         sl_tp_outcomes = None
         entry_followthrough = None
         virtual_exit = None
+        regime_direction = None
         if self.enable_diagnostics:
             diagnostics = self.diagnostics_engine.summarize_contexts(diagnostics_source)
             diagnostics_windows_analyzed = diagnostics.windows_analyzed
@@ -352,6 +355,11 @@ class RollingBacktestEngine:
             sl_tp_outcomes = self.sl_tp_outcome_diagnostics_engine.summarize_trade_contexts(contexts)
             entry_followthrough = self.entry_followthrough_diagnostics_engine.summarize_trade_contexts(contexts)
             virtual_exit = self.virtual_exit_diagnostics_engine.summarize_trade_contexts(contexts)
+        else:
+            trade_outcomes = self.trade_outcome_diagnostics_engine.summarize_contexts(contexts)
+        regime_direction = self.regime_direction_diagnostics_engine.summarize_trades(
+            [] if trade_outcomes is None else trade_outcomes.trades
+        )
         return RollingBacktestResult(
             total_windows=total_windows,
             processed_windows=processed_windows,
@@ -390,6 +398,7 @@ class RollingBacktestEngine:
             sl_tp_outcome_diagnostics=sl_tp_outcomes,
             entry_followthrough_diagnostics=entry_followthrough,
             virtual_exit_diagnostics=virtual_exit,
+            regime_direction_diagnostics=regime_direction,
             trade_outcome_contexts=contexts,
         )
 

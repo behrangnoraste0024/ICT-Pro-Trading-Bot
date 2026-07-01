@@ -43,6 +43,23 @@ class TradeOutcomeRecord:
     trade_quality_blockers: list[str] = field(default_factory=list)
     paper_trade_blockers: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
+    market_regime: str | None = None
+    market_regime_mode: str | None = None
+    market_regime_lookback: int | None = None
+    market_regime_threshold_pct: float | None = None
+    market_regime_return_pct: float | None = None
+    market_regime_fallback: str | None = None
+    market_regime_reason: str | None = None
+    direction_mode_requested: str | None = None
+    direction_mode_applied: str | None = None
+    direction_mode_allowed: bool | None = None
+    direction_mode_blocked_direction: str | None = None
+    direction_mode_fallback_reason: str | None = None
+    direction_mode_resolved_direction: str | None = None
+    auto_trend_source_trend: str | None = None
+    auto_trend_fallback: str | None = None
+    regime_source_regime: str | None = None
+    regime_fallback: str | None = None
     event_type: str = "TRADE_OUTCOME_RECORD"
 
     def __str__(self) -> str:

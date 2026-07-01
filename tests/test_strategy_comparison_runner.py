@@ -290,6 +290,8 @@ def test_output_json_writes_valid_json(tmp_path) -> None:
     assert "regime_lookback" in data["strategies"][0]
     assert "regime_threshold_pct" in data["strategies"][0]
     assert "regime_fallback" in data["strategies"][0]
+    assert "long_in_bearish_count" in data["strategies"][0]
+    assert "short_in_bullish_pnl" in data["strategies"][0]
 
 
 def test_output_csv_writes_headers(tmp_path) -> None:
@@ -319,6 +321,8 @@ def test_output_csv_writes_headers(tmp_path) -> None:
     assert "regime_lookback" in text.splitlines()[0]
     assert "regime_threshold_pct" in text.splitlines()[0]
     assert "regime_fallback" in text.splitlines()[0]
+    assert "long_in_bearish_count" in text.splitlines()[0]
+    assert "short_in_bullish_pnl" in text.splitlines()[0]
 
 
 def test_invalid_strategy_set_rejected_by_argparse() -> None:

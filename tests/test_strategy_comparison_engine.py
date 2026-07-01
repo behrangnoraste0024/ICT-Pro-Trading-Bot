@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from models.entry_followthrough_diagnostics import EntryFollowthroughDiagnostics
 from models.rolling_backtest_result import RollingBacktestResult
+from models.regime_direction_diagnostics import RegimeDirectionDiagnostics
 from models.sl_tp_outcome_diagnostics import SLTPOutcomeDiagnostics
 from models.strategy_comparison import StrategyComparisonReport, StrategyComparisonRow, StrategyConfigSpec
 from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics, TradeOutcomeRecord
@@ -68,6 +69,12 @@ def _result_with_trades() -> RollingBacktestResult:
         total_trades=3,
         next_candle_continuation_count=2,
         next_candle_rejection_count=1,
+    )
+    result.regime_direction_diagnostics = RegimeDirectionDiagnostics(
+        long_in_bearish_count=1,
+        long_in_bearish_pnl=-25,
+        short_in_bullish_count=2,
+        short_in_bullish_pnl=-50,
     )
     return result
 
@@ -223,6 +230,18 @@ def test_row_from_result_preserves_regime_fields() -> None:
     assert row.regime_lookback == 50
     assert row.regime_threshold_pct == 0.01
     assert row.regime_fallback == "block"
+
+
+def test_row_from_result_includes_regime_diagnostic_summary_fields() -> None:
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec("spec", "recent_50", "fixed_1_5r", 1.5),
+        _result_with_trades(),
+    )
+
+    assert row.long_in_bearish_count == 1
+    assert row.long_in_bearish_pnl == -25
+    assert row.short_in_bullish_count == 2
+    assert row.short_in_bullish_pnl == -50
 
 
 def test_run_single_strategy_returns_expected_fixture_fields() -> None:

@@ -102,6 +102,23 @@ class TradeOutcomeDiagnosticsEngine:
             trade_quality_blockers=self._safe_list(metadata.get("trade_quality_blockers", [])),
             paper_trade_blockers=self._safe_list(metadata.get("paper_trade_blockers", [])),
             reasons=self._safe_list(self._first_value(context, ["paper_trade_reasons", "reasons"], [])),
+            market_regime=metadata.get("market_regime"),
+            market_regime_mode=metadata.get("market_regime_mode"),
+            market_regime_lookback=self._int_or_none(metadata.get("market_regime_lookback")),
+            market_regime_threshold_pct=self._float_or_none(metadata.get("market_regime_threshold_pct")),
+            market_regime_return_pct=self._float_or_none(metadata.get("market_regime_return_pct")),
+            market_regime_fallback=metadata.get("market_regime_fallback"),
+            market_regime_reason=metadata.get("market_regime_reason"),
+            direction_mode_requested=metadata.get("direction_mode_requested"),
+            direction_mode_applied=metadata.get("direction_mode_applied"),
+            direction_mode_allowed=metadata.get("direction_mode_allowed"),
+            direction_mode_blocked_direction=metadata.get("direction_mode_blocked_direction"),
+            direction_mode_fallback_reason=metadata.get("direction_mode_fallback_reason"),
+            direction_mode_resolved_direction=metadata.get("direction_mode_resolved_direction"),
+            auto_trend_source_trend=metadata.get("auto_trend_source_trend"),
+            auto_trend_fallback=metadata.get("auto_trend_fallback"),
+            regime_source_regime=metadata.get("regime_source_regime"),
+            regime_fallback=metadata.get("regime_fallback"),
         )
 
     def _result(self, status: str) -> str:

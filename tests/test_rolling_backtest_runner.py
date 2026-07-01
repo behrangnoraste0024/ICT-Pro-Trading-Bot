@@ -12,6 +12,7 @@ from models.entry_followthrough_diagnostics import (
 )
 from models.ote_diagnostics import OTEDiagnostics
 from models.range_candidate_diagnostics import RangeCandidateDiagnostics, RangeCandidateStats
+from models.regime_direction_diagnostics import RegimeDirectionBucket, RegimeDirectionDiagnostics
 from models.rolling_backtest_result import RollingBacktestResult
 from models.sl_tp_outcome_diagnostics import SLTPOutcomeDiagnostics, SLTPOutcomeRecord
 from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics, TradeOutcomeRecord
@@ -151,6 +152,12 @@ def _result_with_trade_outcomes() -> RollingBacktestResult:
                 in_ote_zone=True,
                 matched_poi_count=1,
                 matched_poi_types=["ORDER_BLOCK"],
+                market_regime="BEARISH",
+                market_regime_return_pct=-0.0234,
+                market_regime_reason="BEARISH_ROLLING_RETURN",
+                direction_mode_applied="regime_trend",
+                direction_mode_resolved_direction="SHORT",
+                direction_mode_fallback_reason="REGIME_TREND_BEARISH_SHORT_ONLY",
             )
         ],
         total_trades=1,
@@ -159,6 +166,28 @@ def _result_with_trade_outcomes() -> RollingBacktestResult:
         net_pnl=20,
         average_pnl=20,
         win_rate=100,
+    )
+    result.regime_direction_diagnostics = RegimeDirectionDiagnostics(
+        total_trades=1,
+        trades_with_regime=1,
+        by_direction_regime={
+            "LONG|BEARISH": RegimeDirectionBucket("LONG|BEARISH", count=1, wins=1, pnl=20, average_pnl=20)
+        },
+        by_regime_reason={
+            "BEARISH_ROLLING_RETURN": RegimeDirectionBucket(
+                "BEARISH_ROLLING_RETURN", count=1, wins=1, pnl=20, average_pnl=20
+            )
+        },
+        by_direction_mode_reason={
+            "REGIME_TREND_BEARISH_SHORT_ONLY": RegimeDirectionBucket(
+                "REGIME_TREND_BEARISH_SHORT_ONLY", count=1, wins=1, pnl=20, average_pnl=20
+            )
+        },
+        by_resolved_direction={
+            "SHORT": RegimeDirectionBucket("SHORT", count=1, wins=1, pnl=20, average_pnl=20)
+        },
+        long_in_bearish_count=1,
+        long_in_bearish_pnl=20,
     )
     result.sl_tp_outcome_diagnostics = SLTPOutcomeDiagnostics(
         records=[
@@ -455,6 +484,17 @@ def test_show_trades_prints_trade_log() -> None:
     report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50, show_trades=True)
 
     assert "#1 | LONG | WIN" in report
+    assert "regime=BEARISH" in report
+    assert "dir_reason=REGIME_TREND_BEARISH_SHORT_ONLY" in report
+
+
+def test_report_includes_regime_direction_diagnostics() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "===== REGIME DIRECTION DIAGNOSTICS =====" in report
+    assert "LONG|BEARISH" in report
+    assert "Long In Bearish Count" in report
+    assert "BEARISH_ROLLING_RETURN" in report
 
 
 def test_no_trades_prints_no_trades() -> None:

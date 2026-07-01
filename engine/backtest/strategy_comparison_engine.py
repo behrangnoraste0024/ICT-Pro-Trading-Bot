@@ -208,6 +208,7 @@ class StrategyComparisonEngine:
         trade_outcomes = result.trade_outcome_diagnostics
         sl_tp = result.sl_tp_outcome_diagnostics
         followthrough = result.entry_followthrough_diagnostics
+        regime_direction = result.regime_direction_diagnostics
         trades = self._trade_records(result)
         direction_counts = self._direction_counts(result)
         direction_pnl = self._direction_pnl(result)
@@ -254,6 +255,10 @@ class StrategyComparisonEngine:
             high_rr_losses=0 if sl_tp is None else sl_tp.high_rr_loss_count,
             next_candle_continuation=0 if followthrough is None else followthrough.next_candle_continuation_count,
             next_candle_rejection=0 if followthrough is None else followthrough.next_candle_rejection_count,
+            long_in_bearish_count=0 if regime_direction is None else regime_direction.long_in_bearish_count,
+            long_in_bearish_pnl=0.0 if regime_direction is None else regime_direction.long_in_bearish_pnl,
+            short_in_bullish_count=0 if regime_direction is None else regime_direction.short_in_bullish_count,
+            short_in_bullish_pnl=0.0 if regime_direction is None else regime_direction.short_in_bullish_pnl,
             elapsed_seconds=elapsed_seconds,
         )
 
