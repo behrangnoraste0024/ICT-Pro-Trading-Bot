@@ -42,6 +42,16 @@ def build_direction_modes_recent_50_fixed_1_5r_specs() -> list[StrategyConfigSpe
     ]
 
 
+def build_trend_direction_recent_50_fixed_1_5r_specs() -> list[StrategyConfigSpec]:
+    return [
+        _spec("recent_50", "fixed_1_5r", 1.5, "all"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "short_only"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "long_only"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "auto_trend", "all"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "auto_trend", "block"),
+    ]
+
+
 def build_current_external_only_specs() -> list[StrategyConfigSpec]:
     return [
         _spec("current_external", "original", 2.0),
@@ -56,9 +66,19 @@ def _spec(
     exit_mode: str,
     min_risk_reward: float,
     direction_mode: str = "all",
+    auto_trend_fallback: str = "all",
 ) -> StrategyConfigSpec:
     name = f"{dealing_range_mode}|{exit_mode}|min_rr={min_risk_reward}|dir={direction_mode}"
-    return StrategyConfigSpec(name, dealing_range_mode, exit_mode, min_risk_reward, direction_mode)
+    if direction_mode == "auto_trend":
+        name = f"{name}|trend_fallback={auto_trend_fallback}"
+    return StrategyConfigSpec(
+        name,
+        dealing_range_mode,
+        exit_mode,
+        min_risk_reward,
+        direction_mode,
+        auto_trend_fallback,
+    )
 
 
 class StrategyComparisonEngine:
@@ -106,6 +126,7 @@ class StrategyComparisonEngine:
                     exit_mode=spec.exit_mode,
                     min_risk_reward=spec.min_risk_reward,
                     direction_mode=spec.direction_mode,
+                    auto_trend_fallback=spec.auto_trend_fallback,
                 ),
             ).run(candles)
             elapsed_seconds = time.perf_counter() - started_at
@@ -167,6 +188,7 @@ class StrategyComparisonEngine:
             exit_mode=spec.exit_mode,
             min_risk_reward=spec.min_risk_reward,
             direction_mode=spec.direction_mode,
+            auto_trend_fallback=spec.auto_trend_fallback,
             total_windows=result.total_windows,
             processed_windows=result.processed_windows,
             failed_windows=result.failed_windows,

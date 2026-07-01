@@ -35,6 +35,7 @@ class RollingBacktestEngine:
         exit_mode: str | None = None,
         min_risk_reward: float | None = None,
         direction_mode: str | None = None,
+        auto_trend_fallback: str | None = None,
         enable_diagnostics: bool = True,
     ):
         self.config = config if config is not None else EngineConfig()
@@ -54,6 +55,10 @@ class RollingBacktestEngine:
             if direction_mode not in EngineConfig.VALID_DIRECTION_MODES:
                 raise ValueError(f"Unsupported direction mode: {direction_mode}")
             self.config.direction_mode = direction_mode
+        if auto_trend_fallback is not None:
+            if auto_trend_fallback not in EngineConfig.VALID_AUTO_TREND_FALLBACKS:
+                raise ValueError(f"Unsupported auto trend fallback: {auto_trend_fallback}")
+            self.config.auto_trend_fallback = auto_trend_fallback
         self.ict_engine = ict_engine if ict_engine is not None else ICTEngine(config=self.config)
         self.min_candles = min_candles
         self.stateful = stateful
@@ -355,6 +360,7 @@ class RollingBacktestEngine:
             exit_mode_fallback_counts=exit_mode_fallback_counts,
             min_risk_reward=self.config.min_risk_reward,
             direction_mode=self.config.direction_mode,
+            auto_trend_fallback=self.config.auto_trend_fallback,
             direction_mode_fallback_counts=direction_mode_fallback_counts,
             trade_outcome_diagnostics=trade_outcomes,
             sl_tp_outcome_diagnostics=sl_tp_outcomes,

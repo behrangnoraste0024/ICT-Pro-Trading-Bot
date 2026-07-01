@@ -126,6 +126,9 @@ def test_full_pipeline_regression_baseline() -> None:
     assert context.direction_mode_allowed is None
     assert context.direction_mode_blocked_direction is None
     assert context.direction_mode_fallback_reason == "ALL_MODE"
+    assert context.direction_mode_resolved_direction == "ALL"
+    assert context.auto_trend_source_trend is None
+    assert context.auto_trend_fallback == "all"
     assert context.trade_quality_status == "REJECTED"
     assert context.trade_quality_score == 0
     assert context.trade_quality_blockers == ["NO_PLANNED_TRADE"]

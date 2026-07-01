@@ -58,7 +58,27 @@ def test_direction_modes_recent_50_fixed_1_5r_strategy_set_works(capsys) -> None
     assert "dir=all" in captured.out
     assert "dir=long_only" in captured.out
     assert "dir=short_only" in captured.out
-    assert "Rank | Strategy | DR Mode | Exit | MinRR | Dir" in captured.out
+    assert "Rank | Strategy | DR Mode | Exit | MinRR | Dir | TrendFB" in captured.out
+
+
+def test_trend_direction_recent_50_fixed_1_5r_strategy_set_works(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "trend_direction_recent_50_fixed_1_5r",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategies   : 5" in captured.out
+    assert "dir=auto_trend|trend_fallback=all" in captured.out
+    assert "dir=auto_trend|trend_fallback=block" in captured.out
 
 
 def test_current_external_only_strategy_set_works(capsys) -> None:
@@ -119,6 +139,36 @@ def test_custom_strategy_set_accepts_direction_modes(capsys) -> None:
     assert return_code == 0
     assert "Strategies   : 2" in captured.out
     assert "recent_50|fixed_1_5r|min_rr=1.5|dir=short_only" in captured.out
+
+
+def test_custom_strategy_set_accepts_auto_trend_fallbacks(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "custom",
+            "--dealing-range-modes",
+            "recent_50",
+            "--exit-modes",
+            "fixed_1_5r",
+            "--min-risk-rewards",
+            "1.5",
+            "--direction-modes",
+            "auto_trend",
+            "--auto-trend-fallbacks",
+            "all,block",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategies   : 2" in captured.out
+    assert "recent_50|fixed_1_5r|min_rr=1.5|dir=auto_trend|trend_fallback=all" in captured.out
+    assert "recent_50|fixed_1_5r|min_rr=1.5|dir=auto_trend|trend_fallback=block" in captured.out
 
 
 def test_fast_mode_exits_successfully(capsys) -> None:
@@ -182,6 +232,7 @@ def test_output_json_writes_valid_json(tmp_path) -> None:
     assert data["strategies"]
     assert "elapsed_seconds" in data["strategies"][0]
     assert "direction_mode" in data["strategies"][0]
+    assert "auto_trend_fallback" in data["strategies"][0]
 
 
 def test_output_csv_writes_headers(tmp_path) -> None:
@@ -206,6 +257,7 @@ def test_output_csv_writes_headers(tmp_path) -> None:
     assert "net_pnl" in text.splitlines()[0]
     assert "elapsed_seconds" in text.splitlines()[0]
     assert "direction_mode" in text.splitlines()[0]
+    assert "auto_trend_fallback" in text.splitlines()[0]
 
 
 def test_invalid_strategy_set_rejected_by_argparse() -> None:
@@ -257,6 +309,31 @@ def test_invalid_direction_mode_in_custom_returns_error(capsys) -> None:
     captured = capsys.readouterr()
     assert return_code == 1
     assert "Unsupported direction mode" in captured.out
+
+
+def test_invalid_auto_trend_fallback_in_custom_returns_error(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--strategy-set",
+            "custom",
+            "--dealing-range-modes",
+            "recent_50",
+            "--exit-modes",
+            "fixed_1_5r",
+            "--min-risk-rewards",
+            "1.5",
+            "--direction-modes",
+            "auto_trend",
+            "--auto-trend-fallbacks",
+            "sideways",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 1
+    assert "Unsupported auto trend fallback" in captured.out
 
 
 def test_script_does_not_require_historical_file(capsys) -> None:

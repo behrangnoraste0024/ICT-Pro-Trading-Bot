@@ -738,6 +738,7 @@ def test_runner_default_report_includes_current_external_mode(capsys) -> None:
     assert "Exit Mode         : original" in captured.out
     assert "Min Risk Reward   : 2.0" in captured.out
     assert "Direction Mode    : all" in captured.out
+    assert "Auto Trend Fallback: all" in captured.out
 
 
 def test_runner_accepts_original_exit_mode(capsys) -> None:
@@ -836,6 +837,47 @@ def test_runner_accepts_direction_mode_short_only(capsys) -> None:
     assert "Direction Mode    : short_only" in captured.out
 
 
+def test_runner_accepts_direction_mode_auto_trend(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--direction-mode",
+            "auto_trend",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Direction Mode    : auto_trend" in captured.out
+    assert "Auto Trend Fallback: all" in captured.out
+
+
+def test_runner_accepts_auto_trend_fallback_block(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--direction-mode",
+            "auto_trend",
+            "--auto-trend-fallback",
+            "block",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Auto Trend Fallback: block" in captured.out
+
+
 def test_runner_accepts_recent_50_with_fixed_1_5r_exit_mode(capsys) -> None:
     return_code = main(
         [
@@ -894,12 +936,16 @@ def test_formatter_includes_exit_mode() -> None:
     result.exit_mode = "fixed_1_5r"
     result.exit_mode_fallback_counts = {"NO_PLANNED_TRADE": 2}
     result.min_risk_reward = 1.5
+    result.direction_mode = "auto_trend"
+    result.auto_trend_fallback = "block"
 
     report = format_rolling_backtest_report(result, FIXTURE_PATH, min_candles=50)
 
     assert "Exit Mode         : fixed_1_5r" in report
     assert "Exit Mode Fallbacks: NO_PLANNED_TRADE=2" in report
     assert "Min Risk Reward   : 1.5" in report
+    assert "Direction Mode    : auto_trend" in report
+    assert "Auto Trend Fallback: block" in report
 
 
 def test_invalid_dealing_range_mode_choice_fails(capsys) -> None:
@@ -926,6 +972,13 @@ def test_invalid_min_risk_reward_choice_fails(capsys) -> None:
 def test_invalid_direction_mode_choice_fails(capsys) -> None:
     try:
         main(["--fixture", FIXTURE_PATH, "--direction-mode", "sideways_only"])
+    except SystemExit as exc:
+        assert exc.code == 2
+
+
+def test_invalid_auto_trend_fallback_choice_fails(capsys) -> None:
+    try:
+        main(["--fixture", FIXTURE_PATH, "--auto-trend-fallback", "sideways"])
     except SystemExit as exc:
         assert exc.code == 2
 

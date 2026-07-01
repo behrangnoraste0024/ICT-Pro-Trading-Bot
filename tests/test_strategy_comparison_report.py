@@ -10,8 +10,9 @@ def _report() -> StrategyComparisonReport:
         min_candles=50,
         strategies=[
             StrategyComparisonRow(
-                "recent_50|fixed_1_5r|min_rr=1.5|dir=short_only",
-                direction_mode="short_only",
+                "recent_50|fixed_1_5r|min_rr=1.5|dir=auto_trend|trend_fallback=block",
+                direction_mode="auto_trend",
+                auto_trend_fallback="block",
                 total_trades=10,
                 wins=5,
                 losses=5,
@@ -46,16 +47,17 @@ def test_report_includes_best_section() -> None:
     output = format_strategy_comparison_report(_report())
 
     assert "Best:" in output
-    assert "Net PnL      : recent_50|fixed_1_5r|min_rr=1.5|dir=short_only" in output
+    assert "Net PnL      : recent_50|fixed_1_5r|min_rr=1.5|dir=auto_trend|trend_fallback=block" in output
 
 
 def test_report_includes_comparison_table() -> None:
     output = format_strategy_comparison_report(_report())
 
     assert "Comparison Table:" in output
-    assert "Rank | Strategy | DR Mode | Exit | MinRR | Dir" in output
+    assert "Rank | Strategy | DR Mode | Exit | MinRR | Dir | TrendFB" in output
     assert "Elapsed" in output
-    assert "short_only" in output
+    assert "auto_trend" in output
+    assert "block" in output
 
 
 def test_report_includes_diagnostics_table() -> None:

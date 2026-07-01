@@ -62,7 +62,11 @@ class ICTEngine:
         context = self.entry_trigger_engine.detect(context)
         context = self.trade_plan_engine.detect(context)
         context = self.exit_mode_engine.apply(context, self.config.exit_mode)
-        context = self.direction_mode_engine.apply(context, self.config.direction_mode)
+        context = self.direction_mode_engine.apply(
+            context,
+            self.config.direction_mode,
+            self.config.auto_trend_fallback,
+        )
         context = self.trade_quality_engine.detect(context)
         context = self.paper_trade_engine.detect(context)
         context = self.backtest_engine.detect(context)

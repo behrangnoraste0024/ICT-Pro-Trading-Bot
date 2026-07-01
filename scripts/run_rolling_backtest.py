@@ -37,7 +37,8 @@ def main(argv: list[str] | None = None) -> int:
         default="original",
     )
     parser.add_argument("--min-risk-reward", type=positive_float, default=2.0)
-    parser.add_argument("--direction-mode", choices=["all", "long_only", "short_only"], default="all")
+    parser.add_argument("--direction-mode", choices=["all", "long_only", "short_only", "auto_trend"], default="all")
+    parser.add_argument("--auto-trend-fallback", choices=["all", "block"], default="all")
     parser.add_argument("--show-trades", action="store_true")
     parser.add_argument("--debug-first-trade-metadata", action="store_true")
     args = parser.parse_args(argv)
@@ -73,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         exit_mode=args.exit_mode,
         min_risk_reward=args.min_risk_reward,
         direction_mode=args.direction_mode,
+        auto_trend_fallback=args.auto_trend_fallback,
     ).run(candles)
     report = format_rolling_backtest_report(
         result,

@@ -10,6 +10,7 @@ from engine.backtest.strategy_comparison_engine import (
     build_direction_modes_recent_50_fixed_1_5r_specs,
     build_default_strategy_specs,
     build_exit_modes_recent_50_specs,
+    build_trend_direction_recent_50_fixed_1_5r_specs,
 )
 
 
@@ -74,6 +75,12 @@ def test_strategy_config_spec_string_contains_modes() -> None:
     spec = StrategyConfigSpec("recent", "recent_50", "fixed_1_5r", 1.5)
 
     assert str(spec) == "recent_50|fixed_1_5r|min_rr=1.5|dir=all"
+
+
+def test_strategy_config_spec_string_includes_auto_trend_fallback() -> None:
+    spec = StrategyConfigSpec("recent", "recent_50", "fixed_1_5r", 1.5, "auto_trend", "block")
+
+    assert str(spec) == "recent_50|fixed_1_5r|min_rr=1.5|dir=auto_trend|trend_fallback=block"
 
 
 def test_strategy_comparison_row_string_contains_name_and_pnl() -> None:
@@ -157,6 +164,23 @@ def test_direction_pnl_extraction_from_records() -> None:
     assert row.short_pnl == 50
 
 
+def test_row_from_result_preserves_auto_trend_fallback() -> None:
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec(
+            "recent_50|fixed_1_5r|min_rr=1.5|dir=auto_trend|trend_fallback=block",
+            "recent_50",
+            "fixed_1_5r",
+            1.5,
+            "auto_trend",
+            "block",
+        ),
+        _result_with_trades(),
+    )
+
+    assert row.direction_mode == "auto_trend"
+    assert row.auto_trend_fallback == "block"
+
+
 def test_run_single_strategy_returns_expected_fixture_fields() -> None:
     row = StrategyComparisonEngine().run_single_strategy(
         FIXTURE_PATH,
@@ -203,6 +227,16 @@ def test_direction_modes_recent_50_fixed_1_5r_specs_include_all_modes() -> None:
     assert all(spec.dealing_range_mode == "recent_50" for spec in specs)
     assert all(spec.exit_mode == "fixed_1_5r" for spec in specs)
     assert all(spec.min_risk_reward == 1.5 for spec in specs)
+
+
+def test_trend_direction_recent_50_fixed_1_5r_specs_include_auto_trend_fallbacks() -> None:
+    specs = build_trend_direction_recent_50_fixed_1_5r_specs()
+
+    assert len(specs) == 5
+    assert [spec.direction_mode for spec in specs] == ["all", "short_only", "long_only", "auto_trend", "auto_trend"]
+    assert [spec.auto_trend_fallback for spec in specs[-2:]] == ["all", "block"]
+    assert "dir=auto_trend|trend_fallback=all" in specs[-2].name
+    assert "dir=auto_trend|trend_fallback=block" in specs[-1].name
 
 
 def test_no_trades_strategy_row_does_not_crash() -> None:

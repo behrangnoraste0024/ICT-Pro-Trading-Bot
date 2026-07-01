@@ -15,6 +15,13 @@ def _planned_context(direction: str) -> MarketContext:
     return context
 
 
+def _planned_context_with_trend(direction: str, trend: str | None) -> MarketContext:
+    context = _planned_context(direction)
+    if trend is not None:
+        context.trend = trend
+    return context
+
+
 def test_all_mode_allows_long() -> None:
     context = DirectionModeEngine().apply(_planned_context("BULLISH"), "all")
 
@@ -108,3 +115,105 @@ def test_debug_values_are_populated() -> None:
     assert context.debug["direction_mode_allowed"] is False
     assert context.debug["direction_mode_blocked_direction"] == "BEARISH"
     assert context.debug["direction_mode_fallback_reason"] == "DIRECTION_MODE_BLOCKED"
+
+
+def test_auto_trend_downtrend_allows_short() -> None:
+    context = DirectionModeEngine().apply(_planned_context_with_trend("BEARISH", "DOWNTREND"), "auto_trend")
+
+    assert context.direction_mode_allowed is True
+    assert context.direction_mode_resolved_direction == "SHORT"
+    assert context.auto_trend_source_trend == "DOWNTREND"
+    assert context.direction_mode_fallback_reason == "AUTO_TREND_DOWNTREND_SHORT_ONLY"
+
+
+def test_auto_trend_downtrend_blocks_long() -> None:
+    context = DirectionModeEngine().apply(_planned_context_with_trend("BULLISH", "DOWNTREND"), "auto_trend")
+
+    assert context.direction_mode_allowed is False
+    assert context.direction_mode_blocked_direction == "BULLISH"
+    assert context.direction_mode_resolved_direction == "SHORT"
+    assert context.direction_mode_fallback_reason == "AUTO_TREND_DOWNTREND_SHORT_ONLY"
+
+
+def test_auto_trend_uptrend_allows_long() -> None:
+    context = DirectionModeEngine().apply(_planned_context_with_trend("BULLISH", "UPTREND"), "auto_trend")
+
+    assert context.direction_mode_allowed is True
+    assert context.direction_mode_resolved_direction == "LONG"
+    assert context.auto_trend_source_trend == "UPTREND"
+    assert context.direction_mode_fallback_reason == "AUTO_TREND_UPTREND_LONG_ONLY"
+
+
+def test_auto_trend_uptrend_blocks_short() -> None:
+    context = DirectionModeEngine().apply(_planned_context_with_trend("BEARISH", "UPTREND"), "auto_trend")
+
+    assert context.direction_mode_allowed is False
+    assert context.direction_mode_blocked_direction == "BEARISH"
+    assert context.direction_mode_resolved_direction == "LONG"
+    assert context.direction_mode_fallback_reason == "AUTO_TREND_UPTREND_LONG_ONLY"
+
+
+def test_auto_trend_unknown_fallback_all_allows_long() -> None:
+    context = DirectionModeEngine().apply(_planned_context_with_trend("BULLISH", "UNKNOWN"), "auto_trend", "all")
+
+    assert context.direction_mode_allowed is True
+    assert context.direction_mode_resolved_direction == "ALL"
+    assert context.direction_mode_fallback_reason == "AUTO_TREND_FALLBACK_ALL"
+
+
+def test_auto_trend_unknown_fallback_all_allows_short() -> None:
+    context = DirectionModeEngine().apply(_planned_context_with_trend("BEARISH", "UNKNOWN"), "auto_trend", "all")
+
+    assert context.direction_mode_allowed is True
+    assert context.direction_mode_resolved_direction == "ALL"
+    assert context.direction_mode_fallback_reason == "AUTO_TREND_FALLBACK_ALL"
+
+
+def test_auto_trend_unknown_fallback_block_blocks_long() -> None:
+    context = DirectionModeEngine().apply(_planned_context_with_trend("BULLISH", "UNKNOWN"), "auto_trend", "block")
+
+    assert context.direction_mode_allowed is False
+    assert context.direction_mode_blocked_direction == "BULLISH"
+    assert context.direction_mode_resolved_direction == "NONE"
+    assert context.direction_mode_fallback_reason == "AUTO_TREND_FALLBACK_BLOCK"
+
+
+def test_auto_trend_unknown_fallback_block_blocks_short() -> None:
+    context = DirectionModeEngine().apply(_planned_context_with_trend("BEARISH", "UNKNOWN"), "auto_trend", "block")
+
+    assert context.direction_mode_allowed is False
+    assert context.direction_mode_blocked_direction == "BEARISH"
+    assert context.direction_mode_resolved_direction == "NONE"
+    assert context.direction_mode_fallback_reason == "AUTO_TREND_FALLBACK_BLOCK"
+
+
+def test_auto_trend_missing_trend_fallback_all_does_not_crash() -> None:
+    context = DirectionModeEngine().apply(_planned_context_with_trend("BULLISH", None), "auto_trend", "all")
+
+    assert context.direction_mode_allowed is True
+    assert context.auto_trend_source_trend == "UNKNOWN"
+    assert context.direction_mode_fallback_reason == "AUTO_TREND_FALLBACK_ALL"
+
+
+def test_auto_trend_missing_trend_fallback_block_blocks_planned_trade() -> None:
+    context = DirectionModeEngine().apply(_planned_context_with_trend("BULLISH", None), "auto_trend", "block")
+
+    assert context.direction_mode_allowed is False
+    assert context.auto_trend_source_trend == "UNKNOWN"
+    assert context.direction_mode_fallback_reason == "AUTO_TREND_FALLBACK_BLOCK"
+
+
+def test_auto_trend_sets_source_trend_and_fallback() -> None:
+    context = DirectionModeEngine().apply(_planned_context_with_trend("BULLISH", "RANGE"), "auto_trend", "block")
+
+    assert context.auto_trend_source_trend == "RANGE"
+    assert context.auto_trend_fallback == "block"
+
+
+def test_auto_trend_sets_debug_values() -> None:
+    context = DirectionModeEngine().apply(_planned_context_with_trend("BULLISH", "UPTREND"), "auto_trend")
+
+    assert context.debug["direction_mode_requested"] == "auto_trend"
+    assert context.debug["direction_mode_resolved_direction"] == "LONG"
+    assert context.debug["auto_trend_source_trend"] == "UPTREND"
+    assert context.debug["auto_trend_fallback"] == "all"

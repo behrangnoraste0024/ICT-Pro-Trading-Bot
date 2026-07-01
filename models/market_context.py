@@ -218,6 +218,12 @@ class MarketContext:
 
     direction_mode_fallback_reason: Optional[str] = None
 
+    direction_mode_resolved_direction: Optional[str] = None
+
+    auto_trend_source_trend: Optional[str] = None
+
+    auto_trend_fallback: Optional[str] = None
+
     # ==========================================================
     # TRADE QUALITY
     # ==========================================================
