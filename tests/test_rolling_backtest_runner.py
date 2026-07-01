@@ -15,6 +15,12 @@ from models.range_candidate_diagnostics import RangeCandidateDiagnostics, RangeC
 from models.rolling_backtest_result import RollingBacktestResult
 from models.sl_tp_outcome_diagnostics import SLTPOutcomeDiagnostics, SLTPOutcomeRecord
 from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics, TradeOutcomeRecord
+from models.virtual_exit_diagnostics import (
+    VirtualExitDiagnostics,
+    VirtualExitPolicyResult,
+    VirtualExitPolicySummary,
+    VirtualExitRecord,
+)
 from reporting.rolling_backtest_report import format_rolling_backtest_report
 from scripts.run_rolling_backtest import main
 
@@ -221,6 +227,36 @@ def _result_with_trade_outcomes() -> RollingBacktestResult:
         trigger_average_h3_favorable_r={"CONFIRMATION_CANDLE": 1.0},
         trigger_average_h3_adverse_r={"CONFIRMATION_CANDLE": 0.2},
     )
+    result.virtual_exit_diagnostics = VirtualExitDiagnostics(
+        records=[
+            VirtualExitRecord(
+                trade_number=1,
+                direction="LONG",
+                actual_result="LOSS",
+                actual_pnl_r=-1,
+                best_policy_name="TP_1R",
+                best_policy_pnl_r=1,
+                policy_results={
+                    "TP_1R": VirtualExitPolicyResult("TP_1R", result="WIN", virtual_pnl_r=1),
+                    "TP_2R": VirtualExitPolicyResult("TP_2R", result="OPEN", virtual_pnl_r=0.4),
+                    "BE_AFTER_0_5R": VirtualExitPolicyResult("BE_AFTER_0_5R", result="BREAKEVEN", virtual_pnl_r=0),
+                },
+            )
+        ],
+        policy_summaries={
+            "TP_1R": VirtualExitPolicySummary("TP_1R", total_trades=1, wins=1, win_rate=100, total_pnl_r=1, average_pnl_r=1),
+            "TP_2R": VirtualExitPolicySummary("TP_2R", total_trades=1, opens=1, win_rate=0, total_pnl_r=0.4, average_pnl_r=0.4),
+            "BE_AFTER_0_5R": VirtualExitPolicySummary("BE_AFTER_0_5R", total_trades=1, breakevens=1, win_rate=0, total_pnl_r=0, average_pnl_r=0),
+        },
+        total_trades=1,
+        actual_losses=1,
+        actual_total_pnl_r=-1,
+        best_policy_by_total_pnl_r="TP_1R",
+        best_policy_by_win_rate="TP_1R",
+        best_policy_by_average_pnl_r="TP_1R",
+        tp_1r_would_have_won_count=1,
+        be_0_5r_would_help_count=1,
+    )
     return result
 
 
@@ -229,6 +265,7 @@ def _result_with_empty_trade_outcomes() -> RollingBacktestResult:
     result.trade_outcome_diagnostics = TradeOutcomeDiagnostics()
     result.sl_tp_outcome_diagnostics = SLTPOutcomeDiagnostics()
     result.entry_followthrough_diagnostics = EntryFollowthroughDiagnostics()
+    result.virtual_exit_diagnostics = VirtualExitDiagnostics()
     return result
 
 
@@ -309,6 +346,40 @@ def test_report_includes_entry_followthrough_diagnostics() -> None:
     report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
 
     assert "===== ENTRY FOLLOW-THROUGH DIAGNOSTICS =====" in report
+
+
+def test_report_includes_virtual_exit_diagnostics() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "===== VIRTUAL EXIT DIAGNOSTICS =====" in report
+
+
+def test_virtual_exit_summary_appears_by_default() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "Best Policy by Total PnL R" in report
+    assert "Policy Summary:" in report
+
+
+def test_virtual_exit_trade_log_is_hidden_by_default() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "#1 | LONG | ACTUAL=LOSS" not in report
+    assert "Hidden. Use --show-trades to display virtual exit trade log rows." in report
+
+
+def test_show_trades_prints_virtual_exit_trade_log() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50, show_trades=True)
+
+    assert "Virtual Exit Trade Log:" in report
+    assert "#1 | LONG | ACTUAL=LOSS" in report
+
+
+def test_no_trades_prints_empty_virtual_exit_report() -> None:
+    report = format_rolling_backtest_report(_result_with_empty_trade_outcomes(), FIXTURE_PATH, 50, show_trades=True)
+
+    assert "===== VIRTUAL EXIT DIAGNOSTICS =====" in report
+    assert "Virtual Exit Trade Log:\nNo trades." in report
 
 
 def test_entry_followthrough_summary_appears_by_default() -> None:

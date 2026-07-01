@@ -57,6 +57,9 @@ def format_rolling_backtest_report(
     entry_followthrough = getattr(result, "entry_followthrough_diagnostics", None)
     if entry_followthrough is not None:
         lines.extend(_format_entry_followthrough_diagnostics(entry_followthrough, show_trades=show_trades))
+    virtual_exit = getattr(result, "virtual_exit_diagnostics", None)
+    if virtual_exit is not None:
+        lines.extend(_format_virtual_exit_diagnostics(virtual_exit, show_trades=show_trades))
     diagnostics = getattr(result, "diagnostics", None)
     if diagnostics is not None:
         lines.extend(_format_diagnostics(diagnostics))
@@ -259,6 +262,90 @@ def _format_entry_followthrough_trade_row(record) -> str:
         f"h3_fav_r={getattr(h3, 'favorable_r', None)} | h3_adv_r={getattr(h3, 'adverse_r', None)} | "
         f"no_ft3={record.no_followthrough_3} | early_rev3={record.early_reversal_3}"
     )
+
+
+def _format_virtual_exit_diagnostics(diagnostics, show_trades: bool = False) -> list[str]:
+    lines = [
+        "",
+        "===== VIRTUAL EXIT DIAGNOSTICS =====",
+        f"Total Trades                 : {diagnostics.total_trades}",
+        f"Actual Wins                  : {diagnostics.actual_wins}",
+        f"Actual Losses                : {diagnostics.actual_losses}",
+        f"Actual Open Trades           : {diagnostics.actual_open_trades}",
+        f"Actual Total PnL R           : {_format_optional_float(diagnostics.actual_total_pnl_r)}",
+        "",
+        f"Best Policy by Total PnL R   : {_format_optional_float(diagnostics.best_policy_by_total_pnl_r)}",
+        f"Best Policy by Win Rate      : {_format_optional_float(diagnostics.best_policy_by_win_rate)}",
+        f"Best Policy by Avg PnL R     : {_format_optional_float(diagnostics.best_policy_by_average_pnl_r)}",
+        "",
+        "Improvement Counts:",
+        f"TP 1R Would Win              : {diagnostics.tp_1r_would_have_won_count}",
+        f"TP 1.5R Would Win            : {diagnostics.tp_1_5r_would_have_won_count}",
+        f"TP 2R Would Win              : {diagnostics.tp_2r_would_have_won_count}",
+        f"TP 3R Would Win              : {diagnostics.tp_3r_would_have_won_count}",
+        f"BE 0.5R Would Help           : {diagnostics.be_0_5r_would_help_count}",
+        f"BE 1R Would Help             : {diagnostics.be_1r_would_help_count}",
+        "",
+        "High RR Loss Analysis:",
+        f"High RR Losses               : {diagnostics.high_rr_loss_count}",
+        f"High RR Loss TP 1R Wins      : {diagnostics.high_rr_loss_tp_1r_wins}",
+        f"High RR Loss TP 1.5R Wins    : {diagnostics.high_rr_loss_tp_1_5r_wins}",
+        f"High RR Loss BE 0.5R Saved   : {diagnostics.high_rr_loss_be_0_5r_saved}",
+        f"High RR Loss BE 1R Saved     : {diagnostics.high_rr_loss_be_1r_saved}",
+        "",
+        "Policy Summary:",
+    ]
+    if diagnostics.policy_summaries:
+        for policy_name in [
+            "TP_1R",
+            "TP_1_5R",
+            "TP_2R",
+            "TP_3R",
+            "BE_AFTER_0_5R",
+            "BE_AFTER_1R",
+            "TP_1R_STOP",
+            "TP_1_5R_STOP",
+        ]:
+            summary = diagnostics.policy_summaries.get(policy_name)
+            if summary is None:
+                continue
+            lines.append(
+                f"{policy_name:<30}: trades={summary.total_trades}, wins={summary.wins}, "
+                f"losses={summary.losses}, be={summary.breakevens}, open={summary.opens}, "
+                f"win_rate={_format_optional_float(summary.win_rate)}, "
+                f"total_pnl_r={summary.total_pnl_r}, avg_pnl_r={_format_optional_float(summary.average_pnl_r)}"
+            )
+    else:
+        lines.append("None")
+
+    lines.extend(["", "Virtual Exit Trade Log:"])
+    if not diagnostics.records:
+        lines.append("No trades.")
+    elif not show_trades:
+        lines.append("Hidden. Use --show-trades to display virtual exit trade log rows.")
+    else:
+        for record in diagnostics.records:
+            lines.append(_format_virtual_exit_trade_row(record))
+    return lines
+
+
+def _format_virtual_exit_trade_row(record) -> str:
+    tp_1r = record.policy_results.get("TP_1R")
+    tp_2r = record.policy_results.get("TP_2R")
+    be = record.policy_results.get("BE_AFTER_0_5R")
+    best = f"{record.best_policy_name}:{record.best_policy_pnl_r}R" if record.best_policy_name else "None"
+    return (
+        f"#{record.trade_number} | {record.direction} | ACTUAL={record.actual_result} | "
+        f"actual_r={record.actual_pnl_r} | best={best} | "
+        f"TP_1R={_policy_result_text(tp_1r)} | TP_2R={_policy_result_text(tp_2r)} | "
+        f"BE_0_5R={_policy_result_text(be)}"
+    )
+
+
+def _policy_result_text(result) -> str:
+    if result is None:
+        return "None"
+    return f"{result.result}:{result.virtual_pnl_r}R"
 
 
 def _format_diagnostics(diagnostics) -> list[str]:

@@ -5,6 +5,7 @@ from models.backtest_diagnostics import BacktestDiagnostics
 from models.entry_followthrough_diagnostics import EntryFollowthroughDiagnostics
 from models.sl_tp_outcome_diagnostics import SLTPOutcomeDiagnostics
 from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics
+from models.virtual_exit_diagnostics import VirtualExitDiagnostics
 
 
 @dataclass
@@ -36,6 +37,7 @@ class RollingBacktestResult:
     trade_outcome_diagnostics: TradeOutcomeDiagnostics | None = None
     sl_tp_outcome_diagnostics: SLTPOutcomeDiagnostics | None = None
     entry_followthrough_diagnostics: EntryFollowthroughDiagnostics | None = None
+    virtual_exit_diagnostics: VirtualExitDiagnostics | None = None
     trade_outcome_contexts: list[Any] = field(default_factory=list)
     event_type: str = "ROLLING_BACKTEST_RESULT"
 
