@@ -7,6 +7,7 @@ import pandas as pd
 
 from engine.backtest.backtest_diagnostics_engine import BacktestDiagnosticsEngine
 from engine.backtest.backtest_engine import BacktestEngine
+from engine.backtest.entry_followthrough_diagnostics_engine import EntryFollowthroughDiagnosticsEngine
 from engine.backtest.sl_tp_outcome_diagnostics_engine import SLTPOutcomeDiagnosticsEngine
 from engine.backtest.trade_outcome_diagnostics_engine import TradeOutcomeDiagnosticsEngine
 from engine.ict_engine import ICTEngine
@@ -44,6 +45,7 @@ class RollingBacktestEngine:
         self.diagnostics_engine = BacktestDiagnosticsEngine()
         self.trade_outcome_diagnostics_engine = TradeOutcomeDiagnosticsEngine()
         self.sl_tp_outcome_diagnostics_engine = SLTPOutcomeDiagnosticsEngine()
+        self.entry_followthrough_diagnostics_engine = EntryFollowthroughDiagnosticsEngine()
         self.trade_state_manager = TradeStateManager()
 
     def run(self, candles: pd.DataFrame) -> RollingBacktestResult:
@@ -292,6 +294,7 @@ class RollingBacktestEngine:
         fallback_count = self._range_mode_fallback_count(diagnostics_source)
         trade_outcomes = self.trade_outcome_diagnostics_engine.summarize_contexts(contexts)
         sl_tp_outcomes = self.sl_tp_outcome_diagnostics_engine.summarize_trade_contexts(contexts)
+        entry_followthrough = self.entry_followthrough_diagnostics_engine.summarize_trade_contexts(contexts)
         return RollingBacktestResult(
             total_windows=total_windows,
             processed_windows=processed_windows,
@@ -318,6 +321,7 @@ class RollingBacktestEngine:
             range_mode_fallback_count=fallback_count,
             trade_outcome_diagnostics=trade_outcomes,
             sl_tp_outcome_diagnostics=sl_tp_outcomes,
+            entry_followthrough_diagnostics=entry_followthrough,
             trade_outcome_contexts=contexts,
         )
 

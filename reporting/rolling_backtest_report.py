@@ -54,6 +54,9 @@ def format_rolling_backtest_report(
     sl_tp_outcomes = getattr(result, "sl_tp_outcome_diagnostics", None)
     if sl_tp_outcomes is not None:
         lines.extend(_format_sl_tp_outcome_diagnostics(sl_tp_outcomes, show_trades=show_trades))
+    entry_followthrough = getattr(result, "entry_followthrough_diagnostics", None)
+    if entry_followthrough is not None:
+        lines.extend(_format_entry_followthrough_diagnostics(entry_followthrough, show_trades=show_trades))
     diagnostics = getattr(result, "diagnostics", None)
     if diagnostics is not None:
         lines.extend(_format_diagnostics(diagnostics))
@@ -171,6 +174,90 @@ def _format_sl_tp_trade_row(record) -> str:
         f"bars={record.bars_held} | mae_r={record.mae_r} | mfe_r={record.mfe_r} | "
         f"tp_progress={record.tp_progress} | sl_progress={record.sl_progress} | "
         f"fast_loss={record.fast_loss} | high_rr_loss={record.high_rr_loss}"
+    )
+
+
+def _format_entry_followthrough_diagnostics(diagnostics, show_trades: bool = False) -> list[str]:
+    lines = [
+        "",
+        "===== ENTRY FOLLOW-THROUGH DIAGNOSTICS =====",
+        f"Total Trades                  : {diagnostics.total_trades}",
+        f"Closed Trades                 : {diagnostics.closed_trades}",
+        f"Open Trades                   : {diagnostics.open_trades}",
+        f"Wins                          : {diagnostics.wins}",
+        f"Losses                        : {diagnostics.losses}",
+        "",
+        "Next Candle:",
+        f"Available                     : {diagnostics.next_candle_available_count}",
+        f"Continuation                  : {diagnostics.next_candle_continuation_count}",
+        f"Rejection                     : {diagnostics.next_candle_rejection_count}",
+        "",
+        "Early Movement:",
+        f"Immediate Favorable           : {diagnostics.immediate_favorable_count}",
+        f"Immediate Adverse             : {diagnostics.immediate_adverse_count}",
+        f"No Follow-through H3          : {diagnostics.no_followthrough_3_count}",
+        f"Strong Follow-through H3      : {diagnostics.strong_followthrough_3_count}",
+        f"Early Reversal H3             : {diagnostics.early_reversal_3_count}",
+        "",
+        "Averages:",
+        f"Avg H1 Favorable R            : {_format_optional_float(diagnostics.average_h1_favorable_r)}",
+        f"Avg H1 Adverse R              : {_format_optional_float(diagnostics.average_h1_adverse_r)}",
+        f"Avg H3 Favorable R            : {_format_optional_float(diagnostics.average_h3_favorable_r)}",
+        f"Avg H3 Adverse R              : {_format_optional_float(diagnostics.average_h3_adverse_r)}",
+        f"Avg H5 Favorable R            : {_format_optional_float(diagnostics.average_h5_favorable_r)}",
+        f"Avg H5 Adverse R              : {_format_optional_float(diagnostics.average_h5_adverse_r)}",
+        "",
+        "By Result:",
+        f"Winners Avg H3 Favorable R    : {_format_optional_float(diagnostics.winners_average_h3_favorable_r)}",
+        f"Losers Avg H3 Favorable R     : {_format_optional_float(diagnostics.losers_average_h3_favorable_r)}",
+        f"Winners Next Continuation     : {diagnostics.winners_next_candle_continuation_count}",
+        f"Losers Next Continuation      : {diagnostics.losers_next_candle_continuation_count}",
+        "",
+        "By Trigger:",
+    ]
+    if diagnostics.trigger_counts:
+        for trigger in sorted(diagnostics.trigger_counts):
+            lines.append(
+                f"{trigger:<30}: count={diagnostics.trigger_counts.get(trigger, 0)}, "
+                f"wins={diagnostics.trigger_win_counts.get(trigger, 0)}, "
+                f"losses={diagnostics.trigger_loss_counts.get(trigger, 0)}, "
+                f"avg_h3_fav_r={_format_optional_float(diagnostics.trigger_average_h3_favorable_r.get(trigger))}, "
+                f"avg_h3_adv_r={_format_optional_float(diagnostics.trigger_average_h3_adverse_r.get(trigger))}"
+            )
+    else:
+        lines.append("None")
+
+    lines.extend(
+        [
+            "",
+            "By Direction:",
+            f"LONG No Follow-through H3     : {diagnostics.long_no_followthrough_3_count}",
+            f"SHORT No Follow-through H3    : {diagnostics.short_no_followthrough_3_count}",
+            f"LONG Early Reversal H3        : {diagnostics.long_early_reversal_3_count}",
+            f"SHORT Early Reversal H3       : {diagnostics.short_early_reversal_3_count}",
+            "",
+            "Entry Follow-through Trade Log:",
+        ]
+    )
+    if not diagnostics.records:
+        lines.append("No trades.")
+    elif not show_trades:
+        lines.append("Hidden. Use --show-trades to display entry follow-through trade log rows.")
+    else:
+        for record in diagnostics.records:
+            lines.append(_format_entry_followthrough_trade_row(record))
+    return lines
+
+
+def _format_entry_followthrough_trade_row(record) -> str:
+    h1 = record.horizons.get(1)
+    h3 = record.horizons.get(3)
+    return (
+        f"#{record.trade_number} | {record.direction} | {record.result} | "
+        f"trigger={record.entry_trigger_type} | next_cont={record.next_candle_continuation} | "
+        f"h1_fav_r={getattr(h1, 'favorable_r', None)} | h1_adv_r={getattr(h1, 'adverse_r', None)} | "
+        f"h3_fav_r={getattr(h3, 'favorable_r', None)} | h3_adv_r={getattr(h3, 'adverse_r', None)} | "
+        f"no_ft3={record.no_followthrough_3} | early_rev3={record.early_reversal_3}"
     )
 
 

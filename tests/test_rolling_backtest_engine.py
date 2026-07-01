@@ -575,6 +575,45 @@ def test_no_trades_returns_empty_sl_tp_diagnostics() -> None:
     assert result.sl_tp_outcome_diagnostics.total_trades == 0
 
 
+def test_rolling_result_includes_entry_followthrough_diagnostics() -> None:
+    result = RollingBacktestEngine(ict_engine=RecordingICTEngine(), min_candles=1).run(_candles(1))
+
+    assert result.entry_followthrough_diagnostics is not None
+
+
+def test_entry_followthrough_total_trades_matches_trade_outcomes() -> None:
+    context = _context("PAPER_CLOSED_TP", 10)
+    context.paper_trade_direction = "BULLISH"
+    context.paper_entry_price = 100
+    context.paper_stop_loss = 90
+    context.paper_take_profit = 120
+    context.paper_entry_index = 0
+    context.paper_exit_index = 1
+    context.candles = pd.DataFrame(
+        [
+            {"open": 100, "high": 100, "low": 100, "close": 100},
+            {"open": 100, "high": 120, "low": 99, "close": 120},
+        ]
+    )
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=[context]),
+        min_candles=1,
+        stateful=False,
+    ).run(_candles(1))
+
+    assert result.trade_outcome_diagnostics is not None
+    assert result.entry_followthrough_diagnostics is not None
+    assert result.entry_followthrough_diagnostics.total_trades == result.trade_outcome_diagnostics.total_trades
+
+
+def test_no_trades_returns_empty_entry_followthrough_diagnostics() -> None:
+    result = RollingBacktestEngine(ict_engine=RecordingICTEngine(), min_candles=1).run(_candles(1))
+
+    assert result.entry_followthrough_diagnostics is not None
+    assert result.entry_followthrough_diagnostics.total_trades == 0
+
+
 def test_stateful_open_trades_are_included_as_open_records() -> None:
     fake_engine = RecordingICTEngine(contexts=[_approved_context("BULLISH")])
     candles = pd.DataFrame(

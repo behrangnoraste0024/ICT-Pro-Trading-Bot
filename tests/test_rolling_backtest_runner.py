@@ -5,6 +5,11 @@ from pathlib import Path
 
 from models.backtest_diagnostics import BacktestDiagnostics
 from models.dealing_range_diagnostics import DealingRangeDiagnostics
+from models.entry_followthrough_diagnostics import (
+    EntryFollowthroughDiagnostics,
+    EntryFollowthroughHorizon,
+    EntryFollowthroughRecord,
+)
 from models.ote_diagnostics import OTEDiagnostics
 from models.range_candidate_diagnostics import RangeCandidateDiagnostics, RangeCandidateStats
 from models.rolling_backtest_result import RollingBacktestResult
@@ -180,6 +185,42 @@ def _result_with_trade_outcomes() -> RollingBacktestResult:
         average_mae_r_winners=0.2,
         long_win_count=1,
     )
+    result.entry_followthrough_diagnostics = EntryFollowthroughDiagnostics(
+        records=[
+            EntryFollowthroughRecord(
+                trade_number=1,
+                direction="LONG",
+                result="WIN",
+                entry_trigger_type="CONFIRMATION_CANDLE",
+                next_candle_available=True,
+                next_candle_continuation=True,
+                horizons={
+                    1: EntryFollowthroughHorizon(horizon=1, available=True, favorable_r=0.5, adverse_r=0.1),
+                    3: EntryFollowthroughHorizon(horizon=3, available=True, favorable_r=1.0, adverse_r=0.2),
+                },
+                immediate_favorable=True,
+                strong_followthrough_3=True,
+            )
+        ],
+        total_trades=1,
+        closed_trades=1,
+        wins=1,
+        next_candle_available_count=1,
+        next_candle_continuation_count=1,
+        immediate_favorable_count=1,
+        strong_followthrough_3_count=1,
+        average_h1_favorable_r=0.5,
+        average_h1_adverse_r=0.1,
+        average_h3_favorable_r=1.0,
+        average_h3_adverse_r=0.2,
+        winners_average_h3_favorable_r=1.0,
+        winners_next_candle_continuation_count=1,
+        trigger_counts={"CONFIRMATION_CANDLE": 1},
+        trigger_win_counts={"CONFIRMATION_CANDLE": 1},
+        trigger_loss_counts={"CONFIRMATION_CANDLE": 0},
+        trigger_average_h3_favorable_r={"CONFIRMATION_CANDLE": 1.0},
+        trigger_average_h3_adverse_r={"CONFIRMATION_CANDLE": 0.2},
+    )
     return result
 
 
@@ -187,6 +228,7 @@ def _result_with_empty_trade_outcomes() -> RollingBacktestResult:
     result = _result()
     result.trade_outcome_diagnostics = TradeOutcomeDiagnostics()
     result.sl_tp_outcome_diagnostics = SLTPOutcomeDiagnostics()
+    result.entry_followthrough_diagnostics = EntryFollowthroughDiagnostics()
     return result
 
 
@@ -261,6 +303,40 @@ def test_report_includes_sl_tp_outcome_diagnostics() -> None:
     report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
 
     assert "===== SL/TP OUTCOME DIAGNOSTICS =====" in report
+
+
+def test_report_includes_entry_followthrough_diagnostics() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "===== ENTRY FOLLOW-THROUGH DIAGNOSTICS =====" in report
+
+
+def test_entry_followthrough_summary_appears_by_default() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "Immediate Favorable" in report
+    assert "Avg H3 Favorable R" in report
+
+
+def test_entry_followthrough_trade_log_is_hidden_by_default() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50)
+
+    assert "#1 | LONG | WIN | trigger=CONFIRMATION_CANDLE" not in report
+    assert "Hidden. Use --show-trades to display entry follow-through trade log rows." in report
+
+
+def test_show_trades_prints_entry_followthrough_trade_log() -> None:
+    report = format_rolling_backtest_report(_result_with_trade_outcomes(), FIXTURE_PATH, 50, show_trades=True)
+
+    assert "Entry Follow-through Trade Log:" in report
+    assert "#1 | LONG | WIN | trigger=CONFIRMATION_CANDLE" in report
+
+
+def test_no_trades_prints_empty_entry_followthrough_report() -> None:
+    report = format_rolling_backtest_report(_result_with_empty_trade_outcomes(), FIXTURE_PATH, 50, show_trades=True)
+
+    assert "===== ENTRY FOLLOW-THROUGH DIAGNOSTICS =====" in report
+    assert "Entry Follow-through Trade Log:\nNo trades." in report
 
 
 def test_sl_tp_summary_appears_by_default() -> None:
