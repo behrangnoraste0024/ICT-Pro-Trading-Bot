@@ -52,6 +52,20 @@ def build_trend_direction_recent_50_fixed_1_5r_specs() -> list[StrategyConfigSpe
     ]
 
 
+def build_regime_direction_recent_50_fixed_1_5r_specs() -> list[StrategyConfigSpec]:
+    return [
+        _spec("recent_50", "fixed_1_5r", 1.5, "all"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "short_only"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "long_only"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "auto_trend", "all"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "regime_trend", "all", "rolling_return", 100, 0.0, "all"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "regime_trend", "all", "rolling_return", 200, 0.0, "all"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "regime_trend", "all", "rolling_return", 300, 0.0, "all"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "regime_trend", "all", "rolling_return", 200, 0.01, "all"),
+        _spec("recent_50", "fixed_1_5r", 1.5, "regime_trend", "all", "rolling_return", 200, 0.0, "block"),
+    ]
+
+
 def build_current_external_only_specs() -> list[StrategyConfigSpec]:
     return [
         _spec("current_external", "original", 2.0),
@@ -67,10 +81,19 @@ def _spec(
     min_risk_reward: float,
     direction_mode: str = "all",
     auto_trend_fallback: str = "all",
+    regime_mode: str = "rolling_return",
+    regime_lookback: int = 200,
+    regime_threshold_pct: float = 0.0,
+    regime_fallback: str = "all",
 ) -> StrategyConfigSpec:
     name = f"{dealing_range_mode}|{exit_mode}|min_rr={min_risk_reward}|dir={direction_mode}"
     if direction_mode == "auto_trend":
         name = f"{name}|trend_fallback={auto_trend_fallback}"
+    if direction_mode == "regime_trend":
+        name = (
+            f"{name}|regime={regime_mode}|lookback={regime_lookback}|"
+            f"thr={regime_threshold_pct}|regime_fb={regime_fallback}"
+        )
     return StrategyConfigSpec(
         name,
         dealing_range_mode,
@@ -78,6 +101,10 @@ def _spec(
         min_risk_reward,
         direction_mode,
         auto_trend_fallback,
+        regime_mode,
+        regime_lookback,
+        regime_threshold_pct,
+        regime_fallback,
     )
 
 
@@ -127,6 +154,10 @@ class StrategyComparisonEngine:
                     min_risk_reward=spec.min_risk_reward,
                     direction_mode=spec.direction_mode,
                     auto_trend_fallback=spec.auto_trend_fallback,
+                    regime_mode=spec.regime_mode,
+                    regime_lookback=spec.regime_lookback,
+                    regime_threshold_pct=spec.regime_threshold_pct,
+                    regime_fallback=spec.regime_fallback,
                 ),
             ).run(candles)
             elapsed_seconds = time.perf_counter() - started_at
@@ -189,6 +220,10 @@ class StrategyComparisonEngine:
             min_risk_reward=spec.min_risk_reward,
             direction_mode=spec.direction_mode,
             auto_trend_fallback=spec.auto_trend_fallback,
+            regime_mode=spec.regime_mode,
+            regime_lookback=spec.regime_lookback,
+            regime_threshold_pct=spec.regime_threshold_pct,
+            regime_fallback=spec.regime_fallback,
             total_windows=result.total_windows,
             processed_windows=result.processed_windows,
             failed_windows=result.failed_windows,
