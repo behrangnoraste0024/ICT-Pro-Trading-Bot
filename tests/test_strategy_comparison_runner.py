@@ -145,6 +145,29 @@ def test_recommended_profiles_strategy_set_works(capsys) -> None:
     assert "Rank | Strategy | Profile | DR Mode" in captured.out
 
 
+def test_recommended_profiles_with_costs_strategy_set_works(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "recommended_profiles_with_costs",
+            "--sort-by",
+            "net_pnl_after_costs",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategies   : 5" in captured.out
+    assert "Sort By      : net_pnl_after_costs" in captured.out
+    assert "profile=balanced_smc|cost=percent" in captured.out
+    assert "Cost | NetAfterCost" in captured.out
+
+
 def test_current_external_only_strategy_set_works(capsys) -> None:
     return_code = main(["--fixture", FIXTURE_PATH, "--min-candles", "50", "--strategy-set", "current_external_only"])
 
@@ -390,6 +413,13 @@ def test_output_json_writes_valid_json(tmp_path) -> None:
     assert "strict_long_preset" in data["strategies"][0]
     assert "long_in_bearish_count" in data["strategies"][0]
     assert "short_in_bullish_pnl" in data["strategies"][0]
+    assert "cost_model" in data["strategies"][0]
+    assert "commission_pct" in data["strategies"][0]
+    assert "slippage_pct" in data["strategies"][0]
+    assert "spread_pct" in data["strategies"][0]
+    assert "gross_net_pnl" in data["strategies"][0]
+    assert "total_cost" in data["strategies"][0]
+    assert "net_pnl_after_costs" in data["strategies"][0]
 
 
 def test_output_csv_writes_headers(tmp_path) -> None:
@@ -424,6 +454,13 @@ def test_output_csv_writes_headers(tmp_path) -> None:
     assert "strict_long_preset" in text.splitlines()[0]
     assert "long_in_bearish_count" in text.splitlines()[0]
     assert "short_in_bullish_pnl" in text.splitlines()[0]
+    assert "cost_model" in text.splitlines()[0]
+    assert "commission_pct" in text.splitlines()[0]
+    assert "slippage_pct" in text.splitlines()[0]
+    assert "spread_pct" in text.splitlines()[0]
+    assert "gross_net_pnl" in text.splitlines()[0]
+    assert "total_cost" in text.splitlines()[0]
+    assert "net_pnl_after_costs" in text.splitlines()[0]
 
 
 def test_invalid_strategy_set_rejected_by_argparse() -> None:

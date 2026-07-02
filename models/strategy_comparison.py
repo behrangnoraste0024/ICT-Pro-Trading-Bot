@@ -29,6 +29,10 @@ class StrategyConfigSpec:
     strict_short_require_displacement: bool = False
     strict_short_min_setup_score: int | None = None
     strategy_profile: str = "default"
+    cost_model: str = "off"
+    commission_pct: float = 0.0
+    slippage_pct: float = 0.0
+    spread_pct: float = 0.0
     event_type: str = "STRATEGY_CONFIG_SPEC"
 
     def __str__(self) -> str:
@@ -59,6 +63,10 @@ class StrategyComparisonRow:
     regime_threshold_pct: float = 0.0
     regime_fallback: str = "all"
     strategy_profile: str = "default"
+    cost_model: str = "off"
+    commission_pct: float = 0.0
+    slippage_pct: float = 0.0
+    spread_pct: float = 0.0
     direction_quality_mode: str = "off"
     strict_long_preset: str = "none"
     total_windows: int = 0
@@ -73,6 +81,9 @@ class StrategyComparisonRow:
     losses: int = 0
     win_rate: float | None = None
     net_pnl: float = 0.0
+    gross_net_pnl: float = 0.0
+    total_cost: float = 0.0
+    net_pnl_after_costs: float = 0.0
     average_pnl: float | None = None
     max_drawdown: float = 0.0
     average_rr: float | None = None
@@ -116,6 +127,7 @@ class StrategyComparisonReport:
     best_by_win_rate: str | None = None
     best_by_profit_factor: str | None = None
     best_by_drawdown: str | None = None
+    best_by_net_pnl_after_costs: str | None = None
     event_type: str = "STRATEGY_COMPARISON_REPORT"
 
     def sorted_by(self, metric: str, descending: bool = True) -> list[StrategyComparisonRow]:
@@ -137,6 +149,7 @@ class StrategyComparisonReport:
         self.best_by_win_rate = self._best_name("win_rate")
         self.best_by_profit_factor = self._best_name("profit_factor")
         self.best_by_drawdown = self._best_name("max_drawdown", prefer_lower=True)
+        self.best_by_net_pnl_after_costs = self._best_name("net_pnl_after_costs")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -148,6 +161,7 @@ class StrategyComparisonReport:
             "best_by_win_rate": self.best_by_win_rate,
             "best_by_profit_factor": self.best_by_profit_factor,
             "best_by_drawdown": self.best_by_drawdown,
+            "best_by_net_pnl_after_costs": self.best_by_net_pnl_after_costs,
             "event_type": self.event_type,
         }
 

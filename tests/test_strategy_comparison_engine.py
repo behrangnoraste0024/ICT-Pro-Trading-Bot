@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from models.cost_diagnostics import CostDiagnostics
 from models.entry_followthrough_diagnostics import EntryFollowthroughDiagnostics
 from models.rolling_backtest_result import RollingBacktestResult
 from models.regime_direction_diagnostics import RegimeDirectionDiagnostics
@@ -16,6 +17,7 @@ from engine.backtest.strategy_comparison_engine import (
     build_exit_modes_recent_50_specs,
     build_long_strict_recent_50_fixed_1_5r_specs,
     build_recommended_profile_specs,
+    build_recommended_profile_with_cost_specs,
     build_regime_direction_recent_50_fixed_1_5r_specs,
     build_trend_direction_recent_50_fixed_1_5r_specs,
     direction_quality_preset_config,
@@ -153,6 +155,19 @@ def test_strategy_report_sorted_by_net_pnl_descending() -> None:
     assert [row.strategy_name for row in report.sorted_by("net_pnl")] == ["high", "low"]
 
 
+def test_strategy_report_sorted_by_net_pnl_after_costs_descending() -> None:
+    report = StrategyComparisonReport(
+        fixture=FIXTURE_PATH,
+        min_candles=50,
+        strategies=[
+            StrategyComparisonRow("gross_high", net_pnl=10, net_pnl_after_costs=1),
+            StrategyComparisonRow("net_high", net_pnl=5, net_pnl_after_costs=4),
+        ],
+    )
+
+    assert [row.strategy_name for row in report.sorted_by("net_pnl_after_costs")] == ["net_high", "gross_high"]
+
+
 def test_best_row_drawdown_prefers_lower() -> None:
     report = StrategyComparisonReport(
         fixture=FIXTURE_PATH,
@@ -174,6 +189,46 @@ def test_profit_factor_handles_wins_and_losses() -> None:
 
     assert row.profit_factor == 4
     assert row.average_loss == -50
+
+
+def test_row_from_result_populates_cost_fields() -> None:
+    result = _result_with_trades()
+    result.cost_diagnostics = CostDiagnostics(
+        cost_model="percent",
+        commission_pct=0.0004,
+        slippage_pct=0.0002,
+        spread_pct=0.0001,
+        total_trades=3,
+        closed_trades=3,
+        gross_net_pnl=150,
+        total_commission_cost=10,
+        total_slippage_cost=5,
+        total_spread_cost=2.5,
+        total_cost=17.5,
+        net_pnl_after_costs=132.5,
+        average_cost_per_trade=5.8333333333,
+        average_net_pnl_after_costs=44.1666666667,
+        cost_to_gross_profit_ratio=0.0875,
+    )
+
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec(
+            "spec",
+            "recent_50",
+            "fixed_1_5r",
+            1.5,
+            cost_model="percent",
+            commission_pct=0.0004,
+            slippage_pct=0.0002,
+            spread_pct=0.0001,
+        ),
+        result,
+    )
+
+    assert row.cost_model == "percent"
+    assert row.gross_net_pnl == 150
+    assert row.total_cost == 17.5
+    assert row.net_pnl_after_costs == 132.5
 
 
 def test_profit_factor_is_none_without_losses() -> None:
@@ -408,6 +463,22 @@ def test_recommended_profile_specs_include_expected_profiles() -> None:
     assert specs[2].direction_quality_mode == "off"
     assert specs[3].dealing_range_mode == "current_external"
     assert specs[3].exit_mode == "original"
+
+
+def test_recommended_profile_with_cost_specs_exist() -> None:
+    specs = build_recommended_profile_with_cost_specs()
+
+    assert [spec.name for spec in specs] == [
+        "profile=balanced_smc",
+        "profile=balanced_smc|cost=percent",
+        "profile=bearish_smc",
+        "profile=bearish_smc|cost=percent",
+        "profile=research_baseline|cost=percent",
+    ]
+    assert specs[1].cost_model == "percent"
+    assert specs[1].commission_pct == 0.0004
+    assert specs[1].slippage_pct == 0.0002
+    assert specs[1].spread_pct == 0.0001
 
 
 def test_direction_quality_preset_config_expands_long_strict_rules() -> None:

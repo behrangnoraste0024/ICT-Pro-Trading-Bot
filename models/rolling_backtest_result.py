@@ -3,6 +3,7 @@ from typing import Any
 
 from models.backtest_diagnostics import BacktestDiagnostics
 from models.entry_followthrough_diagnostics import EntryFollowthroughDiagnostics
+from models.cost_diagnostics import CostDiagnostics
 from models.sl_tp_outcome_diagnostics import SLTPOutcomeDiagnostics
 from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics
 from models.virtual_exit_diagnostics import VirtualExitDiagnostics
@@ -62,6 +63,10 @@ class RollingBacktestResult:
     entry_followthrough_diagnostics: EntryFollowthroughDiagnostics | None = None
     virtual_exit_diagnostics: VirtualExitDiagnostics | None = None
     regime_direction_diagnostics: RegimeDirectionDiagnostics | None = None
+    cost_diagnostics: CostDiagnostics | None = None
+    gross_net_pnl: float = 0.0
+    net_pnl_after_costs: float = 0.0
+    total_cost: float = 0.0
     trade_outcome_contexts: list[Any] = field(default_factory=list)
     event_type: str = "ROLLING_BACKTEST_RESULT"
 

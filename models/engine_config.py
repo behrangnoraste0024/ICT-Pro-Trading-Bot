@@ -13,6 +13,7 @@ class EngineConfig:
     VALID_REGIME_FALLBACKS = {"all", "block"}
     VALID_DIRECTION_QUALITY_MODES = {"off", "long_strict", "short_strict", "both_strict"}
     VALID_STRATEGY_PROFILES = {"default", "balanced_smc", "bearish_smc", "research_baseline"}
+    VALID_COST_MODELS = {"off", "percent"}
 
     strategy_profile: str = "default"
     dealing_range_mode: str = "current_external"
@@ -35,6 +36,10 @@ class EngineConfig:
     strict_short_require_regime_bearish: bool = False
     strict_short_require_displacement: bool = False
     strict_short_min_setup_score: int | None = None
+    cost_model: str = "off"
+    commission_pct: float = 0.0
+    slippage_pct: float = 0.0
+    spread_pct: float = 0.0
 
     def __post_init__(self) -> None:
         if self.strategy_profile not in self.VALID_STRATEGY_PROFILES:
@@ -62,4 +67,10 @@ class EngineConfig:
         for field_name in ("strict_long_min_setup_score", "strict_short_min_setup_score"):
             value = getattr(self, field_name)
             if value is not None and value < 0:
+                raise ValueError(f"Unsupported {field_name}: {value}")
+        if self.cost_model not in self.VALID_COST_MODELS:
+            raise ValueError(f"Unsupported cost model: {self.cost_model}")
+        for field_name in ("commission_pct", "slippage_pct", "spread_pct"):
+            value = getattr(self, field_name)
+            if value < 0:
                 raise ValueError(f"Unsupported {field_name}: {value}")

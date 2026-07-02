@@ -897,6 +897,55 @@ def test_result_reports_strategy_profile() -> None:
     assert result.strategy_profile == "balanced_smc"
 
 
+def test_result_includes_cost_diagnostics() -> None:
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=[_context("PAPER_CLOSED_TP", 10)]),
+        min_candles=1,
+        stateful=False,
+    ).run(_candles(1))
+
+    assert result.cost_diagnostics is not None
+    assert result.cost_diagnostics.cost_model == "off"
+    assert result.gross_net_pnl == result.net_pnl
+    assert result.net_pnl_after_costs == result.net_pnl
+
+
+def test_cost_off_does_not_change_gross_result() -> None:
+    context = _context("PAPER_CLOSED_TP", 10)
+    context.paper_entry_price = 100
+    context.paper_exit_price = 110
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=[context]),
+        min_candles=1,
+        stateful=False,
+        cost_model="off",
+        commission_pct=0.001,
+    ).run(_candles(1))
+
+    assert result.net_pnl == 10
+    assert result.total_cost == 0
+    assert result.net_pnl_after_costs == 10
+
+
+def test_cost_percent_computes_total_cost() -> None:
+    context = _context("PAPER_CLOSED_TP", 10)
+    context.paper_entry_price = 100
+    context.paper_exit_price = 110
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=[context]),
+        min_candles=1,
+        stateful=False,
+        cost_model="percent",
+        commission_pct=0.001,
+    ).run(_candles(1))
+
+    assert result.net_pnl == 10
+    assert result.total_cost == pytest.approx(0.21)
+    assert result.net_pnl_after_costs == pytest.approx(9.79)
+
+
 def test_invalid_strategy_profile_rejected() -> None:
     with pytest.raises(ValueError, match="Unsupported strategy profile"):
         RollingBacktestEngine(strategy_profile="turbo")
@@ -925,6 +974,16 @@ def test_invalid_direction_quality_mode_rejected() -> None:
 def test_invalid_direction_quality_min_score_rejected() -> None:
     with pytest.raises(ValueError, match="Unsupported strict_long_min_setup_score"):
         RollingBacktestEngine(strict_long_min_setup_score=-1)
+
+
+def test_invalid_cost_model_rejected() -> None:
+    with pytest.raises(ValueError, match="Unsupported cost model"):
+        RollingBacktestEngine(cost_model="ticks")
+
+
+def test_invalid_cost_pct_rejected() -> None:
+    with pytest.raises(ValueError, match="Unsupported commission_pct"):
+        RollingBacktestEngine(commission_pct=-0.1)
 
 
 def test_direction_mode_fallback_counts_are_reported() -> None:

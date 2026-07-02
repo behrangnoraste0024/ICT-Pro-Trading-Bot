@@ -22,6 +22,9 @@ def _report() -> StrategyComparisonReport:
                 losses=5,
                 win_rate=50.0,
                 net_pnl=500.984,
+                gross_net_pnl=500.984,
+                total_cost=25.5,
+                net_pnl_after_costs=475.484,
                 average_pnl=50.098,
                 max_drawdown=596.444,
                 profit_factor=1.234,
@@ -52,6 +55,7 @@ def test_report_includes_best_section() -> None:
 
     assert "Best:" in output
     assert "Net PnL      : recent_50|fixed_1_5r|min_rr=1.5|dir=auto_trend|trend_fallback=block" in output
+    assert "Net After Costs: recent_50|fixed_1_5r|min_rr=1.5|dir=auto_trend|trend_fallback=block" in output
 
 
 def test_report_includes_comparison_table() -> None:
@@ -61,6 +65,7 @@ def test_report_includes_comparison_table() -> None:
     assert "Rank | Strategy | Profile | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB" in output
     assert "balanced_smc" in output
     assert "Regime | Lookback | Thr | RegimeFB" in output
+    assert "GrossPnL | Cost | NetAfterCost" in output
     assert "off" in output
     assert "none" in output
     assert "Elapsed" in output
@@ -92,3 +97,10 @@ def test_report_displays_long_and_short_pnl() -> None:
 
     assert "-368" in output
     assert "868.98" in output
+
+
+def test_report_displays_cost_columns() -> None:
+    output = format_strategy_comparison_report(_report())
+
+    assert "25.50" in output
+    assert "475.48" in output

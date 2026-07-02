@@ -38,6 +38,10 @@ PROFILE_FLAG_TO_FIELD = {
     "--strict-short-require-regime-bearish": "strict_short_require_regime_bearish",
     "--strict-short-require-displacement": "strict_short_require_displacement",
     "--strict-short-min-setup-score": "strict_short_min_setup_score",
+    "--cost-model": "cost_model",
+    "--commission-pct": "commission_pct",
+    "--slippage-pct": "slippage_pct",
+    "--spread-pct": "spread_pct",
 }
 
 
@@ -50,6 +54,13 @@ def positive_float(value: str) -> float:
 
 def non_negative_int(value: str) -> int:
     parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be greater than or equal to 0")
+    return parsed
+
+
+def non_negative_float(value: str) -> float:
+    parsed = float(value)
     if parsed < 0:
         raise argparse.ArgumentTypeError("must be greater than or equal to 0")
     return parsed
@@ -99,6 +110,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--strict-short-require-regime-bearish", action="store_true")
     parser.add_argument("--strict-short-require-displacement", action="store_true")
     parser.add_argument("--strict-short-min-setup-score", type=non_negative_int, default=None)
+    parser.add_argument("--cost-model", choices=["off", "percent"], default="off")
+    parser.add_argument("--commission-pct", type=non_negative_float, default=0.0)
+    parser.add_argument("--slippage-pct", type=non_negative_float, default=0.0)
+    parser.add_argument("--spread-pct", type=non_negative_float, default=0.0)
     parser.add_argument("--show-trades", action="store_true")
     parser.add_argument("--debug-first-trade-metadata", action="store_true")
     args = parser.parse_args(raw_args)

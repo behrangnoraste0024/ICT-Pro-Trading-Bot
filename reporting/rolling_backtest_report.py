@@ -29,6 +29,13 @@ def format_rolling_backtest_report(
     regime_fallback = getattr(result, "regime_fallback", "all")
     direction_quality_mode = getattr(result, "direction_quality_mode", "off")
     direction_mode_fallback_counts = getattr(result, "direction_mode_fallback_counts", {})
+    cost_diagnostics = getattr(result, "cost_diagnostics", None)
+    cost_model = "off" if cost_diagnostics is None else cost_diagnostics.cost_model
+    commission_pct = 0.0 if cost_diagnostics is None else cost_diagnostics.commission_pct
+    slippage_pct = 0.0 if cost_diagnostics is None else cost_diagnostics.slippage_pct
+    spread_pct = 0.0 if cost_diagnostics is None else cost_diagnostics.spread_pct
+    total_cost = 0.0 if cost_diagnostics is None else cost_diagnostics.total_cost
+    net_pnl_after_costs = result.net_pnl if cost_diagnostics is None else cost_diagnostics.net_pnl_after_costs
 
     lines = [
         "===== ROLLING BACKTEST REPORT =====",
@@ -70,10 +77,19 @@ def format_rolling_backtest_report(
             f"Losses            : {result.losses}",
             f"Win Rate          : {result.win_rate}",
             f"Net PnL           : {result.net_pnl}",
+            f"Gross Net PnL     : {result.net_pnl}",
+            f"Cost Model        : {cost_model}",
+            f"Commission Pct    : {commission_pct}",
+            f"Slippage Pct      : {slippage_pct}",
+            f"Spread Pct        : {spread_pct}",
+            f"Total Cost        : {total_cost}",
+            f"Net PnL After Costs: {net_pnl_after_costs}",
             f"Average PnL       : {result.average_pnl}",
             f"Max Drawdown      : {result.max_drawdown}",
         ]
     )
+    if cost_diagnostics is not None:
+        lines.extend(_format_cost_diagnostics(cost_diagnostics, show_trades=show_trades))
     trade_outcomes = getattr(result, "trade_outcome_diagnostics", None)
     if trade_outcomes is not None:
         lines.extend(_format_trade_outcome_diagnostics(trade_outcomes, show_trades=show_trades))
@@ -93,6 +109,44 @@ def format_rolling_backtest_report(
     if diagnostics is not None:
         lines.extend(_format_diagnostics(diagnostics))
     return "\n".join(lines)
+
+
+def _format_cost_diagnostics(diagnostics, show_trades: bool = False) -> list[str]:
+    lines = [
+        "",
+        "===== COST DIAGNOSTICS =====",
+        f"Cost Model                 : {diagnostics.cost_model}",
+        f"Total Trades               : {diagnostics.total_trades}",
+        f"Closed Trades              : {diagnostics.closed_trades}",
+        f"Gross Net PnL              : {diagnostics.gross_net_pnl}",
+        f"Total Commission Cost      : {diagnostics.total_commission_cost}",
+        f"Total Slippage Cost        : {diagnostics.total_slippage_cost}",
+        f"Total Spread Cost          : {diagnostics.total_spread_cost}",
+        f"Total Cost                 : {diagnostics.total_cost}",
+        f"Net PnL After Costs        : {diagnostics.net_pnl_after_costs}",
+        f"Average Cost Per Trade     : {diagnostics.average_cost_per_trade}",
+        f"Average Net PnL After Costs: {diagnostics.average_net_pnl_after_costs}",
+        f"Cost/Gross Profit Ratio    : {_format_optional_float(diagnostics.cost_to_gross_profit_ratio)}",
+        "",
+        "Cost Trade Log:",
+    ]
+    if not diagnostics.trades:
+        lines.append("No trades.")
+    elif not show_trades:
+        lines.append("Hidden. Use --show-trades to display cost trade log rows.")
+    else:
+        for trade in diagnostics.trades:
+            lines.append(_format_cost_trade_row(trade))
+    return lines
+
+
+def _format_cost_trade_row(trade) -> str:
+    return (
+        f"#{trade.trade_index} | {trade.direction} | gross={trade.gross_pnl} | "
+        f"commission={trade.commission_cost} | slippage={trade.slippage_cost} | "
+        f"spread={trade.spread_cost} | total_cost={trade.total_cost} | "
+        f"net_after_cost={trade.net_pnl_after_costs}"
+    )
 
 
 def _format_trade_outcome_diagnostics(diagnostics, show_trades: bool = False) -> list[str]:

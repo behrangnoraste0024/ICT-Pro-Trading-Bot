@@ -7,6 +7,7 @@ import pandas as pd
 
 from engine.backtest.backtest_diagnostics_engine import BacktestDiagnosticsEngine
 from engine.backtest.backtest_engine import BacktestEngine
+from engine.backtest.cost_diagnostics_engine import CostDiagnosticsEngine
 from engine.backtest.entry_followthrough_diagnostics_engine import EntryFollowthroughDiagnosticsEngine
 from engine.backtest.sl_tp_outcome_diagnostics_engine import SLTPOutcomeDiagnosticsEngine
 from engine.backtest.trade_outcome_diagnostics_engine import TradeOutcomeDiagnosticsEngine
@@ -53,6 +54,10 @@ class RollingBacktestEngine:
         strict_short_require_regime_bearish: bool | None = None,
         strict_short_require_displacement: bool | None = None,
         strict_short_min_setup_score: int | None = None,
+        cost_model: str | None = None,
+        commission_pct: float | None = None,
+        slippage_pct: float | None = None,
+        spread_pct: float | None = None,
         enable_diagnostics: bool = True,
     ):
         self.config = config if config is not None else EngineConfig()
@@ -120,6 +125,19 @@ class RollingBacktestEngine:
                 if value < 0:
                     raise ValueError(f"Unsupported {field_name}: {value}")
                 setattr(self.config, field_name, value)
+        if cost_model is not None:
+            if cost_model not in EngineConfig.VALID_COST_MODELS:
+                raise ValueError(f"Unsupported cost model: {cost_model}")
+            self.config.cost_model = cost_model
+        for field_name, value in {
+            "commission_pct": commission_pct,
+            "slippage_pct": slippage_pct,
+            "spread_pct": spread_pct,
+        }.items():
+            if value is not None:
+                if value < 0:
+                    raise ValueError(f"Unsupported {field_name}: {value}")
+                setattr(self.config, field_name, value)
         self.ict_engine = ict_engine if ict_engine is not None else ICTEngine(config=self.config)
         self.min_candles = min_candles
         self.stateful = stateful
@@ -134,6 +152,7 @@ class RollingBacktestEngine:
         self.entry_followthrough_diagnostics_engine = EntryFollowthroughDiagnosticsEngine()
         self.virtual_exit_diagnostics_engine = VirtualExitDiagnosticsEngine()
         self.regime_direction_diagnostics_engine = RegimeDirectionDiagnosticsEngine()
+        self.cost_diagnostics_engine = CostDiagnosticsEngine()
         self.trade_state_manager = TradeStateManager()
 
     def run(self, candles: pd.DataFrame) -> RollingBacktestResult:
@@ -388,6 +407,7 @@ class RollingBacktestEngine:
         entry_followthrough = None
         virtual_exit = None
         regime_direction = None
+        cost_diagnostics = None
         if self.enable_diagnostics:
             diagnostics = self.diagnostics_engine.summarize_contexts(diagnostics_source)
             diagnostics_windows_analyzed = diagnostics.windows_analyzed
@@ -400,6 +420,7 @@ class RollingBacktestEngine:
         regime_direction = self.regime_direction_diagnostics_engine.summarize_trades(
             [] if trade_outcomes is None else trade_outcomes.trades
         )
+        cost_diagnostics = self.cost_diagnostics_engine.summarize_contexts(contexts, self.config)
         return RollingBacktestResult(
             total_windows=total_windows,
             processed_windows=processed_windows,
@@ -451,6 +472,10 @@ class RollingBacktestEngine:
             entry_followthrough_diagnostics=entry_followthrough,
             virtual_exit_diagnostics=virtual_exit,
             regime_direction_diagnostics=regime_direction,
+            cost_diagnostics=cost_diagnostics,
+            gross_net_pnl=summary.net_pnl,
+            net_pnl_after_costs=cost_diagnostics.net_pnl_after_costs,
+            total_cost=cost_diagnostics.total_cost,
             trade_outcome_contexts=contexts,
         )
 

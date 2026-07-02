@@ -4,6 +4,8 @@ import importlib
 from pathlib import Path
 
 from models.backtest_diagnostics import BacktestDiagnostics
+from models.cost_diagnostics import CostDiagnostics
+from models.cost_diagnostics import TradeCostBreakdown
 from models.dealing_range_diagnostics import DealingRangeDiagnostics
 from models.entry_followthrough_diagnostics import (
     EntryFollowthroughDiagnostics,
@@ -127,6 +129,43 @@ def _result_with_diagnostics() -> RollingBacktestResult:
         ),
         range_candidate_diagnostics=RangeCandidateDiagnostics(windows_analyzed=2, candidates=candidate_stats),
         windows_analyzed=2,
+    )
+    return result
+
+
+def _result_with_cost_diagnostics() -> RollingBacktestResult:
+    result = _result()
+    result.cost_diagnostics = CostDiagnostics(
+        cost_model="percent",
+        commission_pct=0.0004,
+        slippage_pct=0.0002,
+        spread_pct=0.0001,
+        total_trades=1,
+        closed_trades=1,
+        gross_net_pnl=25.0,
+        total_commission_cost=0.08,
+        total_slippage_cost=0.04,
+        total_spread_cost=0.02,
+        total_cost=0.14,
+        net_pnl_after_costs=24.86,
+        average_cost_per_trade=0.14,
+        average_net_pnl_after_costs=24.86,
+        cost_to_gross_profit_ratio=0.0056,
+        trades=[
+            TradeCostBreakdown(
+                trade_index=1,
+                direction="BULLISH",
+                gross_pnl=25.0,
+                commission_cost=0.08,
+                slippage_cost=0.04,
+                spread_cost=0.02,
+                total_cost=0.14,
+                net_pnl_after_costs=24.86,
+                entry_price=100.0,
+                exit_price=125.0,
+                is_closed=True,
+            )
+        ],
     )
     return result
 
@@ -486,6 +525,23 @@ def test_show_trades_prints_trade_log() -> None:
     assert "#1 | LONG | WIN" in report
     assert "regime=BEARISH" in report
     assert "dir_reason=REGIME_TREND_BEARISH_SHORT_ONLY" in report
+
+
+def test_report_includes_cost_diagnostics() -> None:
+    report = format_rolling_backtest_report(_result_with_cost_diagnostics(), FIXTURE_PATH, 50)
+
+    assert "Cost Model        : percent" in report
+    assert "Net PnL After Costs: 24.86" in report
+    assert "===== COST DIAGNOSTICS =====" in report
+    assert "Total Cost                 : 0.14" in report
+
+
+def test_show_trades_prints_cost_trade_log() -> None:
+    report = format_rolling_backtest_report(_result_with_cost_diagnostics(), FIXTURE_PATH, 50, show_trades=True)
+
+    assert "Cost Trade Log:" in report
+    assert "#1 | BULLISH | gross=25.0" in report
+    assert "net_after_cost=24.86" in report
 
 
 def test_report_includes_regime_direction_diagnostics() -> None:
@@ -1157,6 +1213,39 @@ def test_invalid_dealing_range_mode_choice_fails(capsys) -> None:
 def test_invalid_strategy_profile_choice_fails(capsys) -> None:
     try:
         main(["--fixture", FIXTURE_PATH, "--strategy-profile", "turbo"])
+    except SystemExit as exc:
+        assert exc.code == 2
+
+
+def test_cost_cli_flags_are_accepted(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--cost-model",
+            "percent",
+            "--commission-pct",
+            "0.0004",
+            "--slippage-pct",
+            "0.0002",
+            "--spread-pct",
+            "0.0001",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Cost Model        : percent" in captured.out
+    assert "===== COST DIAGNOSTICS =====" in captured.out
+
+
+def test_invalid_cost_model_choice_fails(capsys) -> None:
+    try:
+        main(["--fixture", FIXTURE_PATH, "--cost-model", "ticks"])
     except SystemExit as exc:
         assert exc.code == 2
 

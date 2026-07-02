@@ -19,6 +19,10 @@ def test_engine_config_defaults() -> None:
     assert config.regime_threshold_pct == 0.0
     assert config.regime_fallback == "all"
     assert config.direction_quality_mode == "off"
+    assert config.cost_model == "off"
+    assert config.commission_pct == 0.0
+    assert config.slippage_pct == 0.0
+    assert config.spread_pct == 0.0
 
 
 @pytest.mark.parametrize("exit_mode", ["original", "fixed_1r", "fixed_1_5r", "fixed_2r", "fixed_3r"])
@@ -138,3 +142,21 @@ def test_engine_config_accepts_custom_min_risk_reward() -> None:
 def test_engine_config_rejects_invalid_min_risk_reward(min_risk_reward: float) -> None:
     with pytest.raises(ValueError, match="Unsupported min risk reward"):
         EngineConfig(min_risk_reward=min_risk_reward)
+
+
+@pytest.mark.parametrize("cost_model", ["off", "percent"])
+def test_engine_config_accepts_valid_cost_model(cost_model: str) -> None:
+    config = EngineConfig(cost_model=cost_model)
+
+    assert config.cost_model == cost_model
+
+
+def test_engine_config_rejects_invalid_cost_model() -> None:
+    with pytest.raises(ValueError, match="Unsupported cost model"):
+        EngineConfig(cost_model="ticks")
+
+
+@pytest.mark.parametrize("field_name", ["commission_pct", "slippage_pct", "spread_pct"])
+def test_engine_config_rejects_negative_cost_pct(field_name: str) -> None:
+    with pytest.raises(ValueError, match=f"Unsupported {field_name}"):
+        EngineConfig(**{field_name: -0.1})

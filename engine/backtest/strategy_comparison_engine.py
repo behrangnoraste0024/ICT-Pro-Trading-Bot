@@ -95,6 +95,22 @@ def build_recommended_profile_specs() -> list[StrategyConfigSpec]:
     ]
 
 
+def build_recommended_profile_with_cost_specs() -> list[StrategyConfigSpec]:
+    realistic_cost = {
+        "cost_model": "percent",
+        "commission_pct": 0.0004,
+        "slippage_pct": 0.0002,
+        "spread_pct": 0.0001,
+    }
+    return [
+        _profile_spec("balanced_smc"),
+        _profile_spec("balanced_smc", **realistic_cost),
+        _profile_spec("bearish_smc"),
+        _profile_spec("bearish_smc", **realistic_cost),
+        _profile_spec("research_baseline", **realistic_cost),
+    ]
+
+
 def build_current_external_only_specs() -> list[StrategyConfigSpec]:
     return [
         _spec("current_external", "original", 2.0),
@@ -145,10 +161,17 @@ def _spec(
     )
 
 
-def _profile_spec(strategy_profile: str) -> StrategyConfigSpec:
+def _profile_spec(
+    strategy_profile: str,
+    cost_model: str = "off",
+    commission_pct: float = 0.0,
+    slippage_pct: float = 0.0,
+    spread_pct: float = 0.0,
+) -> StrategyConfigSpec:
     config = apply_strategy_profile(EngineConfig(), strategy_profile)
+    cost_suffix = "" if cost_model == "off" else "|cost=percent"
     return StrategyConfigSpec(
-        f"profile={strategy_profile}",
+        f"profile={strategy_profile}{cost_suffix}",
         config.dealing_range_mode,
         config.exit_mode,
         config.min_risk_reward,
@@ -171,6 +194,10 @@ def _profile_spec(strategy_profile: str) -> StrategyConfigSpec:
         config.strict_short_require_displacement,
         config.strict_short_min_setup_score,
         strategy_profile,
+        cost_model,
+        commission_pct,
+        slippage_pct,
+        spread_pct,
     )
 
 
@@ -261,6 +288,10 @@ class StrategyComparisonEngine:
                     strict_short_require_regime_bearish=spec.strict_short_require_regime_bearish,
                     strict_short_require_displacement=spec.strict_short_require_displacement,
                     strict_short_min_setup_score=spec.strict_short_min_setup_score,
+                    cost_model=spec.cost_model,
+                    commission_pct=spec.commission_pct,
+                    slippage_pct=spec.slippage_pct,
+                    spread_pct=spec.spread_pct,
                 ),
             ).run(candles)
             elapsed_seconds = time.perf_counter() - started_at
@@ -316,6 +347,10 @@ class StrategyComparisonEngine:
         direction_counts = self._direction_counts(result)
         direction_pnl = self._direction_pnl(result)
         profit_factor = self._profit_factor(trades)
+        cost_diagnostics = result.cost_diagnostics
+        gross_net_pnl = result.net_pnl if cost_diagnostics is None else cost_diagnostics.gross_net_pnl
+        total_cost = 0.0 if cost_diagnostics is None else cost_diagnostics.total_cost
+        net_pnl_after_costs = result.net_pnl if cost_diagnostics is None else cost_diagnostics.net_pnl_after_costs
 
         return StrategyComparisonRow(
             strategy_name=spec.name,
@@ -329,6 +364,10 @@ class StrategyComparisonEngine:
             regime_threshold_pct=spec.regime_threshold_pct,
             regime_fallback=spec.regime_fallback,
             strategy_profile=spec.strategy_profile,
+            cost_model=spec.cost_model,
+            commission_pct=spec.commission_pct,
+            slippage_pct=spec.slippage_pct,
+            spread_pct=spec.spread_pct,
             direction_quality_mode=spec.direction_quality_mode,
             strict_long_preset=spec.strict_long_preset,
             total_windows=result.total_windows,
@@ -343,6 +382,9 @@ class StrategyComparisonEngine:
             losses=result.losses,
             win_rate=result.win_rate,
             net_pnl=result.net_pnl,
+            gross_net_pnl=gross_net_pnl,
+            total_cost=total_cost,
+            net_pnl_after_costs=net_pnl_after_costs,
             average_pnl=result.average_pnl,
             max_drawdown=result.max_drawdown,
             average_rr=None if trade_outcomes is None else trade_outcomes.average_rr,

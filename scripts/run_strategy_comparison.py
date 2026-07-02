@@ -18,6 +18,7 @@ from engine.backtest.strategy_comparison_engine import (
     build_exit_modes_recent_50_specs,
     build_long_strict_recent_50_fixed_1_5r_specs,
     build_recommended_profile_specs,
+    build_recommended_profile_with_cost_specs,
     build_regime_direction_recent_50_fixed_1_5r_specs,
     build_trend_direction_recent_50_fixed_1_5r_specs,
     direction_quality_preset_config,
@@ -150,6 +151,7 @@ def _parser() -> argparse.ArgumentParser:
             "regime_direction_recent_50_fixed_1_5r",
             "long_strict_recent_50_fixed_1_5r",
             "recommended_profiles",
+            "recommended_profiles_with_costs",
             "current_external_only",
             "custom",
         ],
@@ -168,9 +170,21 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--direction-quality-modes", default="off")
     parser.add_argument("--strict-long-presets", default="none")
     parser.add_argument("--strategy-profiles", default="default")
+    parser.add_argument("--cost-models", default="off")
+    parser.add_argument("--commission-pcts", default="0.0")
+    parser.add_argument("--slippage-pcts", default="0.0")
+    parser.add_argument("--spread-pcts", default="0.0")
     parser.add_argument(
         "--sort-by",
-        choices=["net_pnl", "average_pnl", "win_rate", "max_drawdown", "profit_factor", "total_trades"],
+        choices=[
+            "net_pnl",
+            "net_pnl_after_costs",
+            "average_pnl",
+            "win_rate",
+            "max_drawdown",
+            "profit_factor",
+            "total_trades",
+        ],
         default="net_pnl",
     )
     parser.add_argument("--descending", action="store_true")
@@ -196,6 +210,8 @@ def build_strategy_specs(args) -> list[StrategyConfigSpec]:
         return build_long_strict_recent_50_fixed_1_5r_specs()
     if args.strategy_set == "recommended_profiles":
         return build_recommended_profile_specs()
+    if args.strategy_set == "recommended_profiles_with_costs":
+        return build_recommended_profile_with_cost_specs()
     if args.strategy_set == "current_external_only":
         return build_current_external_only_specs()
     return build_custom_strategy_specs(
@@ -211,6 +227,10 @@ def build_strategy_specs(args) -> list[StrategyConfigSpec]:
         direction_quality_modes=args.direction_quality_modes,
         strict_long_presets=args.strict_long_presets,
         strategy_profiles=args.strategy_profiles,
+        cost_models=args.cost_models,
+        commission_pcts=args.commission_pcts,
+        slippage_pcts=args.slippage_pcts,
+        spread_pcts=args.spread_pcts,
         include_original=args.include_original,
     )
 
@@ -228,14 +248,31 @@ def build_custom_strategy_specs(
     direction_quality_modes: str = "off",
     strict_long_presets: str = "none",
     strategy_profiles: str = "default",
+    cost_models: str = "off",
+    commission_pcts: str = "0.0",
+    slippage_pcts: str = "0.0",
+    spread_pcts: str = "0.0",
     include_original: bool = False,
 ) -> list[StrategyConfigSpec]:
     profiles = _parse_csv(strategy_profiles)
     for profile in profiles:
         if profile not in VALID_STRATEGY_PROFILES:
             raise ValueError(f"Unsupported strategy profile: {profile}")
+    cost_model_values = _parse_csv(cost_models)
+    commission_values = _parse_non_negative_cost_csv(commission_pcts, "commission pct")
+    slippage_values = _parse_non_negative_cost_csv(slippage_pcts, "slippage pct")
+    spread_values = _parse_non_negative_cost_csv(spread_pcts, "spread pct")
+    for cost_model in cost_model_values:
+        if cost_model not in EngineConfig.VALID_COST_MODELS:
+            raise ValueError(f"Unsupported cost model: {cost_model}")
     if profiles != ["default"]:
-        return build_profile_strategy_specs(profiles)
+        return build_profile_strategy_specs(
+            profiles,
+            cost_model_values,
+            commission_values,
+            slippage_values,
+            spread_values,
+        )
 
     dr_modes = _parse_csv(dealing_range_modes)
     exits = _parse_csv(exit_modes)
@@ -271,7 +308,6 @@ def build_custom_strategy_specs(
             raise ValueError(f"Unsupported direction quality mode: {dq_mode}")
     for long_preset in long_presets:
         direction_quality_preset_config(long_preset)
-
     if include_original and "original" not in exits:
         exits = ["original", *exits]
 
@@ -298,42 +334,112 @@ def build_custom_strategy_specs(
                                         for dq_mode in dq_modes:
                                             preset_values = long_presets if dq_mode != "off" else ["none"]
                                             for long_preset in preset_values:
-                                                name = f"{dr_mode}|{exit_mode}|min_rr={min_rr}|dir={direction_mode}"
-                                                if direction_mode == "auto_trend":
-                                                    name = f"{name}|trend_fallback={trend_fallback}"
-                                                if direction_mode == "regime_trend":
-                                                    name = (
-                                                        f"{name}|regime={regime_mode}|lookback={regime_lookback}|"
-                                                        f"thr={regime_threshold}|regime_fb={regime_fallback}"
-                                                    )
-                                                if dq_mode != "off":
-                                                    name = f"{name}|dq={dq_mode}|long_preset={long_preset}"
-                                                specs.append(
-                                                    StrategyConfigSpec(
-                                                        name,
-                                                        dr_mode,
-                                                        exit_mode,
-                                                        min_rr,
-                                                        direction_mode,
-                                                        trend_fallback,
-                                                        regime_mode,
-                                                        regime_lookback,
-                                                        regime_threshold,
-                                                        regime_fallback,
-                                                        dq_mode,
-                                                        long_preset,
-                                                        **direction_quality_preset_config(long_preset),
-                                                    )
-                                                )
+                                                for cost_model in cost_model_values:
+                                                    commission_options = commission_values if cost_model != "off" else [0.0]
+                                                    slippage_options = slippage_values if cost_model != "off" else [0.0]
+                                                    spread_options = spread_values if cost_model != "off" else [0.0]
+                                                    for commission_pct in commission_options:
+                                                        for slippage_pct in slippage_options:
+                                                            for spread_pct in spread_options:
+                                                                name = (
+                                                                    f"{dr_mode}|{exit_mode}|min_rr={min_rr}|"
+                                                                    f"dir={direction_mode}"
+                                                                )
+                                                                if direction_mode == "auto_trend":
+                                                                    name = f"{name}|trend_fallback={trend_fallback}"
+                                                                if direction_mode == "regime_trend":
+                                                                    name = (
+                                                                        f"{name}|regime={regime_mode}|"
+                                                                        f"lookback={regime_lookback}|"
+                                                                        f"thr={regime_threshold}|"
+                                                                        f"regime_fb={regime_fallback}"
+                                                                    )
+                                                                if dq_mode != "off":
+                                                                    name = f"{name}|dq={dq_mode}|long_preset={long_preset}"
+                                                                if cost_model != "off":
+                                                                    name = f"{name}|cost=percent"
+                                                                specs.append(
+                                                                    StrategyConfigSpec(
+                                                                        name,
+                                                                        dr_mode,
+                                                                        exit_mode,
+                                                                        min_rr,
+                                                                        direction_mode,
+                                                                        trend_fallback,
+                                                                        regime_mode,
+                                                                        regime_lookback,
+                                                                        regime_threshold,
+                                                                        regime_fallback,
+                                                                        dq_mode,
+                                                                        long_preset,
+                                                                        **direction_quality_preset_config(long_preset),
+                                                                        cost_model=cost_model,
+                                                                        commission_pct=commission_pct,
+                                                                        slippage_pct=slippage_pct,
+                                                                        spread_pct=spread_pct,
+                                                                    )
+                                                                )
 
     if len(specs) > MAX_CUSTOM_COMBINATIONS:
         raise ValueError(f"custom strategy set too large: {len(specs)} combinations")
     return specs
 
 
-def build_profile_strategy_specs(strategy_profiles: list[str]) -> list[StrategyConfigSpec]:
+def build_profile_strategy_specs(
+    strategy_profiles: list[str],
+    cost_models: list[str] | None = None,
+    commission_pcts: list[float] | None = None,
+    slippage_pcts: list[float] | None = None,
+    spread_pcts: list[float] | None = None,
+) -> list[StrategyConfigSpec]:
     recommended = {spec.strategy_profile: spec for spec in build_recommended_profile_specs()}
-    return [recommended[profile] for profile in strategy_profiles]
+    cost_models = ["off"] if cost_models is None else cost_models
+    commission_pcts = [0.0] if commission_pcts is None else commission_pcts
+    slippage_pcts = [0.0] if slippage_pcts is None else slippage_pcts
+    spread_pcts = [0.0] if spread_pcts is None else spread_pcts
+    specs: list[StrategyConfigSpec] = []
+    for profile in strategy_profiles:
+        base = recommended[profile]
+        for cost_model in cost_models:
+            commission_options = commission_pcts if cost_model != "off" else [0.0]
+            slippage_options = slippage_pcts if cost_model != "off" else [0.0]
+            spread_options = spread_pcts if cost_model != "off" else [0.0]
+            for commission_pct in commission_options:
+                for slippage_pct in slippage_options:
+                    for spread_pct in spread_options:
+                        name = base.name if cost_model == "off" else f"{base.name}|cost=percent"
+                        specs.append(
+                            StrategyConfigSpec(
+                                name=name,
+                                dealing_range_mode=base.dealing_range_mode,
+                                exit_mode=base.exit_mode,
+                                min_risk_reward=base.min_risk_reward,
+                                direction_mode=base.direction_mode,
+                                auto_trend_fallback=base.auto_trend_fallback,
+                                regime_mode=base.regime_mode,
+                                regime_lookback=base.regime_lookback,
+                                regime_threshold_pct=base.regime_threshold_pct,
+                                regime_fallback=base.regime_fallback,
+                                direction_quality_mode=base.direction_quality_mode,
+                                strict_long_preset=base.strict_long_preset,
+                                strict_long_require_regime_known=base.strict_long_require_regime_known,
+                                strict_long_block_unknown_regime=base.strict_long_block_unknown_regime,
+                                strict_long_require_regime_bullish=base.strict_long_require_regime_bullish,
+                                strict_long_require_displacement=base.strict_long_require_displacement,
+                                strict_long_min_setup_score=base.strict_long_min_setup_score,
+                                strict_short_require_regime_known=base.strict_short_require_regime_known,
+                                strict_short_block_unknown_regime=base.strict_short_block_unknown_regime,
+                                strict_short_require_regime_bearish=base.strict_short_require_regime_bearish,
+                                strict_short_require_displacement=base.strict_short_require_displacement,
+                                strict_short_min_setup_score=base.strict_short_min_setup_score,
+                                strategy_profile=base.strategy_profile,
+                                cost_model=cost_model,
+                                commission_pct=commission_pct,
+                                slippage_pct=slippage_pct,
+                                spread_pct=spread_pct,
+                            )
+                        )
+    return specs
 
 
 def _parse_csv(value: str) -> list[str]:
@@ -359,6 +465,16 @@ def _parse_non_negative_float_csv(value: str) -> list[float]:
         number = float(item)
         if number < 0:
             raise ValueError(f"regime threshold pct must be greater than or equal to 0: {number}")
+        parsed.append(number)
+    return parsed
+
+
+def _parse_non_negative_cost_csv(value: str, label: str) -> list[float]:
+    parsed = []
+    for item in _parse_csv(value):
+        number = float(item)
+        if number < 0:
+            raise ValueError(f"{label} must be greater than or equal to 0: {number}")
         parsed.append(number)
     return parsed
 
