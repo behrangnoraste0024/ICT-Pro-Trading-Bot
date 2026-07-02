@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+import pytest
+
 from models.entry_followthrough_diagnostics import EntryFollowthroughDiagnostics
 from models.rolling_backtest_result import RollingBacktestResult
 from models.regime_direction_diagnostics import RegimeDirectionDiagnostics
 from models.sl_tp_outcome_diagnostics import SLTPOutcomeDiagnostics
 from models.strategy_comparison import StrategyComparisonReport, StrategyComparisonRow, StrategyConfigSpec
 from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics, TradeOutcomeRecord
+import engine.backtest.strategy_comparison_engine as strategy_module
 from engine.backtest.strategy_comparison_engine import (
     StrategyComparisonEngine,
     build_direction_modes_recent_50_fixed_1_5r_specs,
     build_default_strategy_specs,
     build_exit_modes_recent_50_specs,
+    build_long_strict_recent_50_fixed_1_5r_specs,
     build_regime_direction_recent_50_fixed_1_5r_specs,
     build_trend_direction_recent_50_fixed_1_5r_specs,
+    direction_quality_preset_config,
 )
 
 
@@ -108,6 +113,22 @@ def test_strategy_config_spec_string_includes_regime_fields() -> None:
     assert str(spec) == (
         "recent_50|fixed_1_5r|min_rr=1.5|dir=regime_trend|"
         "regime=rolling_return|lookback=50|thr=0.01|regime_fb=block"
+    )
+
+
+def test_strategy_config_spec_string_includes_direction_quality_fields() -> None:
+    spec = StrategyConfigSpec(
+        "recent",
+        "recent_50",
+        "fixed_1_5r",
+        1.5,
+        direction_quality_mode="long_strict",
+        strict_long_preset="regime_known_displacement",
+    )
+
+    assert str(spec) == (
+        "recent_50|fixed_1_5r|min_rr=1.5|dir=all|"
+        "dq=long_strict|long_preset=regime_known_displacement"
     )
 
 
@@ -232,6 +253,24 @@ def test_row_from_result_preserves_regime_fields() -> None:
     assert row.regime_fallback == "block"
 
 
+def test_row_from_result_preserves_direction_quality_fields() -> None:
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec(
+            "recent_50|fixed_1_5r|min_rr=1.5|dir=all|dq=long_strict|long_preset=displacement",
+            "recent_50",
+            "fixed_1_5r",
+            1.5,
+            direction_quality_mode="long_strict",
+            strict_long_preset="displacement",
+            strict_long_require_displacement=True,
+        ),
+        _result_with_trades(),
+    )
+
+    assert row.direction_quality_mode == "long_strict"
+    assert row.strict_long_preset == "displacement"
+
+
 def test_row_from_result_includes_regime_diagnostic_summary_fields() -> None:
     row = StrategyComparisonEngine().row_from_result(
         StrategyConfigSpec("spec", "recent_50", "fixed_1_5r", 1.5),
@@ -312,6 +351,36 @@ def test_regime_direction_recent_50_fixed_1_5r_specs_include_regime_variants() -
     assert specs[-1].regime_fallback == "block"
 
 
+def test_long_strict_recent_50_fixed_1_5r_specs_include_required_variants() -> None:
+    specs = build_long_strict_recent_50_fixed_1_5r_specs()
+
+    assert len(specs) == 10
+    assert specs[0].direction_mode == "all"
+    assert specs[0].direction_quality_mode == "off"
+    assert specs[1].direction_mode == "short_only"
+    assert specs[1].direction_quality_mode == "off"
+    assert all(spec.direction_quality_mode == "long_strict" for spec in specs[2:])
+    assert "dq=long_strict|long_preset=regime_known" in specs[2].name
+    assert "dq=long_strict|long_preset=regime_bullish_displacement_score100" in specs[-1].name
+    assert specs[-1].strict_long_require_regime_bullish is True
+    assert specs[-1].strict_long_require_displacement is True
+    assert specs[-1].strict_long_min_setup_score == 100
+
+
+def test_direction_quality_preset_config_expands_long_strict_rules() -> None:
+    config = direction_quality_preset_config("regime_known_displacement_score100")
+
+    assert config["strict_long_require_regime_known"] is True
+    assert config["strict_long_require_regime_bullish"] is False
+    assert config["strict_long_require_displacement"] is True
+    assert config["strict_long_min_setup_score"] == 100
+
+
+def test_invalid_direction_quality_preset_rejected() -> None:
+    with pytest.raises(ValueError, match="Unsupported strict long preset"):
+        direction_quality_preset_config("moonshot")
+
+
 def test_no_trades_strategy_row_does_not_crash() -> None:
     result = RollingBacktestResult(
         total_windows=1,
@@ -384,3 +453,50 @@ def test_progress_callback_receives_start_finish_and_rolling_events() -> None:
     assert "strategy_start" in events
     assert "rolling_progress" in events
     assert "strategy_finish" in events
+
+
+def test_run_comparison_passes_direction_quality_config_to_engine(monkeypatch) -> None:
+    captured_configs = []
+
+    class FakeRollingBacktestEngine:
+        def __init__(self, *args, config, **kwargs):
+            captured_configs.append(config)
+
+        def run(self, candles):
+            return RollingBacktestResult(
+                total_windows=1,
+                processed_windows=1,
+                skipped_windows=0,
+                failed_windows=0,
+                min_candles=1,
+                total_paper_trades=0,
+                closed_trades=0,
+                open_trades=0,
+                wins=0,
+                losses=0,
+                win_rate=0,
+                net_pnl=0,
+                average_pnl=0,
+                max_drawdown=0,
+                ignored_contexts=1,
+            )
+
+    monkeypatch.setattr(strategy_module, "RollingBacktestEngine", FakeRollingBacktestEngine)
+    spec = StrategyConfigSpec(
+        "recent_50|fixed_1_5r|min_rr=1.5|dir=all|dq=long_strict|long_preset=regime_bullish_displacement_score100",
+        "recent_50",
+        "fixed_1_5r",
+        1.5,
+        direction_quality_mode="long_strict",
+        strict_long_preset="regime_bullish_displacement_score100",
+        strict_long_require_regime_bullish=True,
+        strict_long_require_displacement=True,
+        strict_long_min_setup_score=100,
+    )
+
+    StrategyComparisonEngine().run_comparison(FIXTURE_PATH, [spec], min_candles=50)
+
+    assert captured_configs[0].direction_quality_mode == "long_strict"
+    assert captured_configs[0].strict_long_require_regime_bullish is True
+    assert captured_configs[0].strict_long_require_displacement is True
+    assert captured_configs[0].strict_long_min_setup_score == 100

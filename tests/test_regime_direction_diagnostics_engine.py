@@ -138,6 +138,17 @@ def test_groups_by_resolved_direction() -> None:
     assert diagnostics.by_resolved_direction["SHORT"].count == 1
 
 
+def test_groups_by_direction_quality_reason() -> None:
+    trade = _trade("LONG", "BULLISH", -10, result="LOSS", reason="BULLISH_ROLLING_RETURN", dir_reason="ALL_MODE", resolved="ALL")
+    trade.direction_quality_blocker = "STRICT_LONG_NO_DISPLACEMENT"
+    trade.direction_quality_reasons = ["STRICT_LONG_NO_DISPLACEMENT"]
+
+    diagnostics = RegimeDirectionDiagnosticsEngine().summarize_trades([trade])
+
+    assert diagnostics.by_direction_quality_reason["STRICT_LONG_NO_DISPLACEMENT"].count == 1
+    assert diagnostics.by_direction_quality_reason["STRICT_LONG_NO_DISPLACEMENT"].pnl == -10
+
+
 def test_does_not_mutate_trades() -> None:
     trade = _trade("SHORT", "BEARISH", 10, reason="BEARISH_ROLLING_RETURN", dir_reason="ALL_MODE", resolved="SHORT")
     before = deepcopy(trade)

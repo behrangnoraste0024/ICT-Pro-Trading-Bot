@@ -17,6 +17,7 @@ def test_engine_config_defaults() -> None:
     assert config.regime_lookback == 200
     assert config.regime_threshold_pct == 0.0
     assert config.regime_fallback == "all"
+    assert config.direction_quality_mode == "off"
 
 
 @pytest.mark.parametrize("exit_mode", ["original", "fixed_1r", "fixed_1_5r", "fixed_2r", "fixed_3r"])
@@ -94,6 +95,24 @@ def test_engine_config_rejects_invalid_regime_threshold() -> None:
 def test_engine_config_rejects_invalid_regime_fallback() -> None:
     with pytest.raises(ValueError, match="Unsupported regime fallback"):
         EngineConfig(regime_fallback="sideways")
+
+
+@pytest.mark.parametrize("direction_quality_mode", ["off", "long_strict", "short_strict", "both_strict"])
+def test_engine_config_accepts_valid_direction_quality_modes(direction_quality_mode: str) -> None:
+    config = EngineConfig(direction_quality_mode=direction_quality_mode)
+
+    assert config.direction_quality_mode == direction_quality_mode
+
+
+def test_engine_config_rejects_invalid_direction_quality_mode() -> None:
+    with pytest.raises(ValueError, match="Unsupported direction quality mode"):
+        EngineConfig(direction_quality_mode="medium_spicy")
+
+
+@pytest.mark.parametrize("field_name", ["strict_long_min_setup_score", "strict_short_min_setup_score"])
+def test_engine_config_rejects_invalid_strict_min_setup_score(field_name: str) -> None:
+    with pytest.raises(ValueError, match=f"Unsupported {field_name}"):
+        EngineConfig(**{field_name: -1})
 
 
 def test_engine_config_accepts_custom_min_risk_reward() -> None:

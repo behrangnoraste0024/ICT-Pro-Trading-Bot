@@ -119,6 +119,12 @@ class TradeOutcomeDiagnosticsEngine:
             auto_trend_fallback=metadata.get("auto_trend_fallback"),
             regime_source_regime=metadata.get("regime_source_regime"),
             regime_fallback=metadata.get("regime_fallback"),
+            direction_quality_mode_requested=metadata.get("direction_quality_mode_requested"),
+            direction_quality_applied=metadata.get("direction_quality_applied"),
+            direction_quality_allowed=metadata.get("direction_quality_allowed"),
+            direction_quality_blocked_direction=metadata.get("direction_quality_blocked_direction"),
+            direction_quality_blocker=metadata.get("direction_quality_blocker"),
+            direction_quality_reasons=self._safe_list(metadata.get("direction_quality_reasons", [])),
         )
 
     def _result(self, status: str) -> str:

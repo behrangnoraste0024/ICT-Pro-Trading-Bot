@@ -16,6 +16,18 @@ class StrategyConfigSpec:
     regime_lookback: int = 200
     regime_threshold_pct: float = 0.0
     regime_fallback: str = "all"
+    direction_quality_mode: str = "off"
+    strict_long_preset: str = "none"
+    strict_long_require_regime_known: bool = False
+    strict_long_block_unknown_regime: bool = False
+    strict_long_require_regime_bullish: bool = False
+    strict_long_require_displacement: bool = False
+    strict_long_min_setup_score: int | None = None
+    strict_short_require_regime_known: bool = False
+    strict_short_block_unknown_regime: bool = False
+    strict_short_require_regime_bearish: bool = False
+    strict_short_require_displacement: bool = False
+    strict_short_min_setup_score: int | None = None
     event_type: str = "STRATEGY_CONFIG_SPEC"
 
     def __str__(self) -> str:
@@ -27,6 +39,8 @@ class StrategyConfigSpec:
                 f"{value}|regime={self.regime_mode}|lookback={self.regime_lookback}|"
                 f"thr={self.regime_threshold_pct}|regime_fb={self.regime_fallback}"
             )
+        if self.direction_quality_mode != "off":
+            value = f"{value}|dq={self.direction_quality_mode}|long_preset={self.strict_long_preset}"
         return value
 
 
@@ -43,6 +57,8 @@ class StrategyComparisonRow:
     regime_lookback: int = 200
     regime_threshold_pct: float = 0.0
     regime_fallback: str = "all"
+    direction_quality_mode: str = "off"
+    strict_long_preset: str = "none"
     total_windows: int = 0
     processed_windows: int = 0
     failed_windows: int = 0

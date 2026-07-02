@@ -24,6 +24,13 @@ def positive_float(value: str) -> float:
     return parsed
 
 
+def non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be greater than or equal to 0")
+    return parsed
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run deterministic rolling backtest from a candle fixture.")
     parser.add_argument("--fixture", default=DEFAULT_FIXTURE)
@@ -47,6 +54,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--regime-lookback", type=int, default=200)
     parser.add_argument("--regime-threshold-pct", type=float, default=0.0)
     parser.add_argument("--regime-fallback", choices=["all", "block"], default="all")
+    parser.add_argument(
+        "--direction-quality-mode",
+        choices=["off", "long_strict", "short_strict", "both_strict"],
+        default="off",
+    )
+    parser.add_argument("--strict-long-require-regime-known", action="store_true")
+    parser.add_argument("--strict-long-block-unknown-regime", action="store_true")
+    parser.add_argument("--strict-long-require-regime-bullish", action="store_true")
+    parser.add_argument("--strict-long-require-displacement", action="store_true")
+    parser.add_argument("--strict-long-min-setup-score", type=non_negative_int, default=None)
+    parser.add_argument("--strict-short-require-regime-known", action="store_true")
+    parser.add_argument("--strict-short-block-unknown-regime", action="store_true")
+    parser.add_argument("--strict-short-require-regime-bearish", action="store_true")
+    parser.add_argument("--strict-short-require-displacement", action="store_true")
+    parser.add_argument("--strict-short-min-setup-score", type=non_negative_int, default=None)
     parser.add_argument("--show-trades", action="store_true")
     parser.add_argument("--debug-first-trade-metadata", action="store_true")
     args = parser.parse_args(argv)
@@ -93,6 +115,17 @@ def main(argv: list[str] | None = None) -> int:
         regime_lookback=args.regime_lookback,
         regime_threshold_pct=args.regime_threshold_pct,
         regime_fallback=args.regime_fallback,
+        direction_quality_mode=args.direction_quality_mode,
+        strict_long_require_regime_known=args.strict_long_require_regime_known,
+        strict_long_block_unknown_regime=args.strict_long_block_unknown_regime,
+        strict_long_require_regime_bullish=args.strict_long_require_regime_bullish,
+        strict_long_require_displacement=args.strict_long_require_displacement,
+        strict_long_min_setup_score=args.strict_long_min_setup_score,
+        strict_short_require_regime_known=args.strict_short_require_regime_known,
+        strict_short_block_unknown_regime=args.strict_short_block_unknown_regime,
+        strict_short_require_regime_bearish=args.strict_short_require_regime_bearish,
+        strict_short_require_displacement=args.strict_short_require_displacement,
+        strict_short_min_setup_score=args.strict_short_min_setup_score,
     ).run(candles)
     report = format_rolling_backtest_report(
         result,

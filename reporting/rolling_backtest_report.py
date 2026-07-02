@@ -26,6 +26,7 @@ def format_rolling_backtest_report(
     regime_lookback = getattr(result, "regime_lookback", 200)
     regime_threshold_pct = getattr(result, "regime_threshold_pct", 0.0)
     regime_fallback = getattr(result, "regime_fallback", "all")
+    direction_quality_mode = getattr(result, "direction_quality_mode", "off")
     direction_mode_fallback_counts = getattr(result, "direction_mode_fallback_counts", {})
 
     lines = [
@@ -43,6 +44,9 @@ def format_rolling_backtest_report(
             f"Regime Lookback   : {regime_lookback}",
             f"Regime Threshold  : {regime_threshold_pct}",
             f"Regime Fallback   : {regime_fallback}",
+            f"Direction Quality Mode : {direction_quality_mode}",
+            f"Strict Long Rules : require_regime_known={getattr(result, 'strict_long_require_regime_known', False)}, block_unknown_regime={getattr(result, 'strict_long_block_unknown_regime', False)}, require_regime_bullish={getattr(result, 'strict_long_require_regime_bullish', False)}, require_displacement={getattr(result, 'strict_long_require_displacement', False)}, min_setup_score={getattr(result, 'strict_long_min_setup_score', None)}",
+            f"Strict Short Rules: require_regime_known={getattr(result, 'strict_short_require_regime_known', False)}, block_unknown_regime={getattr(result, 'strict_short_block_unknown_regime', False)}, require_regime_bearish={getattr(result, 'strict_short_require_regime_bearish', False)}, require_displacement={getattr(result, 'strict_short_require_displacement', False)}, min_setup_score={getattr(result, 'strict_short_min_setup_score', None)}",
             f"Direction Mode Fallbacks: {_format_exit_mode_fallbacks(direction_mode_fallback_counts)}",
     ]
     if max_windows is not None:
@@ -139,7 +143,9 @@ def _format_trade_row(trade) -> str:
         f"zone={trade.current_price_zone} | in_ote={trade.in_ote_zone} | poi={trade.matched_poi_count}:{poi_types} | "
         f"regime={trade.market_regime} | regime_ret={trade.market_regime_return_pct} | "
         f"regime_reason={trade.market_regime_reason} | dir_mode={trade.direction_mode_applied} | "
-        f"resolved={trade.direction_mode_resolved_direction} | dir_reason={trade.direction_mode_fallback_reason}"
+        f"resolved={trade.direction_mode_resolved_direction} | dir_reason={trade.direction_mode_fallback_reason} | "
+        f"dir_quality={trade.direction_quality_applied} | dq_allowed={trade.direction_quality_allowed} | "
+        f"dq_blocker={trade.direction_quality_blocker}"
     )
 
 
@@ -173,6 +179,9 @@ def _format_regime_direction_diagnostics(diagnostics) -> list[str]:
         "",
         "PnL by Resolved Direction:",
         *_format_regime_buckets(diagnostics.by_resolved_direction),
+        "",
+        "PnL by Direction Quality Reason:",
+        *_format_regime_buckets(getattr(diagnostics, "by_direction_quality_reason", {})),
     ]
 
 

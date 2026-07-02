@@ -247,6 +247,22 @@ class MarketContext:
     market_regime_reason: Optional[str] = None
 
     # ==========================================================
+    # DIRECTION QUALITY
+    # ==========================================================
+
+    direction_quality_mode_requested: Optional[str] = None
+
+    direction_quality_applied: Optional[str] = None
+
+    direction_quality_allowed: Optional[bool] = None
+
+    direction_quality_blocked_direction: Optional[str] = None
+
+    direction_quality_blocker: Optional[str] = None
+
+    direction_quality_reasons: Optional[list[str]] = None
+
+    # ==========================================================
     # TRADE QUALITY
     # ==========================================================
 

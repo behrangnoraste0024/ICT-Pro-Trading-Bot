@@ -41,6 +41,17 @@ class RollingBacktestEngine:
         regime_lookback: int | None = None,
         regime_threshold_pct: float | None = None,
         regime_fallback: str | None = None,
+        direction_quality_mode: str | None = None,
+        strict_long_require_regime_known: bool | None = None,
+        strict_long_block_unknown_regime: bool | None = None,
+        strict_long_require_regime_bullish: bool | None = None,
+        strict_long_require_displacement: bool | None = None,
+        strict_long_min_setup_score: int | None = None,
+        strict_short_require_regime_known: bool | None = None,
+        strict_short_block_unknown_regime: bool | None = None,
+        strict_short_require_regime_bearish: bool | None = None,
+        strict_short_require_displacement: bool | None = None,
+        strict_short_min_setup_score: int | None = None,
         enable_diagnostics: bool = True,
     ):
         self.config = config if config is not None else EngineConfig()
@@ -80,6 +91,30 @@ class RollingBacktestEngine:
             if regime_fallback not in EngineConfig.VALID_REGIME_FALLBACKS:
                 raise ValueError(f"Unsupported regime fallback: {regime_fallback}")
             self.config.regime_fallback = regime_fallback
+        if direction_quality_mode is not None:
+            if direction_quality_mode not in EngineConfig.VALID_DIRECTION_QUALITY_MODES:
+                raise ValueError(f"Unsupported direction quality mode: {direction_quality_mode}")
+            self.config.direction_quality_mode = direction_quality_mode
+        for field_name, value in {
+            "strict_long_require_regime_known": strict_long_require_regime_known,
+            "strict_long_block_unknown_regime": strict_long_block_unknown_regime,
+            "strict_long_require_regime_bullish": strict_long_require_regime_bullish,
+            "strict_long_require_displacement": strict_long_require_displacement,
+            "strict_short_require_regime_known": strict_short_require_regime_known,
+            "strict_short_block_unknown_regime": strict_short_block_unknown_regime,
+            "strict_short_require_regime_bearish": strict_short_require_regime_bearish,
+            "strict_short_require_displacement": strict_short_require_displacement,
+        }.items():
+            if value is not None:
+                setattr(self.config, field_name, value)
+        for field_name, value in {
+            "strict_long_min_setup_score": strict_long_min_setup_score,
+            "strict_short_min_setup_score": strict_short_min_setup_score,
+        }.items():
+            if value is not None:
+                if value < 0:
+                    raise ValueError(f"Unsupported {field_name}: {value}")
+                setattr(self.config, field_name, value)
         self.ict_engine = ict_engine if ict_engine is not None else ICTEngine(config=self.config)
         self.min_candles = min_candles
         self.stateful = stateful
@@ -393,6 +428,17 @@ class RollingBacktestEngine:
             regime_lookback=self.config.regime_lookback,
             regime_threshold_pct=self.config.regime_threshold_pct,
             regime_fallback=self.config.regime_fallback,
+            direction_quality_mode=self.config.direction_quality_mode,
+            strict_long_require_regime_known=self.config.strict_long_require_regime_known,
+            strict_long_block_unknown_regime=self.config.strict_long_block_unknown_regime,
+            strict_long_require_regime_bullish=self.config.strict_long_require_regime_bullish,
+            strict_long_require_displacement=self.config.strict_long_require_displacement,
+            strict_long_min_setup_score=self.config.strict_long_min_setup_score,
+            strict_short_require_regime_known=self.config.strict_short_require_regime_known,
+            strict_short_block_unknown_regime=self.config.strict_short_block_unknown_regime,
+            strict_short_require_regime_bearish=self.config.strict_short_require_regime_bearish,
+            strict_short_require_displacement=self.config.strict_short_require_displacement,
+            strict_short_min_setup_score=self.config.strict_short_min_setup_score,
             direction_mode_fallback_counts=direction_mode_fallback_counts,
             trade_outcome_diagnostics=trade_outcomes,
             sl_tp_outcome_diagnostics=sl_tp_outcomes,

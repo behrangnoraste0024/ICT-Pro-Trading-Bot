@@ -66,6 +66,25 @@ def build_regime_direction_recent_50_fixed_1_5r_specs() -> list[StrategyConfigSp
     ]
 
 
+def build_long_strict_recent_50_fixed_1_5r_specs() -> list[StrategyConfigSpec]:
+    presets = [
+        ("all", "off", "none"),
+        ("short_only", "off", "none"),
+        ("all", "long_strict", "regime_known"),
+        ("all", "long_strict", "regime_bullish"),
+        ("all", "long_strict", "displacement"),
+        ("all", "long_strict", "score100"),
+        ("all", "long_strict", "regime_known_displacement"),
+        ("all", "long_strict", "regime_bullish_displacement"),
+        ("all", "long_strict", "regime_known_displacement_score100"),
+        ("all", "long_strict", "regime_bullish_displacement_score100"),
+    ]
+    return [
+        _spec("recent_50", "fixed_1_5r", 1.5, direction_mode, direction_quality_mode=dq_mode, strict_long_preset=preset)
+        for direction_mode, dq_mode, preset in presets
+    ]
+
+
 def build_current_external_only_specs() -> list[StrategyConfigSpec]:
     return [
         _spec("current_external", "original", 2.0),
@@ -85,6 +104,8 @@ def _spec(
     regime_lookback: int = 200,
     regime_threshold_pct: float = 0.0,
     regime_fallback: str = "all",
+    direction_quality_mode: str = "off",
+    strict_long_preset: str = "none",
 ) -> StrategyConfigSpec:
     name = f"{dealing_range_mode}|{exit_mode}|min_rr={min_risk_reward}|dir={direction_mode}"
     if direction_mode == "auto_trend":
@@ -94,6 +115,9 @@ def _spec(
             f"{name}|regime={regime_mode}|lookback={regime_lookback}|"
             f"thr={regime_threshold_pct}|regime_fb={regime_fallback}"
         )
+    preset_config = direction_quality_preset_config(strict_long_preset)
+    if direction_quality_mode != "off":
+        name = f"{name}|dq={direction_quality_mode}|long_preset={strict_long_preset}"
     return StrategyConfigSpec(
         name,
         dealing_range_mode,
@@ -105,7 +129,35 @@ def _spec(
         regime_lookback,
         regime_threshold_pct,
         regime_fallback,
+        direction_quality_mode,
+        strict_long_preset,
+        **preset_config,
     )
+
+
+def direction_quality_preset_config(strict_long_preset: str) -> dict:
+    valid = {
+        "none",
+        "regime_known",
+        "regime_bullish",
+        "displacement",
+        "score100",
+        "regime_known_displacement",
+        "regime_bullish_displacement",
+        "regime_known_score100",
+        "regime_bullish_score100",
+        "regime_known_displacement_score100",
+        "regime_bullish_displacement_score100",
+    }
+    if strict_long_preset not in valid:
+        raise ValueError(f"Unsupported strict long preset: {strict_long_preset}")
+
+    return {
+        "strict_long_require_regime_known": "regime_known" in strict_long_preset,
+        "strict_long_require_regime_bullish": "regime_bullish" in strict_long_preset,
+        "strict_long_require_displacement": "displacement" in strict_long_preset,
+        "strict_long_min_setup_score": 100 if "score100" in strict_long_preset else None,
+    }
 
 
 class StrategyComparisonEngine:
@@ -158,6 +210,17 @@ class StrategyComparisonEngine:
                     regime_lookback=spec.regime_lookback,
                     regime_threshold_pct=spec.regime_threshold_pct,
                     regime_fallback=spec.regime_fallback,
+                    direction_quality_mode=spec.direction_quality_mode,
+                    strict_long_require_regime_known=spec.strict_long_require_regime_known,
+                    strict_long_block_unknown_regime=spec.strict_long_block_unknown_regime,
+                    strict_long_require_regime_bullish=spec.strict_long_require_regime_bullish,
+                    strict_long_require_displacement=spec.strict_long_require_displacement,
+                    strict_long_min_setup_score=spec.strict_long_min_setup_score,
+                    strict_short_require_regime_known=spec.strict_short_require_regime_known,
+                    strict_short_block_unknown_regime=spec.strict_short_block_unknown_regime,
+                    strict_short_require_regime_bearish=spec.strict_short_require_regime_bearish,
+                    strict_short_require_displacement=spec.strict_short_require_displacement,
+                    strict_short_min_setup_score=spec.strict_short_min_setup_score,
                 ),
             ).run(candles)
             elapsed_seconds = time.perf_counter() - started_at
@@ -225,6 +288,8 @@ class StrategyComparisonEngine:
             regime_lookback=spec.regime_lookback,
             regime_threshold_pct=spec.regime_threshold_pct,
             regime_fallback=spec.regime_fallback,
+            direction_quality_mode=spec.direction_quality_mode,
+            strict_long_preset=spec.strict_long_preset,
             total_windows=result.total_windows,
             processed_windows=result.processed_windows,
             failed_windows=result.failed_windows,

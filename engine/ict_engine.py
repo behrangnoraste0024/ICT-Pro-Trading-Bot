@@ -9,6 +9,7 @@ from engine.setup.setup_engine import SetupEngine
 from engine.entry.entry_trigger_engine import EntryTriggerEngine
 from engine.trade_plan.trade_plan_engine import TradePlanEngine
 from engine.trade_management.direction_mode_engine import DirectionModeEngine
+from engine.trade_management.direction_quality_engine import DirectionQualityEngine
 from engine.trade_management.exit_mode_engine import ExitModeEngine
 from engine.market_regime.market_regime_engine import MarketRegimeEngine
 from engine.trade_quality.trade_quality_engine import TradeQualityEngine
@@ -40,6 +41,7 @@ class ICTEngine:
         self.exit_mode_engine = ExitModeEngine()
         self.market_regime_engine = MarketRegimeEngine()
         self.direction_mode_engine = DirectionModeEngine()
+        self.direction_quality_engine = DirectionQualityEngine()
         self.trade_quality_engine = TradeQualityEngine(minimum_rr=self.config.min_risk_reward)
         self.paper_trade_engine = PaperTradeEngine()
         self.backtest_engine = BacktestEngine()
@@ -76,6 +78,20 @@ class ICTEngine:
             self.config.direction_mode,
             self.config.auto_trend_fallback,
             self.config.regime_fallback,
+        )
+        context = self.direction_quality_engine.apply(
+            context,
+            self.config.direction_quality_mode,
+            self.config.strict_long_require_regime_known,
+            self.config.strict_long_block_unknown_regime,
+            self.config.strict_long_require_regime_bullish,
+            self.config.strict_long_require_displacement,
+            self.config.strict_long_min_setup_score,
+            self.config.strict_short_require_regime_known,
+            self.config.strict_short_block_unknown_regime,
+            self.config.strict_short_require_regime_bearish,
+            self.config.strict_short_require_displacement,
+            self.config.strict_short_min_setup_score,
         )
         context = self.trade_quality_engine.detect(context)
         context = self.paper_trade_engine.detect(context)

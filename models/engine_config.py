@@ -11,6 +11,7 @@ class EngineConfig:
     VALID_AUTO_TREND_FALLBACKS = {"all", "block"}
     VALID_REGIME_MODES = {"rolling_return"}
     VALID_REGIME_FALLBACKS = {"all", "block"}
+    VALID_DIRECTION_QUALITY_MODES = {"off", "long_strict", "short_strict", "both_strict"}
 
     dealing_range_mode: str = "current_external"
     exit_mode: str = "original"
@@ -21,6 +22,17 @@ class EngineConfig:
     regime_lookback: int = 200
     regime_threshold_pct: float = 0.0
     regime_fallback: str = "all"
+    direction_quality_mode: str = "off"
+    strict_long_require_regime_known: bool = False
+    strict_long_block_unknown_regime: bool = False
+    strict_long_require_regime_bullish: bool = False
+    strict_long_require_displacement: bool = False
+    strict_long_min_setup_score: int | None = None
+    strict_short_require_regime_known: bool = False
+    strict_short_block_unknown_regime: bool = False
+    strict_short_require_regime_bearish: bool = False
+    strict_short_require_displacement: bool = False
+    strict_short_min_setup_score: int | None = None
 
     def __post_init__(self) -> None:
         if self.dealing_range_mode not in self.VALID_DEALING_RANGE_MODES:
@@ -41,3 +53,9 @@ class EngineConfig:
             raise ValueError(f"Unsupported regime threshold pct: {self.regime_threshold_pct}")
         if self.regime_fallback not in self.VALID_REGIME_FALLBACKS:
             raise ValueError(f"Unsupported regime fallback: {self.regime_fallback}")
+        if self.direction_quality_mode not in self.VALID_DIRECTION_QUALITY_MODES:
+            raise ValueError(f"Unsupported direction quality mode: {self.direction_quality_mode}")
+        for field_name in ("strict_long_min_setup_score", "strict_short_min_setup_score"):
+            value = getattr(self, field_name)
+            if value is not None and value < 0:
+                raise ValueError(f"Unsupported {field_name}: {value}")

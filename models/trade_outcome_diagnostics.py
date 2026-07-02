@@ -60,6 +60,12 @@ class TradeOutcomeRecord:
     auto_trend_fallback: str | None = None
     regime_source_regime: str | None = None
     regime_fallback: str | None = None
+    direction_quality_mode_requested: str | None = None
+    direction_quality_applied: str | None = None
+    direction_quality_allowed: bool | None = None
+    direction_quality_blocked_direction: str | None = None
+    direction_quality_blocker: str | None = None
+    direction_quality_reasons: list[str] = field(default_factory=list)
     event_type: str = "TRADE_OUTCOME_RECORD"
 
     def __str__(self) -> str:

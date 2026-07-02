@@ -264,6 +264,25 @@ def test_collect_from_context_preserves_unknown_market_regime() -> None:
     assert record.market_regime_reason == "INSUFFICIENT_CANDLES"
 
 
+def test_collect_from_context_extracts_direction_quality_metadata() -> None:
+    context = _trade_context()
+    context.direction_quality_mode_requested = "long_strict"
+    context.direction_quality_applied = "long_strict"
+    context.direction_quality_allowed = False
+    context.direction_quality_blocked_direction = "LONG"
+    context.direction_quality_blocker = "STRICT_LONG_NO_DISPLACEMENT"
+    context.direction_quality_reasons = ["STRICT_LONG_NO_DISPLACEMENT", "STRICT_LONG_SETUP_SCORE_TOO_LOW"]
+
+    record = TradeOutcomeDiagnosticsEngine().collect_from_context(context, 1)
+
+    assert record.direction_quality_mode_requested == "long_strict"
+    assert record.direction_quality_applied == "long_strict"
+    assert record.direction_quality_allowed is False
+    assert record.direction_quality_blocked_direction == "LONG"
+    assert record.direction_quality_blocker == "STRICT_LONG_NO_DISPLACEMENT"
+    assert record.direction_quality_reasons == ["STRICT_LONG_NO_DISPLACEMENT", "STRICT_LONG_SETUP_SCORE_TOO_LOW"]
+
+
 def test_blockers_and_reasons_copied_safely() -> None:
     context = _trade_context()
     context.setup_blockers = ["A"]

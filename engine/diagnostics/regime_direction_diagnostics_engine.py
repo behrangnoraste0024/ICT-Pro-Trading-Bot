@@ -58,6 +58,14 @@ class RegimeDirectionDiagnosticsEngine:
                 result,
                 pnl,
             )
+            quality_reasons = list(getattr(trade, "direction_quality_reasons", []) or [])
+            quality_key = getattr(trade, "direction_quality_blocker", None) or (quality_reasons[0] if quality_reasons else None)
+            self._add(
+                diagnostics.by_direction_quality_reason,
+                self._value(quality_key, "UNKNOWN"),
+                result,
+                pnl,
+            )
 
             if direction == "LONG" and regime == "BEARISH":
                 diagnostics.long_in_bearish_count += 1

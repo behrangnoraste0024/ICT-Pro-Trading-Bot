@@ -182,6 +182,12 @@ METADATA_PATHS: dict[str, list[str]] = {
     "auto_trend_fallback": ["auto_trend_fallback"],
     "regime_source_regime": ["regime_source_regime"],
     "regime_fallback": ["regime_fallback"],
+    "direction_quality_mode_requested": ["direction_quality_mode_requested"],
+    "direction_quality_applied": ["direction_quality_applied"],
+    "direction_quality_allowed": ["direction_quality_allowed"],
+    "direction_quality_blocked_direction": ["direction_quality_blocked_direction"],
+    "direction_quality_blocker": ["direction_quality_blocker"],
+    "direction_quality_reasons": ["direction_quality_reasons"],
 }
 
 MISSING_VALUES: dict[str, set[Any]] = {
@@ -213,6 +219,7 @@ CANDIDATE_TOKENS = (
     "range",
     "regime",
     "direction",
+    "quality",
 )
 
 NESTED_CANDIDATE_FIELDS = (

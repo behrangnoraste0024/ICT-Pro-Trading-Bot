@@ -783,6 +783,7 @@ def test_runner_default_report_includes_current_external_mode(capsys) -> None:
     assert "Regime Lookback   : 200" in captured.out
     assert "Regime Threshold  : 0.0" in captured.out
     assert "Regime Fallback   : all" in captured.out
+    assert "Direction Quality Mode : off" in captured.out
 
 
 def test_runner_accepts_original_exit_mode(capsys) -> None:
@@ -929,6 +930,30 @@ def test_runner_accepts_direction_mode_regime_trend(capsys) -> None:
     assert "Regime Fallback   : block" in captured.out
 
 
+def test_runner_accepts_direction_quality_long_strict(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--direction-quality-mode",
+            "long_strict",
+            "--strict-long-require-displacement",
+            "--strict-long-min-setup-score",
+            "100",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Direction Quality Mode : long_strict" in captured.out
+    assert "require_displacement=True" in captured.out
+    assert "min_setup_score=100" in captured.out
+
+
 def test_runner_accepts_auto_trend_fallback_block(capsys) -> None:
     return_code = main(
         [
@@ -1010,6 +1035,8 @@ def test_formatter_includes_exit_mode() -> None:
     result.min_risk_reward = 1.5
     result.direction_mode = "auto_trend"
     result.auto_trend_fallback = "block"
+    result.direction_quality_mode = "long_strict"
+    result.strict_long_require_displacement = True
 
     report = format_rolling_backtest_report(result, FIXTURE_PATH, min_candles=50)
 
@@ -1018,6 +1045,8 @@ def test_formatter_includes_exit_mode() -> None:
     assert "Min Risk Reward   : 1.5" in report
     assert "Direction Mode    : auto_trend" in report
     assert "Auto Trend Fallback: block" in report
+    assert "Direction Quality Mode : long_strict" in report
+    assert "require_displacement=True" in report
 
 
 def test_invalid_dealing_range_mode_choice_fails(capsys) -> None:
@@ -1044,6 +1073,20 @@ def test_invalid_min_risk_reward_choice_fails(capsys) -> None:
 def test_invalid_direction_mode_choice_fails(capsys) -> None:
     try:
         main(["--fixture", FIXTURE_PATH, "--direction-mode", "sideways_only"])
+    except SystemExit as exc:
+        assert exc.code == 2
+
+
+def test_invalid_direction_quality_mode_choice_fails(capsys) -> None:
+    try:
+        main(["--fixture", FIXTURE_PATH, "--direction-quality-mode", "loose"])
+    except SystemExit as exc:
+        assert exc.code == 2
+
+
+def test_invalid_strict_long_min_setup_score_choice_fails(capsys) -> None:
+    try:
+        main(["--fixture", FIXTURE_PATH, "--strict-long-min-setup-score", "-1"])
     except SystemExit as exc:
         assert exc.code == 2
 

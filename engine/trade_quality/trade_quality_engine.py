@@ -25,6 +25,7 @@ class TradeQualityEngine:
             return context
 
         direction_mode_blocked = getattr(context, "direction_mode_allowed", None) is False
+        direction_quality_blocked = getattr(context, "direction_quality_allowed", None) is False
         score = 0
         reasons: list[str] = []
         blockers: list[str] = []
@@ -53,6 +54,11 @@ class TradeQualityEngine:
 
         if direction_mode_blocked:
             blockers.append("DIRECTION_MODE_BLOCKED")
+        if direction_quality_blocked:
+            blockers.append("DIRECTION_QUALITY_BLOCKED")
+            blocker = getattr(context, "direction_quality_blocker", None)
+            if blocker:
+                blockers.append(str(blocker))
 
         if risk_percent is not None:
             if risk_percent < self.min_risk_percent:

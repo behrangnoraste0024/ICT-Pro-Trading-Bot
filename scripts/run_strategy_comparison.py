@@ -16,8 +16,10 @@ from engine.backtest.strategy_comparison_engine import (
     build_default_strategy_specs,
     build_direction_modes_recent_50_fixed_1_5r_specs,
     build_exit_modes_recent_50_specs,
+    build_long_strict_recent_50_fixed_1_5r_specs,
     build_regime_direction_recent_50_fixed_1_5r_specs,
     build_trend_direction_recent_50_fixed_1_5r_specs,
+    direction_quality_preset_config,
 )
 from models.engine_config import EngineConfig
 from models.strategy_comparison import StrategyComparisonReport, StrategyConfigSpec
@@ -144,6 +146,7 @@ def _parser() -> argparse.ArgumentParser:
             "direction_modes_recent_50_fixed_1_5r",
             "trend_direction_recent_50_fixed_1_5r",
             "regime_direction_recent_50_fixed_1_5r",
+            "long_strict_recent_50_fixed_1_5r",
             "current_external_only",
             "custom",
         ],
@@ -159,6 +162,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--regime-lookbacks", default="200")
     parser.add_argument("--regime-threshold-pcts", default="0.0")
     parser.add_argument("--regime-fallbacks", default="all")
+    parser.add_argument("--direction-quality-modes", default="off")
+    parser.add_argument("--strict-long-presets", default="none")
     parser.add_argument(
         "--sort-by",
         choices=["net_pnl", "average_pnl", "win_rate", "max_drawdown", "profit_factor", "total_trades"],
@@ -183,6 +188,8 @@ def build_strategy_specs(args) -> list[StrategyConfigSpec]:
         return build_trend_direction_recent_50_fixed_1_5r_specs()
     if args.strategy_set == "regime_direction_recent_50_fixed_1_5r":
         return build_regime_direction_recent_50_fixed_1_5r_specs()
+    if args.strategy_set == "long_strict_recent_50_fixed_1_5r":
+        return build_long_strict_recent_50_fixed_1_5r_specs()
     if args.strategy_set == "current_external_only":
         return build_current_external_only_specs()
     return build_custom_strategy_specs(
@@ -195,6 +202,8 @@ def build_strategy_specs(args) -> list[StrategyConfigSpec]:
         regime_lookbacks=args.regime_lookbacks,
         regime_threshold_pcts=args.regime_threshold_pcts,
         regime_fallbacks=args.regime_fallbacks,
+        direction_quality_modes=args.direction_quality_modes,
+        strict_long_presets=args.strict_long_presets,
         include_original=args.include_original,
     )
 
@@ -209,6 +218,8 @@ def build_custom_strategy_specs(
     regime_lookbacks: str = "200",
     regime_threshold_pcts: str = "0.0",
     regime_fallbacks: str = "all",
+    direction_quality_modes: str = "off",
+    strict_long_presets: str = "none",
     include_original: bool = False,
 ) -> list[StrategyConfigSpec]:
     dr_modes = _parse_csv(dealing_range_modes)
@@ -220,6 +231,8 @@ def build_custom_strategy_specs(
     regime_lookback_values = _parse_int_csv(regime_lookbacks)
     regime_threshold_values = _parse_non_negative_float_csv(regime_threshold_pcts)
     regime_fallback_values = _parse_csv(regime_fallbacks)
+    dq_modes = _parse_csv(direction_quality_modes)
+    long_presets = _parse_csv(strict_long_presets)
     for mode in dr_modes:
         if mode not in EngineConfig.VALID_DEALING_RANGE_MODES:
             raise ValueError(f"Unsupported dealing range mode: {mode}")
@@ -238,6 +251,11 @@ def build_custom_strategy_specs(
     for regime_fallback in regime_fallback_values:
         if regime_fallback not in EngineConfig.VALID_REGIME_FALLBACKS:
             raise ValueError(f"Unsupported regime fallback: {regime_fallback}")
+    for dq_mode in dq_modes:
+        if dq_mode not in EngineConfig.VALID_DIRECTION_QUALITY_MODES:
+            raise ValueError(f"Unsupported direction quality mode: {dq_mode}")
+    for long_preset in long_presets:
+        direction_quality_preset_config(long_preset)
 
     if include_original and "original" not in exits:
         exits = ["original", *exits]
@@ -262,28 +280,36 @@ def build_custom_strategy_specs(
                                         regime_fallback_values if direction_mode == "regime_trend" else ["all"]
                                     )
                                     for regime_fallback in fallback_regime_values:
-                                        name = f"{dr_mode}|{exit_mode}|min_rr={min_rr}|dir={direction_mode}"
-                                        if direction_mode == "auto_trend":
-                                            name = f"{name}|trend_fallback={trend_fallback}"
-                                        if direction_mode == "regime_trend":
-                                            name = (
-                                                f"{name}|regime={regime_mode}|lookback={regime_lookback}|"
-                                                f"thr={regime_threshold}|regime_fb={regime_fallback}"
-                                            )
-                                        specs.append(
-                                            StrategyConfigSpec(
-                                                name,
-                                                dr_mode,
-                                                exit_mode,
-                                                min_rr,
-                                                direction_mode,
-                                                trend_fallback,
-                                                regime_mode,
-                                                regime_lookback,
-                                                regime_threshold,
-                                                regime_fallback,
-                                            )
-                                        )
+                                        for dq_mode in dq_modes:
+                                            preset_values = long_presets if dq_mode != "off" else ["none"]
+                                            for long_preset in preset_values:
+                                                name = f"{dr_mode}|{exit_mode}|min_rr={min_rr}|dir={direction_mode}"
+                                                if direction_mode == "auto_trend":
+                                                    name = f"{name}|trend_fallback={trend_fallback}"
+                                                if direction_mode == "regime_trend":
+                                                    name = (
+                                                        f"{name}|regime={regime_mode}|lookback={regime_lookback}|"
+                                                        f"thr={regime_threshold}|regime_fb={regime_fallback}"
+                                                    )
+                                                if dq_mode != "off":
+                                                    name = f"{name}|dq={dq_mode}|long_preset={long_preset}"
+                                                specs.append(
+                                                    StrategyConfigSpec(
+                                                        name,
+                                                        dr_mode,
+                                                        exit_mode,
+                                                        min_rr,
+                                                        direction_mode,
+                                                        trend_fallback,
+                                                        regime_mode,
+                                                        regime_lookback,
+                                                        regime_threshold,
+                                                        regime_fallback,
+                                                        dq_mode,
+                                                        long_preset,
+                                                        **direction_quality_preset_config(long_preset),
+                                                    )
+                                                )
 
     if len(specs) > MAX_CUSTOM_COMBINATIONS:
         raise ValueError(f"custom strategy set too large: {len(specs)} combinations")

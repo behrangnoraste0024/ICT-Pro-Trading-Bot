@@ -44,6 +44,17 @@ class RollingBacktestResult:
     regime_lookback: int = 200
     regime_threshold_pct: float = 0.0
     regime_fallback: str = "all"
+    direction_quality_mode: str = "off"
+    strict_long_require_regime_known: bool = False
+    strict_long_block_unknown_regime: bool = False
+    strict_long_require_regime_bullish: bool = False
+    strict_long_require_displacement: bool = False
+    strict_long_min_setup_score: int | None = None
+    strict_short_require_regime_known: bool = False
+    strict_short_block_unknown_regime: bool = False
+    strict_short_require_regime_bearish: bool = False
+    strict_short_require_displacement: bool = False
+    strict_short_min_setup_score: int | None = None
     direction_mode_fallback_counts: dict[str, int] = field(default_factory=dict)
     trade_outcome_diagnostics: TradeOutcomeDiagnostics | None = None
     sl_tp_outcome_diagnostics: SLTPOutcomeDiagnostics | None = None

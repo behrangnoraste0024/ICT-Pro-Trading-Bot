@@ -57,8 +57,10 @@ def test_report_includes_comparison_table() -> None:
     output = format_strategy_comparison_report(_report())
 
     assert "Comparison Table:" in output
-    assert "Rank | Strategy | DR Mode | Exit | MinRR | Dir | TrendFB" in output
+    assert "Rank | Strategy | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB" in output
     assert "Regime | Lookback | Thr | RegimeFB" in output
+    assert "off" in output
+    assert "none" in output
     assert "Elapsed" in output
     assert "auto_trend" in output
     assert "block" in output

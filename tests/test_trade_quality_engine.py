@@ -85,6 +85,37 @@ def test_direction_mode_allowed_true_keeps_previous_behavior() -> None:
     assert "DIRECTION_MODE_BLOCKED" not in context.trade_quality_blockers
 
 
+def test_direction_quality_blocked_trade_is_rejected() -> None:
+    context = _planned_context()
+    context.direction_quality_allowed = False
+    context.direction_quality_blocker = "STRICT_LONG_NO_DISPLACEMENT"
+
+    context = TradeQualityEngine().detect(context)
+
+    assert context.trade_quality_status == "REJECTED"
+    assert "DIRECTION_QUALITY_BLOCKED" in context.trade_quality_blockers
+    assert "STRICT_LONG_NO_DISPLACEMENT" in context.trade_quality_blockers
+
+
+def test_direction_quality_allowed_true_keeps_previous_behavior() -> None:
+    context = _planned_context()
+    context.direction_quality_allowed = True
+
+    context = TradeQualityEngine().detect(context)
+
+    assert context.trade_quality_status == "APPROVED"
+    assert "DIRECTION_QUALITY_BLOCKED" not in context.trade_quality_blockers
+
+
+def test_direction_quality_allowed_none_keeps_previous_behavior() -> None:
+    context = _planned_context()
+    context.direction_quality_allowed = None
+
+    context = TradeQualityEngine().detect(context)
+
+    assert context.trade_quality_status == "APPROVED"
+
+
 def test_risk_too_tight_rejected() -> None:
     context = _planned_context()
     context.planned_risk = 0.01

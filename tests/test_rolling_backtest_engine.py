@@ -739,6 +739,7 @@ def test_default_exit_mode_is_original() -> None:
     assert result.regime_lookback == 200
     assert result.regime_threshold_pct == 0.0
     assert result.regime_fallback == "all"
+    assert result.direction_quality_mode == "off"
 
 
 def test_exit_mode_reaches_default_ict_engine_config() -> None:
@@ -801,6 +802,31 @@ def test_regime_settings_reach_default_ict_engine_config() -> None:
     assert engine.ict_engine.config.regime_fallback == "block"
 
 
+def test_direction_quality_settings_reach_default_ict_engine_config() -> None:
+    engine = RollingBacktestEngine(
+        min_candles=50,
+        direction_quality_mode="long_strict",
+        strict_long_require_regime_known=True,
+        strict_long_block_unknown_regime=True,
+        strict_long_require_regime_bullish=True,
+        strict_long_require_displacement=True,
+        strict_long_min_setup_score=100,
+    )
+
+    assert engine.config.direction_quality_mode == "long_strict"
+    assert engine.ict_engine.config.direction_quality_mode == "long_strict"
+    assert engine.config.strict_long_require_regime_known is True
+    assert engine.ict_engine.config.strict_long_require_regime_known is True
+    assert engine.config.strict_long_block_unknown_regime is True
+    assert engine.ict_engine.config.strict_long_block_unknown_regime is True
+    assert engine.config.strict_long_require_regime_bullish is True
+    assert engine.ict_engine.config.strict_long_require_regime_bullish is True
+    assert engine.config.strict_long_require_displacement is True
+    assert engine.ict_engine.config.strict_long_require_displacement is True
+    assert engine.config.strict_long_min_setup_score == 100
+    assert engine.ict_engine.config.strict_long_min_setup_score == 100
+
+
 def test_result_reports_direction_mode() -> None:
     result = RollingBacktestEngine(
         ict_engine=RecordingICTEngine(),
@@ -840,6 +866,26 @@ def test_result_reports_regime_settings() -> None:
     assert result.regime_fallback == "block"
 
 
+def test_result_reports_direction_quality_settings() -> None:
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(),
+        min_candles=1,
+        direction_quality_mode="short_strict",
+        strict_short_require_regime_known=True,
+        strict_short_block_unknown_regime=True,
+        strict_short_require_regime_bearish=True,
+        strict_short_require_displacement=True,
+        strict_short_min_setup_score=90,
+    ).run(_candles(1))
+
+    assert result.direction_quality_mode == "short_strict"
+    assert result.strict_short_require_regime_known is True
+    assert result.strict_short_block_unknown_regime is True
+    assert result.strict_short_require_regime_bearish is True
+    assert result.strict_short_require_displacement is True
+    assert result.strict_short_min_setup_score == 90
+
+
 def test_invalid_direction_mode_rejected() -> None:
     with pytest.raises(ValueError, match="Unsupported direction mode"):
         RollingBacktestEngine(direction_mode="sideways_only")
@@ -853,6 +899,16 @@ def test_invalid_auto_trend_fallback_rejected() -> None:
 def test_invalid_regime_lookback_rejected() -> None:
     with pytest.raises(ValueError, match="Unsupported regime lookback"):
         RollingBacktestEngine(regime_lookback=0)
+
+
+def test_invalid_direction_quality_mode_rejected() -> None:
+    with pytest.raises(ValueError, match="Unsupported direction quality mode"):
+        RollingBacktestEngine(direction_quality_mode="long_medium")
+
+
+def test_invalid_direction_quality_min_score_rejected() -> None:
+    with pytest.raises(ValueError, match="Unsupported strict_long_min_setup_score"):
+        RollingBacktestEngine(strict_long_min_setup_score=-1)
 
 
 def test_direction_mode_fallback_counts_are_reported() -> None:

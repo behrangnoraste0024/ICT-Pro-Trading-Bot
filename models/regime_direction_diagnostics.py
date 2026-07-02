@@ -35,6 +35,7 @@ class RegimeDirectionDiagnostics:
     by_regime_reason: dict[str, RegimeDirectionBucket] = field(default_factory=dict)
     by_direction_mode_reason: dict[str, RegimeDirectionBucket] = field(default_factory=dict)
     by_resolved_direction: dict[str, RegimeDirectionBucket] = field(default_factory=dict)
+    by_direction_quality_reason: dict[str, RegimeDirectionBucket] = field(default_factory=dict)
     long_in_bearish_count: int = 0
     long_in_bearish_pnl: float = 0.0
     short_in_bullish_count: int = 0
