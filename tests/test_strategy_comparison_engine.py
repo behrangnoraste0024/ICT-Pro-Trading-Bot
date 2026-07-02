@@ -15,6 +15,7 @@ from engine.backtest.strategy_comparison_engine import (
     build_default_strategy_specs,
     build_exit_modes_recent_50_specs,
     build_long_strict_recent_50_fixed_1_5r_specs,
+    build_recommended_profile_specs,
     build_regime_direction_recent_50_fixed_1_5r_specs,
     build_trend_direction_recent_50_fixed_1_5r_specs,
     direction_quality_preset_config,
@@ -271,6 +272,21 @@ def test_row_from_result_preserves_direction_quality_fields() -> None:
     assert row.strict_long_preset == "displacement"
 
 
+def test_row_from_result_preserves_strategy_profile() -> None:
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec(
+            "profile=balanced_smc",
+            "recent_50",
+            "fixed_1_5r",
+            1.5,
+            strategy_profile="balanced_smc",
+        ),
+        _result_with_trades(),
+    )
+
+    assert row.strategy_profile == "balanced_smc"
+
+
 def test_row_from_result_includes_regime_diagnostic_summary_fields() -> None:
     row = StrategyComparisonEngine().row_from_result(
         StrategyConfigSpec("spec", "recent_50", "fixed_1_5r", 1.5),
@@ -365,6 +381,33 @@ def test_long_strict_recent_50_fixed_1_5r_specs_include_required_variants() -> N
     assert specs[-1].strict_long_require_regime_bullish is True
     assert specs[-1].strict_long_require_displacement is True
     assert specs[-1].strict_long_min_setup_score == 100
+
+
+def test_recommended_profile_specs_include_expected_profiles() -> None:
+    specs = build_recommended_profile_specs()
+
+    assert len(specs) == 4
+    assert [spec.strategy_profile for spec in specs] == [
+        "balanced_smc",
+        "bearish_smc",
+        "research_baseline",
+        "default",
+    ]
+    assert [spec.name for spec in specs] == [
+        "profile=balanced_smc",
+        "profile=bearish_smc",
+        "profile=research_baseline",
+        "profile=default",
+    ]
+    assert specs[0].dealing_range_mode == "recent_50"
+    assert specs[0].direction_quality_mode == "long_strict"
+    assert specs[0].strict_long_require_regime_known is True
+    assert specs[0].strict_long_require_displacement is True
+    assert specs[1].direction_mode == "short_only"
+    assert specs[2].direction_mode == "all"
+    assert specs[2].direction_quality_mode == "off"
+    assert specs[3].dealing_range_mode == "current_external"
+    assert specs[3].exit_mode == "original"
 
 
 def test_direction_quality_preset_config_expands_long_strict_rules() -> None:
@@ -500,3 +543,38 @@ def test_run_comparison_passes_direction_quality_config_to_engine(monkeypatch) -
     assert captured_configs[0].strict_long_require_regime_bullish is True
     assert captured_configs[0].strict_long_require_displacement is True
     assert captured_configs[0].strict_long_min_setup_score == 100
+
+
+def test_run_comparison_passes_strategy_profile_config_to_engine(monkeypatch) -> None:
+    captured_configs = []
+
+    class FakeRollingBacktestEngine:
+        def __init__(self, *args, config, **kwargs):
+            captured_configs.append(config)
+
+        def run(self, candles):
+            return RollingBacktestResult(
+                total_windows=1,
+                processed_windows=1,
+                skipped_windows=0,
+                failed_windows=0,
+                min_candles=1,
+                total_paper_trades=0,
+                closed_trades=0,
+                open_trades=0,
+                wins=0,
+                losses=0,
+                win_rate=0,
+                net_pnl=0,
+                average_pnl=0,
+                max_drawdown=0,
+                ignored_contexts=1,
+            )
+
+    monkeypatch.setattr(strategy_module, "RollingBacktestEngine", FakeRollingBacktestEngine)
+
+    StrategyComparisonEngine().run_comparison(FIXTURE_PATH, [build_recommended_profile_specs()[0]], min_candles=50)
+
+    assert captured_configs[0].strategy_profile == "balanced_smc"
+    assert captured_configs[0].dealing_range_mode == "recent_50"
+    assert captured_configs[0].direction_quality_mode == "long_strict"

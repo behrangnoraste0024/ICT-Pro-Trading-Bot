@@ -15,6 +15,7 @@ def format_rolling_backtest_report(
     opened_trades = getattr(result, "opened_trades", 0)
     closed_by_state = getattr(result, "closed_by_state", 0)
     duplicate_signals_skipped = getattr(result, "duplicate_signals_skipped", 0)
+    strategy_profile = getattr(result, "strategy_profile", "default")
     dealing_range_mode = getattr(result, "dealing_range_mode", "current_external")
     range_mode_fallback_count = getattr(result, "range_mode_fallback_count", 0)
     exit_mode = getattr(result, "exit_mode", "original")
@@ -33,6 +34,7 @@ def format_rolling_backtest_report(
         "===== ROLLING BACKTEST REPORT =====",
         f"Fixture           : {fixture_path}",
             f"Min Candles       : {min_candles}",
+            f"Strategy Profile  : {strategy_profile}",
             f"Dealing Range Mode : {dealing_range_mode}",
             f"Range Mode Fallbacks: {range_mode_fallback_count}",
             f"Exit Mode         : {exit_mode}",

@@ -8,6 +8,7 @@ from models.engine_config import EngineConfig
 def test_engine_config_defaults() -> None:
     config = EngineConfig()
 
+    assert config.strategy_profile == "default"
     assert config.dealing_range_mode == "current_external"
     assert config.exit_mode == "original"
     assert config.min_risk_reward == 2.0
@@ -107,6 +108,18 @@ def test_engine_config_accepts_valid_direction_quality_modes(direction_quality_m
 def test_engine_config_rejects_invalid_direction_quality_mode() -> None:
     with pytest.raises(ValueError, match="Unsupported direction quality mode"):
         EngineConfig(direction_quality_mode="medium_spicy")
+
+
+@pytest.mark.parametrize("strategy_profile", ["default", "balanced_smc", "bearish_smc", "research_baseline"])
+def test_engine_config_accepts_valid_strategy_profiles(strategy_profile: str) -> None:
+    config = EngineConfig(strategy_profile=strategy_profile)
+
+    assert config.strategy_profile == strategy_profile
+
+
+def test_engine_config_rejects_invalid_strategy_profile() -> None:
+    with pytest.raises(ValueError, match="Unsupported strategy profile"):
+        EngineConfig(strategy_profile="turbo")
 
 
 @pytest.mark.parametrize("field_name", ["strict_long_min_setup_score", "strict_short_min_setup_score"])

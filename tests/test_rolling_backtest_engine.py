@@ -731,6 +731,7 @@ def test_no_trades_produces_empty_trade_outcome_diagnostics() -> None:
 def test_default_exit_mode_is_original() -> None:
     result = RollingBacktestEngine(ict_engine=RecordingICTEngine(), min_candles=1).run(_candles(1))
 
+    assert result.strategy_profile == "default"
     assert result.exit_mode == "original"
     assert result.min_risk_reward == 2.0
     assert result.direction_mode == "all"
@@ -884,6 +885,21 @@ def test_result_reports_direction_quality_settings() -> None:
     assert result.strict_short_require_regime_bearish is True
     assert result.strict_short_require_displacement is True
     assert result.strict_short_min_setup_score == 90
+
+
+def test_result_reports_strategy_profile() -> None:
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(),
+        min_candles=1,
+        strategy_profile="balanced_smc",
+    ).run(_candles(1))
+
+    assert result.strategy_profile == "balanced_smc"
+
+
+def test_invalid_strategy_profile_rejected() -> None:
+    with pytest.raises(ValueError, match="Unsupported strategy profile"):
+        RollingBacktestEngine(strategy_profile="turbo")
 
 
 def test_invalid_direction_mode_rejected() -> None:

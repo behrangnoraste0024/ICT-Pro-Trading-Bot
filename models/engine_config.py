@@ -12,7 +12,9 @@ class EngineConfig:
     VALID_REGIME_MODES = {"rolling_return"}
     VALID_REGIME_FALLBACKS = {"all", "block"}
     VALID_DIRECTION_QUALITY_MODES = {"off", "long_strict", "short_strict", "both_strict"}
+    VALID_STRATEGY_PROFILES = {"default", "balanced_smc", "bearish_smc", "research_baseline"}
 
+    strategy_profile: str = "default"
     dealing_range_mode: str = "current_external"
     exit_mode: str = "original"
     min_risk_reward: float = 2.0
@@ -35,6 +37,8 @@ class EngineConfig:
     strict_short_min_setup_score: int | None = None
 
     def __post_init__(self) -> None:
+        if self.strategy_profile not in self.VALID_STRATEGY_PROFILES:
+            raise ValueError(f"Unsupported strategy profile: {self.strategy_profile}")
         if self.dealing_range_mode not in self.VALID_DEALING_RANGE_MODES:
             raise ValueError(f"Unsupported dealing range mode: {self.dealing_range_mode}")
         if self.exit_mode not in self.VALID_EXIT_MODES:

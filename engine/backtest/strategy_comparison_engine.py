@@ -8,6 +8,7 @@ from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngin
 from models.engine_config import EngineConfig
 from models.rolling_backtest_result import RollingBacktestResult
 from models.strategy_comparison import StrategyComparisonReport, StrategyComparisonRow, StrategyConfigSpec
+from models.strategy_profile import apply_strategy_profile
 
 ComparisonProgressCallback = Callable[[dict], None]
 
@@ -85,6 +86,15 @@ def build_long_strict_recent_50_fixed_1_5r_specs() -> list[StrategyConfigSpec]:
     ]
 
 
+def build_recommended_profile_specs() -> list[StrategyConfigSpec]:
+    return [
+        _profile_spec("balanced_smc"),
+        _profile_spec("bearish_smc"),
+        _profile_spec("research_baseline"),
+        _profile_spec("default"),
+    ]
+
+
 def build_current_external_only_specs() -> list[StrategyConfigSpec]:
     return [
         _spec("current_external", "original", 2.0),
@@ -132,6 +142,35 @@ def _spec(
         direction_quality_mode,
         strict_long_preset,
         **preset_config,
+    )
+
+
+def _profile_spec(strategy_profile: str) -> StrategyConfigSpec:
+    config = apply_strategy_profile(EngineConfig(), strategy_profile)
+    return StrategyConfigSpec(
+        f"profile={strategy_profile}",
+        config.dealing_range_mode,
+        config.exit_mode,
+        config.min_risk_reward,
+        config.direction_mode,
+        config.auto_trend_fallback,
+        config.regime_mode,
+        config.regime_lookback,
+        config.regime_threshold_pct,
+        config.regime_fallback,
+        config.direction_quality_mode,
+        "regime_known_displacement" if strategy_profile == "balanced_smc" else "none",
+        config.strict_long_require_regime_known,
+        config.strict_long_block_unknown_regime,
+        config.strict_long_require_regime_bullish,
+        config.strict_long_require_displacement,
+        config.strict_long_min_setup_score,
+        config.strict_short_require_regime_known,
+        config.strict_short_block_unknown_regime,
+        config.strict_short_require_regime_bearish,
+        config.strict_short_require_displacement,
+        config.strict_short_min_setup_score,
+        strategy_profile,
     )
 
 
@@ -201,6 +240,7 @@ class StrategyComparisonEngine:
                 progress_callback=self._rolling_progress_callback(progress_callback, spec, index, total_strategies),
                 enable_diagnostics=enable_diagnostics,
                 config=EngineConfig(
+                    strategy_profile=spec.strategy_profile,
                     dealing_range_mode=spec.dealing_range_mode,
                     exit_mode=spec.exit_mode,
                     min_risk_reward=spec.min_risk_reward,
@@ -288,6 +328,7 @@ class StrategyComparisonEngine:
             regime_lookback=spec.regime_lookback,
             regime_threshold_pct=spec.regime_threshold_pct,
             regime_fallback=spec.regime_fallback,
+            strategy_profile=spec.strategy_profile,
             direction_quality_mode=spec.direction_quality_mode,
             strict_long_preset=spec.strict_long_preset,
             total_windows=result.total_windows,

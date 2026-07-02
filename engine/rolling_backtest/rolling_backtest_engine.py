@@ -32,6 +32,7 @@ class RollingBacktestEngine:
         progress_every: int = 100,
         max_windows: int | None = None,
         config: EngineConfig | None = None,
+        strategy_profile: str | None = None,
         dealing_range_mode: str | None = None,
         exit_mode: str | None = None,
         min_risk_reward: float | None = None,
@@ -55,6 +56,10 @@ class RollingBacktestEngine:
         enable_diagnostics: bool = True,
     ):
         self.config = config if config is not None else EngineConfig()
+        if strategy_profile is not None:
+            if strategy_profile not in EngineConfig.VALID_STRATEGY_PROFILES:
+                raise ValueError(f"Unsupported strategy profile: {strategy_profile}")
+            self.config.strategy_profile = strategy_profile
         if dealing_range_mode is not None:
             if dealing_range_mode not in EngineConfig.VALID_DEALING_RANGE_MODES:
                 raise ValueError(f"Unsupported dealing range mode: {dealing_range_mode}")
@@ -417,6 +422,7 @@ class RollingBacktestEngine:
             duplicate_signals_skipped=duplicate_signals_skipped,
             diagnostics=diagnostics,
             diagnostics_windows_analyzed=diagnostics_windows_analyzed,
+            strategy_profile=self.config.strategy_profile,
             dealing_range_mode=self.config.dealing_range_mode,
             range_mode_fallback_count=fallback_count,
             exit_mode=self.config.exit_mode,

@@ -28,6 +28,7 @@ class StrategyConfigSpec:
     strict_short_require_regime_bearish: bool = False
     strict_short_require_displacement: bool = False
     strict_short_min_setup_score: int | None = None
+    strategy_profile: str = "default"
     event_type: str = "STRATEGY_CONFIG_SPEC"
 
     def __str__(self) -> str:
@@ -57,6 +58,7 @@ class StrategyComparisonRow:
     regime_lookback: int = 200
     regime_threshold_pct: float = 0.0
     regime_fallback: str = "all"
+    strategy_profile: str = "default"
     direction_quality_mode: str = "off"
     strict_long_preset: str = "none"
     total_windows: int = 0

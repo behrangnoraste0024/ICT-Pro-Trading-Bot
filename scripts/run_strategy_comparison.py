@@ -17,12 +17,14 @@ from engine.backtest.strategy_comparison_engine import (
     build_direction_modes_recent_50_fixed_1_5r_specs,
     build_exit_modes_recent_50_specs,
     build_long_strict_recent_50_fixed_1_5r_specs,
+    build_recommended_profile_specs,
     build_regime_direction_recent_50_fixed_1_5r_specs,
     build_trend_direction_recent_50_fixed_1_5r_specs,
     direction_quality_preset_config,
 )
 from models.engine_config import EngineConfig
 from models.strategy_comparison import StrategyComparisonReport, StrategyConfigSpec
+from models.strategy_profile import VALID_STRATEGY_PROFILES
 from reporting.strategy_comparison_report import format_strategy_comparison_report
 
 
@@ -147,6 +149,7 @@ def _parser() -> argparse.ArgumentParser:
             "trend_direction_recent_50_fixed_1_5r",
             "regime_direction_recent_50_fixed_1_5r",
             "long_strict_recent_50_fixed_1_5r",
+            "recommended_profiles",
             "current_external_only",
             "custom",
         ],
@@ -164,6 +167,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--regime-fallbacks", default="all")
     parser.add_argument("--direction-quality-modes", default="off")
     parser.add_argument("--strict-long-presets", default="none")
+    parser.add_argument("--strategy-profiles", default="default")
     parser.add_argument(
         "--sort-by",
         choices=["net_pnl", "average_pnl", "win_rate", "max_drawdown", "profit_factor", "total_trades"],
@@ -190,6 +194,8 @@ def build_strategy_specs(args) -> list[StrategyConfigSpec]:
         return build_regime_direction_recent_50_fixed_1_5r_specs()
     if args.strategy_set == "long_strict_recent_50_fixed_1_5r":
         return build_long_strict_recent_50_fixed_1_5r_specs()
+    if args.strategy_set == "recommended_profiles":
+        return build_recommended_profile_specs()
     if args.strategy_set == "current_external_only":
         return build_current_external_only_specs()
     return build_custom_strategy_specs(
@@ -204,6 +210,7 @@ def build_strategy_specs(args) -> list[StrategyConfigSpec]:
         regime_fallbacks=args.regime_fallbacks,
         direction_quality_modes=args.direction_quality_modes,
         strict_long_presets=args.strict_long_presets,
+        strategy_profiles=args.strategy_profiles,
         include_original=args.include_original,
     )
 
@@ -220,8 +227,16 @@ def build_custom_strategy_specs(
     regime_fallbacks: str = "all",
     direction_quality_modes: str = "off",
     strict_long_presets: str = "none",
+    strategy_profiles: str = "default",
     include_original: bool = False,
 ) -> list[StrategyConfigSpec]:
+    profiles = _parse_csv(strategy_profiles)
+    for profile in profiles:
+        if profile not in VALID_STRATEGY_PROFILES:
+            raise ValueError(f"Unsupported strategy profile: {profile}")
+    if profiles != ["default"]:
+        return build_profile_strategy_specs(profiles)
+
     dr_modes = _parse_csv(dealing_range_modes)
     exits = _parse_csv(exit_modes)
     min_rrs = _parse_float_csv(min_risk_rewards)
@@ -314,6 +329,11 @@ def build_custom_strategy_specs(
     if len(specs) > MAX_CUSTOM_COMBINATIONS:
         raise ValueError(f"custom strategy set too large: {len(specs)} combinations")
     return specs
+
+
+def build_profile_strategy_specs(strategy_profiles: list[str]) -> list[StrategyConfigSpec]:
+    recommended = {spec.strategy_profile: spec for spec in build_recommended_profile_specs()}
+    return [recommended[profile] for profile in strategy_profiles]
 
 
 def _parse_csv(value: str) -> list[str]:

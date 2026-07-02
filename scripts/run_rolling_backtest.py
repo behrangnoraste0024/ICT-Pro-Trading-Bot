@@ -11,10 +11,34 @@ if str(ROOT_DIR) not in sys.path:
 from data.historical_data_utils import load_candles_json
 from engine.backtest.trade_outcome_diagnostics_engine import debug_extract_available_trade_metadata
 from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngine
+from models.engine_config import EngineConfig
+from models.strategy_profile import apply_strategy_profile
 from reporting.rolling_backtest_report import format_rolling_backtest_report
 
 
 DEFAULT_FIXTURE = "tests/fixtures/btcusdt_100_candles.json"
+PROFILE_FLAG_TO_FIELD = {
+    "--dealing-range-mode": "dealing_range_mode",
+    "--exit-mode": "exit_mode",
+    "--min-risk-reward": "min_risk_reward",
+    "--direction-mode": "direction_mode",
+    "--auto-trend-fallback": "auto_trend_fallback",
+    "--regime-mode": "regime_mode",
+    "--regime-lookback": "regime_lookback",
+    "--regime-threshold-pct": "regime_threshold_pct",
+    "--regime-fallback": "regime_fallback",
+    "--direction-quality-mode": "direction_quality_mode",
+    "--strict-long-require-regime-known": "strict_long_require_regime_known",
+    "--strict-long-block-unknown-regime": "strict_long_block_unknown_regime",
+    "--strict-long-require-regime-bullish": "strict_long_require_regime_bullish",
+    "--strict-long-require-displacement": "strict_long_require_displacement",
+    "--strict-long-min-setup-score": "strict_long_min_setup_score",
+    "--strict-short-require-regime-known": "strict_short_require_regime_known",
+    "--strict-short-block-unknown-regime": "strict_short_block_unknown_regime",
+    "--strict-short-require-regime-bearish": "strict_short_require_regime_bearish",
+    "--strict-short-require-displacement": "strict_short_require_displacement",
+    "--strict-short-min-setup-score": "strict_short_min_setup_score",
+}
 
 
 def positive_float(value: str) -> float:
@@ -32,11 +56,17 @@ def non_negative_int(value: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description="Run deterministic rolling backtest from a candle fixture.")
     parser.add_argument("--fixture", default=DEFAULT_FIXTURE)
     parser.add_argument("--min-candles", type=int, default=50)
     parser.add_argument("--progress-every", type=int, default=100)
     parser.add_argument("--max-windows", type=int, default=None)
+    parser.add_argument(
+        "--strategy-profile",
+        choices=["default", "balanced_smc", "bearish_smc", "research_baseline"],
+        default="default",
+    )
     parser.add_argument("--dealing-range-mode", choices=["current_external", "recent_50"], default="current_external")
     parser.add_argument(
         "--exit-mode",
@@ -71,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--strict-short-min-setup-score", type=non_negative_int, default=None)
     parser.add_argument("--show-trades", action="store_true")
     parser.add_argument("--debug-first-trade-metadata", action="store_true")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_args)
 
     if args.min_candles <= 0:
         print("Error: --min-candles must be greater than 0.")
@@ -100,32 +130,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: failed to load fixture: {exc}")
         return 1
 
+    explicit_overrides = _explicit_profile_overrides(raw_args)
+    config = apply_strategy_profile(EngineConfig(), args.strategy_profile, explicit_overrides)
+    config = _apply_explicit_cli_overrides(config, args, explicit_overrides)
+
     progress_callback = _print_progress if args.progress_every > 0 else None
     result = RollingBacktestEngine(
         min_candles=args.min_candles,
         progress_callback=progress_callback,
         progress_every=args.progress_every,
         max_windows=args.max_windows,
-        dealing_range_mode=args.dealing_range_mode,
-        exit_mode=args.exit_mode,
-        min_risk_reward=args.min_risk_reward,
-        direction_mode=args.direction_mode,
-        auto_trend_fallback=args.auto_trend_fallback,
-        regime_mode=args.regime_mode,
-        regime_lookback=args.regime_lookback,
-        regime_threshold_pct=args.regime_threshold_pct,
-        regime_fallback=args.regime_fallback,
-        direction_quality_mode=args.direction_quality_mode,
-        strict_long_require_regime_known=args.strict_long_require_regime_known,
-        strict_long_block_unknown_regime=args.strict_long_block_unknown_regime,
-        strict_long_require_regime_bullish=args.strict_long_require_regime_bullish,
-        strict_long_require_displacement=args.strict_long_require_displacement,
-        strict_long_min_setup_score=args.strict_long_min_setup_score,
-        strict_short_require_regime_known=args.strict_short_require_regime_known,
-        strict_short_block_unknown_regime=args.strict_short_block_unknown_regime,
-        strict_short_require_regime_bearish=args.strict_short_require_regime_bearish,
-        strict_short_require_displacement=args.strict_short_require_displacement,
-        strict_short_min_setup_score=args.strict_short_min_setup_score,
+        config=config,
     ).run(candles)
     report = format_rolling_backtest_report(
         result,
@@ -138,6 +153,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.debug_first_trade_metadata:
         print(_format_first_trade_metadata_debug(result))
     return 0
+
+
+def _explicit_profile_overrides(argv: list[str]) -> set[str]:
+    explicit: set[str] = set()
+    for token in argv:
+        flag = token.split("=", 1)[0]
+        field_name = PROFILE_FLAG_TO_FIELD.get(flag)
+        if field_name is not None:
+            explicit.add(field_name)
+    return explicit
+
+
+def _apply_explicit_cli_overrides(config: EngineConfig, args, explicit_overrides: set[str]) -> EngineConfig:
+    for field_name in explicit_overrides:
+        setattr(config, field_name, getattr(args, field_name))
+    return EngineConfig(**config.__dict__)
 
 
 def _format_first_trade_metadata_debug(result) -> str:

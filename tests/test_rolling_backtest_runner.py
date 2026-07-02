@@ -704,6 +704,101 @@ def test_runner_accepts_recent_50_dealing_range_mode(capsys) -> None:
     assert "Dealing Range Mode : recent_50" in captured.out
 
 
+def test_runner_accepts_balanced_smc_strategy_profile(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--strategy-profile",
+            "balanced_smc",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategy Profile  : balanced_smc" in captured.out
+    assert "Dealing Range Mode : recent_50" in captured.out
+    assert "Exit Mode         : fixed_1_5r" in captured.out
+    assert "Min Risk Reward   : 1.5" in captured.out
+    assert "Direction Mode    : all" in captured.out
+    assert "Direction Quality Mode : long_strict" in captured.out
+    assert "require_regime_known=True" in captured.out
+    assert "require_displacement=True" in captured.out
+
+
+def test_runner_accepts_bearish_smc_strategy_profile(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--strategy-profile",
+            "bearish_smc",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategy Profile  : bearish_smc" in captured.out
+    assert "Dealing Range Mode : recent_50" in captured.out
+    assert "Exit Mode         : fixed_1_5r" in captured.out
+    assert "Min Risk Reward   : 1.5" in captured.out
+    assert "Direction Mode    : short_only" in captured.out
+    assert "Direction Quality Mode : off" in captured.out
+
+
+def test_runner_strategy_profile_exit_mode_override_wins(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--strategy-profile",
+            "balanced_smc",
+            "--exit-mode",
+            "fixed_2r",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategy Profile  : balanced_smc" in captured.out
+    assert "Exit Mode         : fixed_2r" in captured.out
+    assert "Dealing Range Mode : recent_50" in captured.out
+
+
+def test_runner_strategy_profile_direction_mode_override_wins(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--progress-every",
+            "0",
+            "--strategy-profile",
+            "balanced_smc",
+            "--direction-mode",
+            "short_only",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Direction Mode    : short_only" in captured.out
+    assert "Direction Quality Mode : long_strict" in captured.out
+
+
 def test_runner_show_trades_prints_trade_log(capsys) -> None:
     return_code = main(
         [
@@ -774,6 +869,7 @@ def test_runner_default_report_includes_current_external_mode(capsys) -> None:
 
     captured = capsys.readouterr()
     assert return_code == 0
+    assert "Strategy Profile  : default" in captured.out
     assert "Dealing Range Mode : current_external" in captured.out
     assert "Exit Mode         : original" in captured.out
     assert "Min Risk Reward   : 2.0" in captured.out
@@ -1030,6 +1126,7 @@ def test_runner_fixed_1_5r_with_lower_min_rr_produces_fixture_trade(capsys) -> N
 
 def test_formatter_includes_exit_mode() -> None:
     result = _result()
+    result.strategy_profile = "balanced_smc"
     result.exit_mode = "fixed_1_5r"
     result.exit_mode_fallback_counts = {"NO_PLANNED_TRADE": 2}
     result.min_risk_reward = 1.5
@@ -1040,6 +1137,7 @@ def test_formatter_includes_exit_mode() -> None:
 
     report = format_rolling_backtest_report(result, FIXTURE_PATH, min_candles=50)
 
+    assert "Strategy Profile  : balanced_smc" in report
     assert "Exit Mode         : fixed_1_5r" in report
     assert "Exit Mode Fallbacks: NO_PLANNED_TRADE=2" in report
     assert "Min Risk Reward   : 1.5" in report
@@ -1052,6 +1150,13 @@ def test_formatter_includes_exit_mode() -> None:
 def test_invalid_dealing_range_mode_choice_fails(capsys) -> None:
     try:
         main(["--fixture", FIXTURE_PATH, "--dealing-range-mode", "bad_mode"])
+    except SystemExit as exc:
+        assert exc.code == 2
+
+
+def test_invalid_strategy_profile_choice_fails(capsys) -> None:
+    try:
+        main(["--fixture", FIXTURE_PATH, "--strategy-profile", "turbo"])
     except SystemExit as exc:
         assert exc.code == 2
 

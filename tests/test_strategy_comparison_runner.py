@@ -58,7 +58,7 @@ def test_direction_modes_recent_50_fixed_1_5r_strategy_set_works(capsys) -> None
     assert "dir=all" in captured.out
     assert "dir=long_only" in captured.out
     assert "dir=short_only" in captured.out
-    assert "Rank | Strategy | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB" in captured.out
+    assert "Rank | Strategy | Profile | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB" in captured.out
 
 
 def test_trend_direction_recent_50_fixed_1_5r_strategy_set_works(capsys) -> None:
@@ -119,7 +119,30 @@ def test_long_strict_recent_50_fixed_1_5r_strategy_set_works(capsys) -> None:
     assert "Strategies   : 10" in captured.out
     assert "dq=long_strict|long_preset=regime_known" in captured.out
     assert "dq=long_strict|long_preset=regime_bullish_displacement_score100" in captured.out
-    assert "Rank | Strategy | DR Mode | Exit | MinRR | Dir | DQ | LongPreset" in captured.out
+    assert "Rank | Strategy | Profile | DR Mode | Exit | MinRR | Dir | DQ | LongPreset" in captured.out
+
+
+def test_recommended_profiles_strategy_set_works(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "recommended_profiles",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategies   : 4" in captured.out
+    assert "profile=balanced_smc" in captured.out
+    assert "profile=bearish_smc" in captured.out
+    assert "profile=research_baseline" in captured.out
+    assert "profile=default" in captured.out
+    assert "Rank | Strategy | Profile | DR Mode" in captured.out
 
 
 def test_current_external_only_strategy_set_works(capsys) -> None:
@@ -274,6 +297,28 @@ def test_custom_strategy_set_accepts_direction_quality_options(capsys) -> None:
     assert "recent_50|fixed_1_5r|min_rr=1.5|dir=all|dq=long_strict|long_preset=displacement" in captured.out
 
 
+def test_custom_strategy_set_accepts_strategy_profiles(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "custom",
+            "--strategy-profiles",
+            "balanced_smc,bearish_smc",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategies   : 2" in captured.out
+    assert "profile=balanced_smc" in captured.out
+    assert "profile=bearish_smc" in captured.out
+
+
 def test_fast_mode_exits_successfully(capsys) -> None:
     return_code = main(
         [
@@ -334,6 +379,7 @@ def test_output_json_writes_valid_json(tmp_path) -> None:
     assert data["event_type"] == "STRATEGY_COMPARISON_REPORT"
     assert data["strategies"]
     assert "elapsed_seconds" in data["strategies"][0]
+    assert "strategy_profile" in data["strategies"][0]
     assert "direction_mode" in data["strategies"][0]
     assert "auto_trend_fallback" in data["strategies"][0]
     assert "regime_mode" in data["strategies"][0]
@@ -367,6 +413,7 @@ def test_output_csv_writes_headers(tmp_path) -> None:
     assert "strategy_name" in text.splitlines()[0]
     assert "net_pnl" in text.splitlines()[0]
     assert "elapsed_seconds" in text.splitlines()[0]
+    assert "strategy_profile" in text.splitlines()[0]
     assert "direction_mode" in text.splitlines()[0]
     assert "auto_trend_fallback" in text.splitlines()[0]
     assert "regime_mode" in text.splitlines()[0]
@@ -526,6 +573,23 @@ def test_invalid_strict_long_preset_in_custom_returns_error(capsys) -> None:
     captured = capsys.readouterr()
     assert return_code == 1
     assert "Unsupported strict long preset" in captured.out
+
+
+def test_invalid_strategy_profile_in_custom_returns_error(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--strategy-set",
+            "custom",
+            "--strategy-profiles",
+            "turbo",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 1
+    assert "Unsupported strategy profile" in captured.out
 
 
 def test_script_does_not_require_historical_file(capsys) -> None:

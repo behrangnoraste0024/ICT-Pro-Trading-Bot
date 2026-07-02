@@ -33,6 +33,7 @@ class RollingBacktestResult:
     duplicate_signals_skipped: int = 0
     diagnostics: BacktestDiagnostics | None = None
     diagnostics_windows_analyzed: int = 0
+    strategy_profile: str = "default"
     dealing_range_mode: str = "current_external"
     range_mode_fallback_count: int = 0
     exit_mode: str = "original"
