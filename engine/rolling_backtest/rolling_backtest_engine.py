@@ -12,7 +12,10 @@ from engine.backtest.entry_followthrough_diagnostics_engine import EntryFollowth
 from engine.backtest.sl_tp_outcome_diagnostics_engine import SLTPOutcomeDiagnosticsEngine
 from engine.backtest.trade_outcome_diagnostics_engine import TradeOutcomeDiagnosticsEngine
 from engine.backtest.virtual_exit_diagnostics_engine import VirtualExitDiagnosticsEngine
+from engine.decision.adaptive_decision_engine import AdaptiveDecisionEngine
+from engine.decision.decision_fusion_engine import DecisionFusionEngine
 from engine.diagnostics.regime_direction_diagnostics_engine import RegimeDirectionDiagnosticsEngine
+from engine.execution_quality.execution_quality_engine import ExecutionQualityEngine
 from engine.ict_engine import ICTEngine
 from engine.rolling_backtest.trade_state_manager import TradeStateManager
 from models.engine_config import EngineConfig
@@ -153,6 +156,9 @@ class RollingBacktestEngine:
         self.virtual_exit_diagnostics_engine = VirtualExitDiagnosticsEngine()
         self.regime_direction_diagnostics_engine = RegimeDirectionDiagnosticsEngine()
         self.cost_diagnostics_engine = CostDiagnosticsEngine()
+        self.execution_quality_engine = ExecutionQualityEngine()
+        self.decision_fusion_engine = DecisionFusionEngine()
+        self.adaptive_decision_engine = AdaptiveDecisionEngine()
         self.trade_state_manager = TradeStateManager()
 
     def run(self, candles: pd.DataFrame) -> RollingBacktestResult:
@@ -421,6 +427,7 @@ class RollingBacktestEngine:
             [] if trade_outcomes is None else trade_outcomes.trades
         )
         cost_diagnostics = self.cost_diagnostics_engine.summarize_contexts(contexts, self.config)
+        self._attach_decision_diagnostics(contexts, cost_diagnostics)
         return RollingBacktestResult(
             total_windows=total_windows,
             processed_windows=processed_windows,
@@ -478,6 +485,29 @@ class RollingBacktestEngine:
             total_cost=cost_diagnostics.total_cost,
             trade_outcome_contexts=contexts,
         )
+
+    def _attach_decision_diagnostics(self, contexts: list[MarketContext], cost_diagnostics) -> None:
+        cost_by_trade_index = {
+            trade.trade_index: trade.net_pnl_after_costs
+            for trade in getattr(cost_diagnostics, "trades", [])
+        }
+        trade_index = 0
+        for context in contexts:
+            if getattr(context, "paper_trade_status", "NO_PAPER_TRADE") == "NO_PAPER_TRADE":
+                continue
+            trade_index += 1
+            execution_quality = self.execution_quality_engine.evaluate(context)
+            context.execution_quality_result = execution_quality
+            context.execution_quality_score = execution_quality.score
+            decision = self.decision_fusion_engine.evaluate(
+                context,
+                execution_quality,
+                net_pnl_after_costs=cost_by_trade_index.get(trade_index),
+            )
+            context.decision_result = decision
+            context.decision_score = decision.final_score
+            context.decision_status = decision.decision
+            self.adaptive_decision_engine.apply(context, decision, execution_quality)
 
     def _range_mode_fallback_count(self, contexts: list[MarketContext]) -> int:
         return sum(

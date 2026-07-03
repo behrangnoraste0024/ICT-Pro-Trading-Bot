@@ -351,6 +351,7 @@ class StrategyComparisonEngine:
         gross_net_pnl = result.net_pnl if cost_diagnostics is None else cost_diagnostics.gross_net_pnl
         total_cost = 0.0 if cost_diagnostics is None else cost_diagnostics.total_cost
         net_pnl_after_costs = result.net_pnl if cost_diagnostics is None else cost_diagnostics.net_pnl_after_costs
+        decision_score = self._average_decision_score(result)
 
         return StrategyComparisonRow(
             strategy_name=spec.name,
@@ -407,8 +408,19 @@ class StrategyComparisonEngine:
             long_in_bearish_pnl=0.0 if regime_direction is None else regime_direction.long_in_bearish_pnl,
             short_in_bullish_count=0 if regime_direction is None else regime_direction.short_in_bullish_count,
             short_in_bullish_pnl=0.0 if regime_direction is None else regime_direction.short_in_bullish_pnl,
+            decision_score=decision_score,
             elapsed_seconds=elapsed_seconds,
         )
+
+    def _average_decision_score(self, result: RollingBacktestResult) -> float | None:
+        scores = [
+            float(score)
+            for context in result.trade_outcome_contexts
+            if (score := getattr(context, "decision_score", None)) is not None
+        ]
+        if not scores:
+            return None
+        return sum(scores) / len(scores)
 
     def _profit_factor(self, trades) -> float | None:
         closed_pnls = [
