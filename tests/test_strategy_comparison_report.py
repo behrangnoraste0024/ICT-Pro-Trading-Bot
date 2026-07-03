@@ -66,6 +66,7 @@ def test_report_includes_comparison_table() -> None:
     assert "balanced_smc" in output
     assert "Regime | Lookback | Thr | RegimeFB" in output
     assert "GrossPnL | Cost | NetAfterCost" in output
+    assert "DecisionScore" in output
     assert "off" in output
     assert "none" in output
     assert "Elapsed" in output
