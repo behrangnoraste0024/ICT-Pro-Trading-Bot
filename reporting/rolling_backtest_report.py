@@ -93,6 +93,9 @@ def format_rolling_backtest_report(
     trade_outcomes = getattr(result, "trade_outcome_diagnostics", None)
     if trade_outcomes is not None:
         lines.extend(_format_trade_outcome_diagnostics(trade_outcomes, show_trades=show_trades))
+    execution_quality = _format_execution_quality_diagnostics(getattr(result, "trade_outcome_contexts", []), show_trades=show_trades)
+    if execution_quality:
+        lines.extend(execution_quality)
     regime_direction = getattr(result, "regime_direction_diagnostics", None)
     if regime_direction is not None:
         lines.extend(_format_regime_direction_diagnostics(regime_direction))
@@ -202,6 +205,70 @@ def _format_trade_row(trade) -> str:
         f"resolved={trade.direction_mode_resolved_direction} | dir_reason={trade.direction_mode_fallback_reason} | "
         f"dir_quality={trade.direction_quality_applied} | dq_allowed={trade.direction_quality_allowed} | "
         f"dq_blocker={trade.direction_quality_blocker}"
+    )
+
+
+def _format_execution_quality_diagnostics(contexts, show_trades: bool = False) -> list[str]:
+    trades = [context for context in contexts if getattr(context, "paper_trade_status", "NO_PAPER_TRADE") != "NO_PAPER_TRADE"]
+    if not trades:
+        return []
+
+    scores = [
+        float(score)
+        for context in trades
+        if (score := getattr(context, "execution_quality_score", None)) is not None
+    ]
+    decision_scores = [
+        float(score)
+        for context in trades
+        if (score := getattr(context, "decision_score", None)) is not None
+    ]
+    decision_counts: dict[str, int] = {}
+    for context in trades:
+        decision = getattr(context, "decision_status", None)
+        if decision is None:
+            continue
+        decision_counts[decision] = decision_counts.get(decision, 0) + 1
+
+    lines = [
+        "",
+        "===== EXECUTION QUALITY / DECISION =====",
+        f"Total Trades            : {len(trades)}",
+        f"Average Execution Quality: {_format_optional_float(sum(scores) / len(scores) if scores else None)}",
+        f"Average Decision Score  : {_format_optional_float(sum(decision_scores) / len(decision_scores) if decision_scores else None)}",
+        "",
+        "Decision Counts:",
+    ]
+    if decision_counts:
+        for decision in sorted(decision_counts):
+            lines.append(f"{decision:<20}: {decision_counts[decision]}")
+    else:
+        lines.append("None")
+
+    lines.extend(["", "Execution Quality Trade Log:"])
+    if not show_trades:
+        lines.append("Hidden. Use --show-trades to display execution quality trade log rows.")
+        return lines
+
+    for index, context in enumerate(trades, start=1):
+        lines.append(_format_execution_quality_trade_row(index, context))
+    return lines
+
+
+def _format_execution_quality_trade_row(trade_number: int, context) -> str:
+    execution_quality = getattr(context, "execution_quality_result", None)
+    adaptive_signal = getattr(context, "adaptive_signal", None)
+    decision_result = getattr(context, "decision_result", None)
+    execution_score = getattr(context, "execution_quality_score", None)
+    decision_score = getattr(context, "decision_score", None)
+    decision_status = getattr(context, "decision_status", None)
+    return (
+        f"#{trade_number} | {getattr(context, 'paper_trade_direction', 'NONE')} | "
+        f"exec_q={_format_optional_float(execution_score)} | "
+        f"decision={decision_status} | decision_score={_format_optional_float(decision_score)} | "
+        f"adaptive={getattr(adaptive_signal, 'reason', None)} | "
+        f"exec_reason={getattr(execution_quality, 'reasoning', None)} | "
+        f"decision_breakdown={getattr(decision_result, 'breakdown', None)}"
     )
 
 

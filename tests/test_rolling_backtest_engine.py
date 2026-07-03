@@ -910,6 +910,32 @@ def test_result_includes_cost_diagnostics() -> None:
     assert result.net_pnl_after_costs == result.net_pnl
 
 
+def test_result_attaches_execution_quality_and_decision_metadata() -> None:
+    context = _context("PAPER_CLOSED_TP", 10)
+    context.paper_entry_price = 100
+    context.paper_exit_price = 110
+    context.paper_entry_index = 0
+    context.paper_trade_direction = "BULLISH"
+    context.setup_score = 80
+    context.planned_risk_reward = 2.0
+    context.liquidity_sweeps = [object()]
+    context.market_regime = "BULLISH"
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=[context]),
+        min_candles=1,
+        stateful=False,
+    ).run(_candles(1))
+
+    trade_context = result.trade_outcome_contexts[0]
+
+    assert getattr(trade_context, "execution_quality_result", None) is not None
+    assert getattr(trade_context, "decision_result", None) is not None
+    assert trade_context.execution_quality_score is not None
+    assert trade_context.decision_score is not None
+    assert trade_context.decision_status in {"APPROVE", "WARNING", "REJECT"}
+
+
 def test_cost_off_does_not_change_gross_result() -> None:
     context = _context("PAPER_CLOSED_TP", 10)
     context.paper_entry_price = 100

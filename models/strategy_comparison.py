@@ -106,6 +106,7 @@ class StrategyComparisonRow:
     long_in_bearish_pnl: float = 0.0
     short_in_bullish_count: int = 0
     short_in_bullish_pnl: float = 0.0
+    decision_score: float | None = None
     elapsed_seconds: float | None = None
     event_type: str = "STRATEGY_COMPARISON_ROW"
 
