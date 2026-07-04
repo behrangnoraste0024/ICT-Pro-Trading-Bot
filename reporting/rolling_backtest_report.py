@@ -96,6 +96,9 @@ def format_rolling_backtest_report(
     execution_quality = _format_execution_quality_diagnostics(getattr(result, "trade_outcome_contexts", []), show_trades=show_trades)
     if execution_quality:
         lines.extend(execution_quality)
+    decision_filter_simulation = getattr(result, "decision_filter_simulation", None)
+    if decision_filter_simulation is not None:
+        lines.extend(_format_decision_filter_simulation(decision_filter_simulation))
     regime_direction = getattr(result, "regime_direction_diagnostics", None)
     if regime_direction is not None:
         lines.extend(_format_regime_direction_diagnostics(regime_direction))
@@ -269,6 +272,34 @@ def _format_execution_quality_trade_row(trade_number: int, context) -> str:
         f"adaptive={getattr(adaptive_signal, 'reason', None)} | "
         f"exec_reason={getattr(execution_quality, 'reasoning', None)} | "
         f"decision_breakdown={getattr(decision_result, 'breakdown', None)}"
+    )
+
+
+def _format_decision_filter_simulation(simulation) -> list[str]:
+    lines = [
+        "",
+        "===== DECISION FILTER SIMULATION =====",
+        f"Best By Net After Costs : {simulation.best_by_net_after_costs}",
+        f"Best By Drawdown        : {simulation.best_by_drawdown}",
+        "",
+        "Bucket | Trades | W/L | Win% | GrossPnL | Cost | NetAfterCost | AvgDecision | AvgExecQ | MaxDD | PF",
+    ]
+    if not simulation.buckets:
+        lines.append("None")
+        return lines
+    for bucket in simulation.buckets:
+        lines.append(_format_decision_filter_bucket(bucket))
+    return lines
+
+
+def _format_decision_filter_bucket(bucket) -> str:
+    return (
+        f"{bucket.name} | {bucket.total_trades} | {bucket.wins}/{bucket.losses} | "
+        f"{_format_optional_float(bucket.win_rate)} | {_format_optional_float(bucket.gross_net_pnl)} | "
+        f"{_format_optional_float(bucket.total_cost)} | {_format_optional_float(bucket.net_pnl_after_costs)} | "
+        f"{_format_optional_float(bucket.average_decision_score)} | "
+        f"{_format_optional_float(bucket.average_execution_quality)} | "
+        f"{_format_optional_float(bucket.max_drawdown)} | {_format_optional_float(bucket.profit_factor)}"
     )
 
 

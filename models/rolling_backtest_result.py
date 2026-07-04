@@ -8,6 +8,7 @@ from models.sl_tp_outcome_diagnostics import SLTPOutcomeDiagnostics
 from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics
 from models.virtual_exit_diagnostics import VirtualExitDiagnostics
 from models.regime_direction_diagnostics import RegimeDirectionDiagnostics
+from models.decision_filter_simulation import DecisionFilterSimulationResult
 
 
 @dataclass
@@ -67,6 +68,7 @@ class RollingBacktestResult:
     gross_net_pnl: float = 0.0
     net_pnl_after_costs: float = 0.0
     total_cost: float = 0.0
+    decision_filter_simulation: DecisionFilterSimulationResult | None = None
     trade_outcome_contexts: list[Any] = field(default_factory=list)
     event_type: str = "ROLLING_BACKTEST_RESULT"
 
