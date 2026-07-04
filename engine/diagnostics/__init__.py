@@ -1,3 +1,4 @@
+from engine.diagnostics.decision_filter_simulation_engine import DecisionFilterSimulationEngine
 from engine.diagnostics.regime_direction_diagnostics_engine import RegimeDirectionDiagnosticsEngine
 
-__all__ = ["RegimeDirectionDiagnosticsEngine"]
+__all__ = ["DecisionFilterSimulationEngine", "RegimeDirectionDiagnosticsEngine"]
