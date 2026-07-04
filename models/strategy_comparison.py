@@ -33,6 +33,7 @@ class StrategyConfigSpec:
     commission_pct: float = 0.0
     slippage_pct: float = 0.0
     spread_pct: float = 0.0
+    decision_filter_mode: str = "off"
     event_type: str = "STRATEGY_CONFIG_SPEC"
 
     def __str__(self) -> str:
@@ -46,6 +47,8 @@ class StrategyConfigSpec:
             )
         if self.direction_quality_mode != "off":
             value = f"{value}|dq={self.direction_quality_mode}|long_preset={self.strict_long_preset}"
+        if self.decision_filter_mode != "off":
+            value = f"{value}|decision={self.decision_filter_mode}"
         return value
 
 
@@ -67,6 +70,11 @@ class StrategyComparisonRow:
     commission_pct: float = 0.0
     slippage_pct: float = 0.0
     spread_pct: float = 0.0
+    decision_filter_mode: str = "off"
+    decision_filtered: bool = False
+    decision_filter_bucket: str | None = None
+    average_execution_quality: float | None = None
+    average_decision_score: float | None = None
     direction_quality_mode: str = "off"
     strict_long_preset: str = "none"
     total_windows: int = 0

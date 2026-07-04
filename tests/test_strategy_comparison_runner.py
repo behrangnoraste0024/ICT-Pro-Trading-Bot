@@ -58,7 +58,7 @@ def test_direction_modes_recent_50_fixed_1_5r_strategy_set_works(capsys) -> None
     assert "dir=all" in captured.out
     assert "dir=long_only" in captured.out
     assert "dir=short_only" in captured.out
-    assert "Rank | Strategy | Profile | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB" in captured.out
+    assert "Rank | Strategy | Profile | DecisionFilter | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB" in captured.out
 
 
 def test_trend_direction_recent_50_fixed_1_5r_strategy_set_works(capsys) -> None:
@@ -119,7 +119,7 @@ def test_long_strict_recent_50_fixed_1_5r_strategy_set_works(capsys) -> None:
     assert "Strategies   : 10" in captured.out
     assert "dq=long_strict|long_preset=regime_known" in captured.out
     assert "dq=long_strict|long_preset=regime_bullish_displacement_score100" in captured.out
-    assert "Rank | Strategy | Profile | DR Mode | Exit | MinRR | Dir | DQ | LongPreset" in captured.out
+    assert "Rank | Strategy | Profile | DecisionFilter | DR Mode | Exit | MinRR | Dir | DQ | LongPreset" in captured.out
 
 
 def test_recommended_profiles_strategy_set_works(capsys) -> None:
@@ -142,7 +142,7 @@ def test_recommended_profiles_strategy_set_works(capsys) -> None:
     assert "profile=bearish_smc" in captured.out
     assert "profile=research_baseline" in captured.out
     assert "profile=default" in captured.out
-    assert "Rank | Strategy | Profile | DR Mode" in captured.out
+    assert "Rank | Strategy | Profile | DecisionFilter | DR Mode" in captured.out
 
 
 def test_recommended_profiles_with_costs_strategy_set_works(capsys) -> None:
@@ -166,6 +166,29 @@ def test_recommended_profiles_with_costs_strategy_set_works(capsys) -> None:
     assert "Sort By      : net_pnl_after_costs" in captured.out
     assert "profile=balanced_smc|cost=percent" in captured.out
     assert "Cost | NetAfterCost" in captured.out
+
+
+def test_decision_gate_profiles_with_costs_strategy_set_works(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "decision_gate_profiles_with_costs",
+            "--sort-by",
+            "net_pnl_after_costs",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategies   : 10" in captured.out
+    assert "profile=balanced_smc|cost=percent|decision=approve_only" in captured.out
+    assert "profile=bearish_smc|cost=percent|decision=warning_only" in captured.out
+    assert "DecisionFilter" in captured.out
 
 
 def test_current_external_only_strategy_set_works(capsys) -> None:
@@ -420,6 +443,11 @@ def test_output_json_writes_valid_json(tmp_path) -> None:
     assert "gross_net_pnl" in data["strategies"][0]
     assert "total_cost" in data["strategies"][0]
     assert "net_pnl_after_costs" in data["strategies"][0]
+    assert "decision_filter_mode" in data["strategies"][0]
+    assert "decision_filtered" in data["strategies"][0]
+    assert "decision_filter_bucket" in data["strategies"][0]
+    assert "average_execution_quality" in data["strategies"][0]
+    assert "average_decision_score" in data["strategies"][0]
 
 
 def test_output_csv_writes_headers(tmp_path) -> None:
@@ -461,6 +489,11 @@ def test_output_csv_writes_headers(tmp_path) -> None:
     assert "gross_net_pnl" in text.splitlines()[0]
     assert "total_cost" in text.splitlines()[0]
     assert "net_pnl_after_costs" in text.splitlines()[0]
+    assert "decision_filter_mode" in text.splitlines()[0]
+    assert "decision_filtered" in text.splitlines()[0]
+    assert "decision_filter_bucket" in text.splitlines()[0]
+    assert "average_execution_quality" in text.splitlines()[0]
+    assert "average_decision_score" in text.splitlines()[0]
 
 
 def test_invalid_strategy_set_rejected_by_argparse() -> None:

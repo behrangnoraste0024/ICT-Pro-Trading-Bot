@@ -12,6 +12,8 @@ def _report() -> StrategyComparisonReport:
             StrategyComparisonRow(
                 "recent_50|fixed_1_5r|min_rr=1.5|dir=auto_trend|trend_fallback=block",
                 strategy_profile="balanced_smc",
+                decision_filter_mode="approve_only",
+                average_execution_quality=0.876,
                 direction_mode="auto_trend",
                 auto_trend_fallback="block",
                 regime_lookback=50,
@@ -62,11 +64,14 @@ def test_report_includes_comparison_table() -> None:
     output = format_strategy_comparison_report(_report())
 
     assert "Comparison Table:" in output
-    assert "Rank | Strategy | Profile | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB" in output
+    assert "Rank | Strategy | Profile | DecisionFilter | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB" in output
     assert "balanced_smc" in output
+    assert "DecisionFilter" in output
+    assert "approve_only" in output
     assert "Regime | Lookback | Thr | RegimeFB" in output
     assert "GrossPnL | Cost | NetAfterCost" in output
     assert "DecisionScore" in output
+    assert "ExecQ" in output
     assert "off" in output
     assert "none" in output
     assert "Elapsed" in output
@@ -91,6 +96,7 @@ def test_report_rounds_floats_to_two_decimals() -> None:
     assert "596.44" in output
     assert "1.23" in output
     assert "12.35" in output
+    assert "0.88" in output
 
 
 def test_report_displays_long_and_short_pnl() -> None:
