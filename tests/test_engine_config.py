@@ -23,6 +23,7 @@ def test_engine_config_defaults() -> None:
     assert config.commission_pct == 0.0
     assert config.slippage_pct == 0.0
     assert config.spread_pct == 0.0
+    assert config.decision_filter_mode == "off"
 
 
 @pytest.mark.parametrize("exit_mode", ["original", "fixed_1r", "fixed_1_5r", "fixed_2r", "fixed_3r"])
@@ -160,3 +161,15 @@ def test_engine_config_rejects_invalid_cost_model() -> None:
 def test_engine_config_rejects_negative_cost_pct(field_name: str) -> None:
     with pytest.raises(ValueError, match=f"Unsupported {field_name}"):
         EngineConfig(**{field_name: -0.1})
+
+
+@pytest.mark.parametrize("decision_filter_mode", ["off", "approve_only", "warning_only", "reject_only", "approve_or_warning"])
+def test_engine_config_accepts_valid_decision_filter_modes(decision_filter_mode: str) -> None:
+    config = EngineConfig(decision_filter_mode=decision_filter_mode)
+
+    assert config.decision_filter_mode == decision_filter_mode
+
+
+def test_engine_config_rejects_invalid_decision_filter_mode() -> None:
+    with pytest.raises(ValueError, match="Unsupported decision filter mode"):
+        EngineConfig(decision_filter_mode="approve_sometimes")

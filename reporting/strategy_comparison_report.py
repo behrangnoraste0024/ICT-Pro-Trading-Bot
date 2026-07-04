@@ -28,7 +28,7 @@ def format_strategy_comparison_report(
         f"Net After Costs: {report.best_by_net_pnl_after_costs}",
         "",
         "Comparison Table:",
-        "Rank | Strategy | Profile | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB | Regime | Lookback | Thr | RegimeFB | Trades | W/L | Win% | NetPnL | AvgPnL | MaxDD | PF | GrossPnL | Cost | NetAfterCost | DecisionScore | LongPnL | ShortPnL | Dups | Elapsed",
+        "Rank | Strategy | Profile | DecisionFilter | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB | Regime | Lookback | Thr | RegimeFB | Trades | W/L | Win% | NetPnL | AvgPnL | MaxDD | PF | GrossPnL | Cost | NetAfterCost | DecisionScore | ExecQ | LongPnL | ShortPnL | Dups | Elapsed",
     ]
     lines.extend(_format_row(row) for row in display_rows)
     if len(display_rows) < len(ranked_rows):
@@ -55,7 +55,8 @@ def _ranked(rows: list[StrategyComparisonRow]) -> list[StrategyComparisonRow]:
 
 def _format_row(row: StrategyComparisonRow) -> str:
     return (
-        f"{row.rank} | {row.strategy_name} | {row.strategy_profile} | {row.dealing_range_mode} | {row.exit_mode} | "
+        f"{row.rank} | {row.strategy_name} | {row.strategy_profile} | {row.decision_filter_mode} | "
+        f"{row.dealing_range_mode} | {row.exit_mode} | "
         f"{_fmt(row.min_risk_reward)} | {row.direction_mode} | {row.direction_quality_mode} | "
         f"{row.strict_long_preset} | {row.auto_trend_fallback} | "
         f"{row.regime_mode} | {row.regime_lookback} | {_fmt(row.regime_threshold_pct)} | {row.regime_fallback} | "
@@ -63,7 +64,7 @@ def _format_row(row: StrategyComparisonRow) -> str:
         f"{_fmt(row.win_rate)} | {_fmt(row.net_pnl)} | {_fmt(row.average_pnl)} | "
         f"{_fmt(row.max_drawdown)} | {_fmt(row.profit_factor)} | "
         f"{_fmt(row.gross_net_pnl)} | {_fmt(row.total_cost)} | {_fmt(row.net_pnl_after_costs)} | "
-        f"{_fmt(row.decision_score)} | "
+        f"{_fmt(row.decision_score)} | {_fmt(row.average_execution_quality)} | "
         f"{_fmt(row.long_pnl)} | "
         f"{_fmt(row.short_pnl)} | {row.duplicate_signals_skipped} | {_fmt(row.elapsed_seconds)}"
     )

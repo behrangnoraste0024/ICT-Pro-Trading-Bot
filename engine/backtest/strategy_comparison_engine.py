@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 from data.historical_data_utils import load_candles_json
 from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngine
+from models.decision_filter_simulation import DecisionFilterBucket
 from models.engine_config import EngineConfig
 from models.rolling_backtest_result import RollingBacktestResult
 from models.strategy_comparison import StrategyComparisonReport, StrategyComparisonRow, StrategyConfigSpec
@@ -111,6 +112,27 @@ def build_recommended_profile_with_cost_specs() -> list[StrategyConfigSpec]:
     ]
 
 
+def build_decision_gate_profile_with_cost_specs() -> list[StrategyConfigSpec]:
+    realistic_cost = {
+        "cost_model": "percent",
+        "commission_pct": 0.0004,
+        "slippage_pct": 0.0002,
+        "spread_pct": 0.0001,
+    }
+    return [
+        _profile_spec("balanced_smc", decision_filter_mode="off", **realistic_cost),
+        _profile_spec("balanced_smc", decision_filter_mode="approve_only", **realistic_cost),
+        _profile_spec("balanced_smc", decision_filter_mode="approve_or_warning", **realistic_cost),
+        _profile_spec("balanced_smc", decision_filter_mode="warning_only", **realistic_cost),
+        _profile_spec("bearish_smc", decision_filter_mode="off", **realistic_cost),
+        _profile_spec("bearish_smc", decision_filter_mode="approve_only", **realistic_cost),
+        _profile_spec("bearish_smc", decision_filter_mode="approve_or_warning", **realistic_cost),
+        _profile_spec("bearish_smc", decision_filter_mode="warning_only", **realistic_cost),
+        _profile_spec("research_baseline", decision_filter_mode="off", **realistic_cost),
+        _profile_spec("research_baseline", decision_filter_mode="approve_only", **realistic_cost),
+    ]
+
+
 def build_current_external_only_specs() -> list[StrategyConfigSpec]:
     return [
         _spec("current_external", "original", 2.0),
@@ -167,11 +189,13 @@ def _profile_spec(
     commission_pct: float = 0.0,
     slippage_pct: float = 0.0,
     spread_pct: float = 0.0,
+    decision_filter_mode: str = "off",
 ) -> StrategyConfigSpec:
     config = apply_strategy_profile(EngineConfig(), strategy_profile)
     cost_suffix = "" if cost_model == "off" else "|cost=percent"
+    decision_suffix = "" if decision_filter_mode == "off" else f"|decision={decision_filter_mode}"
     return StrategyConfigSpec(
-        f"profile={strategy_profile}{cost_suffix}",
+        f"profile={strategy_profile}{cost_suffix}{decision_suffix}",
         config.dealing_range_mode,
         config.exit_mode,
         config.min_risk_reward,
@@ -198,6 +222,7 @@ def _profile_spec(
         commission_pct,
         slippage_pct,
         spread_pct,
+        decision_filter_mode,
     )
 
 
@@ -292,6 +317,7 @@ class StrategyComparisonEngine:
                     commission_pct=spec.commission_pct,
                     slippage_pct=spec.slippage_pct,
                     spread_pct=spec.spread_pct,
+                    decision_filter_mode=spec.decision_filter_mode,
                 ),
             ).run(candles)
             elapsed_seconds = time.perf_counter() - started_at
@@ -352,6 +378,38 @@ class StrategyComparisonEngine:
         total_cost = 0.0 if cost_diagnostics is None else cost_diagnostics.total_cost
         net_pnl_after_costs = result.net_pnl if cost_diagnostics is None else cost_diagnostics.net_pnl_after_costs
         decision_score = self._average_decision_score(result)
+        average_execution_quality = self._average_execution_quality(result)
+        bucket = self._decision_filter_bucket(result, spec.decision_filter_mode)
+        decision_filtered = bucket is not None
+        decision_filter_bucket = None if bucket is None else bucket.name
+        if bucket is not None:
+            total_trades = bucket.total_trades
+            closed_trades = bucket.total_trades
+            open_trades = 0
+            wins = bucket.wins
+            losses = bucket.losses
+            win_rate = bucket.win_rate
+            net_pnl = bucket.gross_net_pnl
+            gross_net_pnl = bucket.gross_net_pnl
+            total_cost = bucket.total_cost
+            net_pnl_after_costs = bucket.net_pnl_after_costs
+            average_pnl = bucket.average_pnl
+            max_drawdown = bucket.max_drawdown
+            profit_factor = bucket.profit_factor
+            average_execution_quality = bucket.average_execution_quality
+            decision_score = bucket.average_decision_score
+            average_decision_score = bucket.average_decision_score
+        else:
+            total_trades = result.total_paper_trades
+            closed_trades = result.closed_trades
+            open_trades = result.open_trades
+            wins = result.wins
+            losses = result.losses
+            win_rate = result.win_rate
+            net_pnl = result.net_pnl
+            average_pnl = result.average_pnl
+            max_drawdown = result.max_drawdown
+            average_decision_score = decision_score
 
         return StrategyComparisonRow(
             strategy_name=spec.name,
@@ -369,6 +427,11 @@ class StrategyComparisonEngine:
             commission_pct=spec.commission_pct,
             slippage_pct=spec.slippage_pct,
             spread_pct=spec.spread_pct,
+            decision_filter_mode=spec.decision_filter_mode,
+            decision_filtered=decision_filtered,
+            decision_filter_bucket=decision_filter_bucket,
+            average_execution_quality=average_execution_quality,
+            average_decision_score=average_decision_score,
             direction_quality_mode=spec.direction_quality_mode,
             strict_long_preset=spec.strict_long_preset,
             total_windows=result.total_windows,
@@ -376,18 +439,18 @@ class StrategyComparisonEngine:
             failed_windows=result.failed_windows,
             opened_trades=result.opened_trades,
             duplicate_signals_skipped=result.duplicate_signals_skipped,
-            total_trades=result.total_paper_trades,
-            closed_trades=result.closed_trades,
-            open_trades=result.open_trades,
-            wins=result.wins,
-            losses=result.losses,
-            win_rate=result.win_rate,
-            net_pnl=result.net_pnl,
+            total_trades=total_trades,
+            closed_trades=closed_trades,
+            open_trades=open_trades,
+            wins=wins,
+            losses=losses,
+            win_rate=win_rate,
+            net_pnl=net_pnl,
             gross_net_pnl=gross_net_pnl,
             total_cost=total_cost,
             net_pnl_after_costs=net_pnl_after_costs,
-            average_pnl=result.average_pnl,
-            max_drawdown=result.max_drawdown,
+            average_pnl=average_pnl,
+            max_drawdown=max_drawdown,
             average_rr=None if trade_outcomes is None else trade_outcomes.average_rr,
             average_setup_score=None if trade_outcomes is None else trade_outcomes.average_setup_score,
             long_count=direction_counts.get("LONG", 0),
@@ -412,11 +475,36 @@ class StrategyComparisonEngine:
             elapsed_seconds=elapsed_seconds,
         )
 
+    def _decision_filter_bucket(
+        self,
+        result: RollingBacktestResult,
+        decision_filter_mode: str,
+    ) -> DecisionFilterBucket | None:
+        if decision_filter_mode == "off":
+            return None
+        simulation = result.decision_filter_simulation
+        if simulation is None:
+            return None
+        for bucket in simulation.buckets:
+            if bucket.name == decision_filter_mode:
+                return bucket
+        return None
+
     def _average_decision_score(self, result: RollingBacktestResult) -> float | None:
         scores = [
             float(score)
             for context in result.trade_outcome_contexts
             if (score := getattr(context, "decision_score", None)) is not None
+        ]
+        if not scores:
+            return None
+        return sum(scores) / len(scores)
+
+    def _average_execution_quality(self, result: RollingBacktestResult) -> float | None:
+        scores = [
+            float(score)
+            for context in result.trade_outcome_contexts
+            if (score := getattr(context, "execution_quality_score", None)) is not None
         ]
         if not scores:
             return None

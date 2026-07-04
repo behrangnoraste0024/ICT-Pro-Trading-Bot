@@ -14,6 +14,7 @@ class EngineConfig:
     VALID_DIRECTION_QUALITY_MODES = {"off", "long_strict", "short_strict", "both_strict"}
     VALID_STRATEGY_PROFILES = {"default", "balanced_smc", "bearish_smc", "research_baseline"}
     VALID_COST_MODELS = {"off", "percent"}
+    VALID_DECISION_FILTER_MODES = {"off", "approve_only", "warning_only", "reject_only", "approve_or_warning"}
 
     strategy_profile: str = "default"
     dealing_range_mode: str = "current_external"
@@ -40,6 +41,7 @@ class EngineConfig:
     commission_pct: float = 0.0
     slippage_pct: float = 0.0
     spread_pct: float = 0.0
+    decision_filter_mode: str = "off"
 
     def __post_init__(self) -> None:
         if self.strategy_profile not in self.VALID_STRATEGY_PROFILES:
@@ -74,3 +76,5 @@ class EngineConfig:
             value = getattr(self, field_name)
             if value < 0:
                 raise ValueError(f"Unsupported {field_name}: {value}")
+        if self.decision_filter_mode not in self.VALID_DECISION_FILTER_MODES:
+            raise ValueError(f"Unsupported decision filter mode: {self.decision_filter_mode}")

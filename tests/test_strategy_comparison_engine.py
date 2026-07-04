@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from models.cost_diagnostics import CostDiagnostics
+from models.decision_filter_simulation import DecisionFilterBucket, DecisionFilterSimulationResult
 from models.entry_followthrough_diagnostics import EntryFollowthroughDiagnostics
 from models.rolling_backtest_result import RollingBacktestResult
 from models.regime_direction_diagnostics import RegimeDirectionDiagnostics
@@ -12,6 +13,7 @@ from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics, TradeOutco
 import engine.backtest.strategy_comparison_engine as strategy_module
 from engine.backtest.strategy_comparison_engine import (
     StrategyComparisonEngine,
+    build_decision_gate_profile_with_cost_specs,
     build_direction_modes_recent_50_fixed_1_5r_specs,
     build_default_strategy_specs,
     build_exit_modes_recent_50_specs,
@@ -87,6 +89,46 @@ def _result_with_trades() -> RollingBacktestResult:
     return result
 
 
+def _bucket(
+    name: str,
+    total_trades: int,
+    wins: int,
+    losses: int,
+    gross_net_pnl: float,
+    net_pnl_after_costs: float,
+) -> DecisionFilterBucket:
+    return DecisionFilterBucket(
+        name=name,
+        decision_values=[name.upper()],
+        total_trades=total_trades,
+        wins=wins,
+        losses=losses,
+        win_rate=round((wins / total_trades) * 100, 2) if total_trades else 0.0,
+        gross_net_pnl=gross_net_pnl,
+        total_cost=gross_net_pnl - net_pnl_after_costs,
+        net_pnl_after_costs=net_pnl_after_costs,
+        average_pnl=gross_net_pnl / total_trades if total_trades else 0.0,
+        average_net_pnl_after_costs=net_pnl_after_costs / total_trades if total_trades else 0.0,
+        max_drawdown=12.5,
+        profit_factor=1.8,
+        average_execution_quality=0.72,
+        average_decision_score=0.81,
+    )
+
+
+def _result_with_decision_filter_buckets() -> RollingBacktestResult:
+    result = _result_with_trades()
+    result.decision_filter_simulation = DecisionFilterSimulationResult(
+        buckets=[
+            _bucket("all_trades", 3, 2, 1, 150, 132.5),
+            _bucket("approve_only", 1, 1, 0, 90, 85),
+            _bucket("warning_only", 1, 0, 1, -20, -22),
+            _bucket("approve_or_warning", 2, 1, 1, 70, 63),
+        ]
+    )
+    return result
+
+
 def test_strategy_config_spec_string_contains_modes() -> None:
     spec = StrategyConfigSpec("recent", "recent_50", "fixed_1_5r", 1.5)
 
@@ -133,6 +175,18 @@ def test_strategy_config_spec_string_includes_direction_quality_fields() -> None
         "recent_50|fixed_1_5r|min_rr=1.5|dir=all|"
         "dq=long_strict|long_preset=regime_known_displacement"
     )
+
+
+def test_strategy_config_spec_string_includes_decision_filter_when_active() -> None:
+    spec = StrategyConfigSpec(
+        "recent",
+        "recent_50",
+        "fixed_1_5r",
+        1.5,
+        decision_filter_mode="approve_only",
+    )
+
+    assert str(spec) == "recent_50|fixed_1_5r|min_rr=1.5|dir=all|decision=approve_only"
 
 
 def test_strategy_comparison_row_string_contains_name_and_pnl() -> None:
@@ -229,6 +283,84 @@ def test_row_from_result_populates_cost_fields() -> None:
     assert row.gross_net_pnl == 150
     assert row.total_cost == 17.5
     assert row.net_pnl_after_costs == 132.5
+
+
+def test_decision_filter_off_preserves_unfiltered_strategy_metrics() -> None:
+    result = _result_with_decision_filter_buckets()
+
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec("spec", "recent_50", "fixed_1_5r", 1.5, decision_filter_mode="off"),
+        result,
+    )
+
+    assert row.decision_filter_mode == "off"
+    assert row.decision_filtered is False
+    assert row.decision_filter_bucket is None
+    assert row.total_trades == result.total_paper_trades
+    assert row.wins == result.wins
+    assert row.losses == result.losses
+    assert row.net_pnl == result.net_pnl
+
+
+def test_approve_only_decision_filter_uses_approve_bucket_metrics() -> None:
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec("spec", "recent_50", "fixed_1_5r", 1.5, decision_filter_mode="approve_only"),
+        _result_with_decision_filter_buckets(),
+    )
+
+    assert row.decision_filtered is True
+    assert row.decision_filter_bucket == "approve_only"
+    assert row.total_trades == 1
+    assert row.wins == 1
+    assert row.losses == 0
+    assert row.net_pnl == 90
+    assert row.gross_net_pnl == 90
+    assert row.total_cost == 5
+    assert row.net_pnl_after_costs == 85
+    assert row.average_execution_quality == 0.72
+    assert row.average_decision_score == 0.81
+    assert row.decision_score == 0.81
+
+
+def test_warning_only_decision_filter_uses_warning_bucket_metrics() -> None:
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec("spec", "recent_50", "fixed_1_5r", 1.5, decision_filter_mode="warning_only"),
+        _result_with_decision_filter_buckets(),
+    )
+
+    assert row.decision_filter_bucket == "warning_only"
+    assert row.total_trades == 1
+    assert row.wins == 0
+    assert row.losses == 1
+    assert row.net_pnl_after_costs == -22
+
+
+def test_approve_or_warning_decision_filter_uses_combined_bucket_metrics() -> None:
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec("spec", "recent_50", "fixed_1_5r", 1.5, decision_filter_mode="approve_or_warning"),
+        _result_with_decision_filter_buckets(),
+    )
+
+    assert row.decision_filter_bucket == "approve_or_warning"
+    assert row.total_trades == 2
+    assert row.wins == 1
+    assert row.losses == 1
+    assert row.net_pnl_after_costs == 63
+
+
+def test_missing_decision_filter_simulation_falls_back_to_unfiltered_metrics() -> None:
+    result = _result_with_trades()
+
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec("spec", "recent_50", "fixed_1_5r", 1.5, decision_filter_mode="approve_only"),
+        result,
+    )
+
+    assert row.decision_filter_mode == "approve_only"
+    assert row.decision_filtered is False
+    assert row.decision_filter_bucket is None
+    assert row.total_trades == result.total_paper_trades
+    assert row.net_pnl == result.net_pnl
 
 
 def test_profit_factor_is_none_without_losses() -> None:
@@ -481,6 +613,28 @@ def test_recommended_profile_with_cost_specs_exist() -> None:
     assert specs[1].spread_pct == 0.0001
 
 
+def test_decision_gate_profile_with_cost_specs_exist() -> None:
+    specs = build_decision_gate_profile_with_cost_specs()
+
+    assert len(specs) == 10
+    assert [spec.decision_filter_mode for spec in specs] == [
+        "off",
+        "approve_only",
+        "approve_or_warning",
+        "warning_only",
+        "off",
+        "approve_only",
+        "approve_or_warning",
+        "warning_only",
+        "off",
+        "approve_only",
+    ]
+    assert specs[1].name == "profile=balanced_smc|cost=percent|decision=approve_only"
+    assert specs[7].strategy_profile == "bearish_smc"
+    assert all(spec.cost_model == "percent" for spec in specs)
+    assert all(spec.commission_pct == 0.0004 for spec in specs)
+
+
 def test_direction_quality_preset_config_expands_long_strict_rules() -> None:
     config = direction_quality_preset_config("regime_known_displacement_score100")
 
@@ -649,3 +803,45 @@ def test_run_comparison_passes_strategy_profile_config_to_engine(monkeypatch) ->
     assert captured_configs[0].strategy_profile == "balanced_smc"
     assert captured_configs[0].dealing_range_mode == "recent_50"
     assert captured_configs[0].direction_quality_mode == "long_strict"
+
+
+def test_run_comparison_passes_decision_filter_mode_to_engine(monkeypatch) -> None:
+    captured_configs = []
+
+    class FakeRollingBacktestEngine:
+        def __init__(self, *args, config, **kwargs):
+            captured_configs.append(config)
+
+        def run(self, candles):
+            return RollingBacktestResult(
+                total_windows=1,
+                processed_windows=1,
+                skipped_windows=0,
+                failed_windows=0,
+                min_candles=1,
+                total_paper_trades=0,
+                closed_trades=0,
+                open_trades=0,
+                wins=0,
+                losses=0,
+                win_rate=0,
+                net_pnl=0,
+                average_pnl=0,
+                max_drawdown=0,
+                ignored_contexts=1,
+            )
+
+    monkeypatch.setattr(strategy_module, "RollingBacktestEngine", FakeRollingBacktestEngine)
+    spec = StrategyConfigSpec(
+        "profile=balanced_smc|cost=percent|decision=approve_only",
+        "recent_50",
+        "fixed_1_5r",
+        1.5,
+        strategy_profile="balanced_smc",
+        cost_model="percent",
+        decision_filter_mode="approve_only",
+    )
+
+    StrategyComparisonEngine().run_comparison(FIXTURE_PATH, [spec], min_candles=50)
+
+    assert captured_configs[0].decision_filter_mode == "approve_only"
