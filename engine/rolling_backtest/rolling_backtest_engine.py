@@ -14,6 +14,7 @@ from engine.backtest.trade_outcome_diagnostics_engine import TradeOutcomeDiagnos
 from engine.backtest.virtual_exit_diagnostics_engine import VirtualExitDiagnosticsEngine
 from engine.decision.adaptive_decision_engine import AdaptiveDecisionEngine
 from engine.decision.decision_fusion_engine import DecisionFusionEngine
+from engine.diagnostics.decision_filter_simulation_engine import DecisionFilterSimulationEngine
 from engine.diagnostics.regime_direction_diagnostics_engine import RegimeDirectionDiagnosticsEngine
 from engine.execution_quality.execution_quality_engine import ExecutionQualityEngine
 from engine.ict_engine import ICTEngine
@@ -159,6 +160,7 @@ class RollingBacktestEngine:
         self.execution_quality_engine = ExecutionQualityEngine()
         self.decision_fusion_engine = DecisionFusionEngine()
         self.adaptive_decision_engine = AdaptiveDecisionEngine()
+        self.decision_filter_simulation_engine = DecisionFilterSimulationEngine()
         self.trade_state_manager = TradeStateManager()
 
     def run(self, candles: pd.DataFrame) -> RollingBacktestResult:
@@ -428,6 +430,10 @@ class RollingBacktestEngine:
         )
         cost_diagnostics = self.cost_diagnostics_engine.summarize_contexts(contexts, self.config)
         self._attach_decision_diagnostics(contexts, cost_diagnostics)
+        decision_filter_simulation = self.decision_filter_simulation_engine.summarize_contexts(
+            contexts,
+            cost_diagnostics,
+        )
         return RollingBacktestResult(
             total_windows=total_windows,
             processed_windows=processed_windows,
@@ -483,6 +489,7 @@ class RollingBacktestEngine:
             gross_net_pnl=summary.net_pnl,
             net_pnl_after_costs=cost_diagnostics.net_pnl_after_costs,
             total_cost=cost_diagnostics.total_cost,
+            decision_filter_simulation=decision_filter_simulation,
             trade_outcome_contexts=contexts,
         )
 
