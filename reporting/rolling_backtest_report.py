@@ -102,6 +102,9 @@ def format_rolling_backtest_report(
     decision_threshold_calibration = getattr(result, "decision_threshold_calibration", None)
     if decision_threshold_calibration is not None:
         lines.extend(_format_decision_threshold_calibration(decision_threshold_calibration))
+    decision_threshold_robustness = getattr(result, "decision_threshold_robustness", None)
+    if decision_threshold_robustness is not None:
+        lines.extend(_format_decision_threshold_robustness(decision_threshold_robustness))
     regime_direction = getattr(result, "regime_direction_diagnostics", None)
     if regime_direction is not None:
         lines.extend(_format_regime_direction_diagnostics(regime_direction))
@@ -332,6 +335,64 @@ def _format_decision_threshold_bucket(bucket) -> str:
         f"{_format_optional_float(bucket.average_decision_score)} | "
         f"{_format_optional_float(bucket.average_execution_quality)} | "
         f"{_format_optional_float(bucket.max_drawdown)} | {_format_optional_float(bucket.profit_factor)}"
+    )
+
+
+def _format_decision_threshold_robustness(robustness) -> list[str]:
+    lines = [
+        "",
+        "===== DECISION THRESHOLD ROBUSTNESS =====",
+        f"Segments              : {robustness.segment_count}",
+        f"Best Overall Threshold: {_format_optional_float(robustness.best_overall_threshold)}",
+        f"Robust Threshold      : {_format_optional_float(robustness.robust_threshold)}",
+        "",
+        "Threshold Stability:",
+        "Threshold | SegmentsWithTrades | ProfitableSegments | LosingSegments | TotalTrades | W/L | Win% | TotalNetAfterCost | WorstSegmentNet | MaxDD",
+    ]
+    if not robustness.threshold_stability:
+        lines.append("None")
+    else:
+        for threshold in sorted(robustness.threshold_stability):
+            lines.append(_format_decision_threshold_stability_row(threshold, robustness.threshold_stability[threshold]))
+    lines.extend(
+        [
+            "",
+            "Segment Details:",
+            "Segment | Threshold | Trades | W/L | Win% | NetAfterCost | MaxDD | AvgDecision | AvgExecQ",
+        ]
+    )
+    segment_rows = [
+        bucket
+        for summary in robustness.segment_summaries
+        for bucket in summary.buckets
+    ]
+    if not segment_rows:
+        lines.append("None")
+    else:
+        for bucket in segment_rows:
+            lines.append(_format_decision_threshold_segment_bucket(bucket))
+    return lines
+
+
+def _format_decision_threshold_stability_row(threshold: float, values: dict) -> str:
+    return (
+        f"{_format_optional_float(threshold)} | {values.get('segments_with_trades', 0)} | "
+        f"{values.get('profitable_segments', 0)} | {values.get('losing_segments', 0)} | "
+        f"{values.get('total_trades', 0)} | {values.get('total_wins', 0)}/{values.get('total_losses', 0)} | "
+        f"{_format_optional_float(values.get('aggregate_win_rate'))} | "
+        f"{_format_optional_float(values.get('total_net_pnl_after_costs'))} | "
+        f"{_format_optional_float(values.get('worst_segment_net_pnl_after_costs'))} | "
+        f"{_format_optional_float(values.get('max_drawdown'))}"
+    )
+
+
+def _format_decision_threshold_segment_bucket(bucket) -> str:
+    return (
+        f"{bucket.segment_name} | {_format_optional_float(bucket.threshold)} | {bucket.total_trades} | "
+        f"{bucket.wins}/{bucket.losses} | {_format_optional_float(bucket.win_rate)} | "
+        f"{_format_optional_float(bucket.net_pnl_after_costs)} | {_format_optional_float(bucket.max_drawdown)} | "
+        f"{_format_optional_float(bucket.average_decision_score)} | "
+        f"{_format_optional_float(bucket.average_execution_quality)}"
     )
 
 

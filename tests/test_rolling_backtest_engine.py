@@ -979,6 +979,28 @@ def test_result_includes_decision_threshold_calibration() -> None:
     assert result.decision_threshold_calibration.diagnostics["source_trades"] == 1
 
 
+def test_result_includes_decision_threshold_robustness() -> None:
+    context = _context("PAPER_CLOSED_TP", 10)
+    context.paper_entry_price = 100
+    context.paper_exit_price = 110
+    context.paper_entry_index = 0
+    context.paper_trade_direction = "BULLISH"
+    context.setup_score = 80
+    context.planned_risk_reward = 2.0
+    context.market_regime = "BULLISH"
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=[context]),
+        min_candles=1,
+        stateful=False,
+    ).run(_candles(1))
+
+    assert result.decision_threshold_robustness is not None
+    assert result.decision_threshold_robustness.segment_count == 4
+    assert len(result.decision_threshold_robustness.segment_summaries) == 4
+    assert result.decision_threshold_robustness.diagnostics["source_trades"] == 1
+
+
 def test_cost_off_does_not_change_gross_result() -> None:
     context = _context("PAPER_CLOSED_TP", 10)
     context.paper_entry_price = 100
