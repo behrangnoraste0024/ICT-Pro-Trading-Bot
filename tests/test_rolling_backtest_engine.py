@@ -958,6 +958,27 @@ def test_result_includes_decision_filter_simulation() -> None:
     assert all_trades.net_pnl_after_costs == 10
 
 
+def test_result_includes_decision_threshold_calibration() -> None:
+    context = _context("PAPER_CLOSED_TP", 10)
+    context.paper_entry_price = 100
+    context.paper_exit_price = 110
+    context.paper_entry_index = 0
+    context.paper_trade_direction = "BULLISH"
+    context.setup_score = 80
+    context.planned_risk_reward = 2.0
+    context.market_regime = "BULLISH"
+
+    result = RollingBacktestEngine(
+        ict_engine=RecordingICTEngine(contexts=[context]),
+        min_candles=1,
+        stateful=False,
+    ).run(_candles(1))
+
+    assert result.decision_threshold_calibration is not None
+    assert [bucket.threshold for bucket in result.decision_threshold_calibration.thresholds] == [0.60, 0.65, 0.70, 0.75, 0.80, 0.85]
+    assert result.decision_threshold_calibration.diagnostics["source_trades"] == 1
+
+
 def test_cost_off_does_not_change_gross_result() -> None:
     context = _context("PAPER_CLOSED_TP", 10)
     context.paper_entry_price = 100

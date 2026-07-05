@@ -28,7 +28,7 @@ def format_strategy_comparison_report(
         f"Net After Costs: {report.best_by_net_pnl_after_costs}",
         "",
         "Comparison Table:",
-        "Rank | Strategy | Profile | DecisionFilter | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB | Regime | Lookback | Thr | RegimeFB | Trades | W/L | Win% | NetPnL | AvgPnL | MaxDD | PF | GrossPnL | Cost | NetAfterCost | DecisionScore | ExecQ | LongPnL | ShortPnL | Dups | Elapsed",
+        "Rank | Strategy | Profile | DecisionFilter | ScoreThreshold | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB | Regime | Lookback | Thr | RegimeFB | Trades | W/L | Win% | NetPnL | AvgPnL | MaxDD | PF | GrossPnL | Cost | NetAfterCost | DecisionScore | ExecQ | LongPnL | ShortPnL | Dups | Elapsed",
     ]
     lines.extend(_format_row(row) for row in display_rows)
     if len(display_rows) < len(ranked_rows):
@@ -56,6 +56,7 @@ def _ranked(rows: list[StrategyComparisonRow]) -> list[StrategyComparisonRow]:
 def _format_row(row: StrategyComparisonRow) -> str:
     return (
         f"{row.rank} | {row.strategy_name} | {row.strategy_profile} | {row.decision_filter_mode} | "
+        f"{_fmt(row.decision_score_threshold)} | "
         f"{row.dealing_range_mode} | {row.exit_mode} | "
         f"{_fmt(row.min_risk_reward)} | {row.direction_mode} | {row.direction_quality_mode} | "
         f"{row.strict_long_preset} | {row.auto_trend_fallback} | "

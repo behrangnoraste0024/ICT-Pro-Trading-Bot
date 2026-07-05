@@ -4,6 +4,7 @@ import pytest
 
 from models.cost_diagnostics import CostDiagnostics
 from models.decision_filter_simulation import DecisionFilterBucket, DecisionFilterSimulationResult
+from models.decision_threshold_calibration import DecisionThresholdBucket, DecisionThresholdCalibrationResult
 from models.entry_followthrough_diagnostics import EntryFollowthroughDiagnostics
 from models.rolling_backtest_result import RollingBacktestResult
 from models.regime_direction_diagnostics import RegimeDirectionDiagnostics
@@ -14,6 +15,7 @@ import engine.backtest.strategy_comparison_engine as strategy_module
 from engine.backtest.strategy_comparison_engine import (
     StrategyComparisonEngine,
     build_decision_gate_profile_with_cost_specs,
+    build_decision_threshold_profile_with_cost_specs,
     build_direction_modes_recent_50_fixed_1_5r_specs,
     build_default_strategy_specs,
     build_exit_modes_recent_50_specs,
@@ -129,6 +131,47 @@ def _result_with_decision_filter_buckets() -> RollingBacktestResult:
     return result
 
 
+def _threshold_bucket(
+    threshold: float,
+    total_trades: int,
+    wins: int,
+    losses: int,
+    gross_net_pnl: float,
+    net_pnl_after_costs: float,
+) -> DecisionThresholdBucket:
+    return DecisionThresholdBucket(
+        threshold=threshold,
+        name=f"score_gte_{threshold:.2f}",
+        total_trades=total_trades,
+        wins=wins,
+        losses=losses,
+        win_rate=round((wins / total_trades) * 100, 2) if total_trades else 0.0,
+        gross_net_pnl=gross_net_pnl,
+        total_cost=gross_net_pnl - net_pnl_after_costs,
+        net_pnl_after_costs=net_pnl_after_costs,
+        average_pnl=gross_net_pnl / total_trades if total_trades else 0.0,
+        average_net_pnl_after_costs=net_pnl_after_costs / total_trades if total_trades else 0.0,
+        max_drawdown=8.0,
+        profit_factor=2.5,
+        average_execution_quality=0.82,
+        average_decision_score=threshold + 0.05,
+    )
+
+
+def _result_with_decision_threshold_buckets() -> RollingBacktestResult:
+    result = _result_with_decision_filter_buckets()
+    result.decision_threshold_calibration = DecisionThresholdCalibrationResult(
+        thresholds=[
+            _threshold_bucket(0.60, 2, 2, 0, 120, 110),
+            _threshold_bucket(0.75, 1, 1, 0, 80, 76),
+        ],
+        best_by_net_after_costs="score_gte_0.60",
+        best_by_drawdown="score_gte_0.75",
+        best_by_profit_factor="score_gte_0.75",
+    )
+    return result
+
+
 def test_strategy_config_spec_string_contains_modes() -> None:
     spec = StrategyConfigSpec("recent", "recent_50", "fixed_1_5r", 1.5)
 
@@ -187,6 +230,18 @@ def test_strategy_config_spec_string_includes_decision_filter_when_active() -> N
     )
 
     assert str(spec) == "recent_50|fixed_1_5r|min_rr=1.5|dir=all|decision=approve_only"
+
+
+def test_strategy_config_spec_string_includes_decision_score_threshold_when_active() -> None:
+    spec = StrategyConfigSpec(
+        "recent",
+        "recent_50",
+        "fixed_1_5r",
+        1.5,
+        decision_score_threshold=0.75,
+    )
+
+    assert str(spec) == "recent_50|fixed_1_5r|min_rr=1.5|dir=all|threshold=0.75"
 
 
 def test_strategy_comparison_row_string_contains_name_and_pnl() -> None:
@@ -359,6 +414,72 @@ def test_missing_decision_filter_simulation_falls_back_to_unfiltered_metrics() -
     assert row.decision_filter_mode == "approve_only"
     assert row.decision_filtered is False
     assert row.decision_filter_bucket is None
+    assert row.total_trades == result.total_paper_trades
+    assert row.net_pnl == result.net_pnl
+
+
+def test_decision_score_threshold_none_preserves_unfiltered_strategy_metrics() -> None:
+    result = _result_with_decision_threshold_buckets()
+
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec("spec", "recent_50", "fixed_1_5r", 1.5, decision_score_threshold=None),
+        result,
+    )
+
+    assert row.decision_score_threshold is None
+    assert row.decision_threshold_filtered is False
+    assert row.decision_threshold_bucket is None
+    assert row.total_trades == result.total_paper_trades
+    assert row.net_pnl == result.net_pnl
+
+
+def test_decision_score_threshold_uses_threshold_bucket_metrics() -> None:
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec("spec", "recent_50", "fixed_1_5r", 1.5, decision_score_threshold=0.75),
+        _result_with_decision_threshold_buckets(),
+    )
+
+    assert row.decision_score_threshold == 0.75
+    assert row.decision_threshold_filtered is True
+    assert row.decision_threshold_bucket == "score_gte_0.75"
+    assert row.total_trades == 1
+    assert row.wins == 1
+    assert row.net_pnl == 80
+    assert row.total_cost == 4
+    assert row.net_pnl_after_costs == 76
+    assert row.average_execution_quality == 0.82
+    assert row.decision_score == pytest.approx(0.80)
+
+
+def test_decision_score_threshold_takes_precedence_over_decision_filter_mode() -> None:
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec(
+            "spec",
+            "recent_50",
+            "fixed_1_5r",
+            1.5,
+            decision_filter_mode="approve_only",
+            decision_score_threshold=0.75,
+        ),
+        _result_with_decision_threshold_buckets(),
+    )
+
+    assert row.decision_threshold_filtered is True
+    assert row.decision_filter_bucket is None
+    assert row.total_trades == 1
+    assert row.net_pnl_after_costs == 76
+
+
+def test_missing_decision_threshold_calibration_falls_back_to_unfiltered_metrics() -> None:
+    result = _result_with_trades()
+
+    row = StrategyComparisonEngine().row_from_result(
+        StrategyConfigSpec("spec", "recent_50", "fixed_1_5r", 1.5, decision_score_threshold=0.75),
+        result,
+    )
+
+    assert row.decision_threshold_filtered is False
+    assert row.decision_threshold_bucket is None
     assert row.total_trades == result.total_paper_trades
     assert row.net_pnl == result.net_pnl
 
@@ -635,6 +756,20 @@ def test_decision_gate_profile_with_cost_specs_exist() -> None:
     assert all(spec.commission_pct == 0.0004 for spec in specs)
 
 
+def test_decision_threshold_profile_with_cost_specs_exist() -> None:
+    specs = build_decision_threshold_profile_with_cost_specs()
+
+    assert len(specs) == 14
+    assert [spec.strategy_profile for spec in specs[:7]] == ["balanced_smc"] * 7
+    assert [spec.strategy_profile for spec in specs[7:]] == ["bearish_smc"] * 7
+    assert [spec.decision_score_threshold for spec in specs[:7]] == [None, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85]
+    assert specs[0].name == "profile=balanced_smc|cost=percent"
+    assert specs[1].name == "profile=balanced_smc|cost=percent|threshold=0.60"
+    assert specs[-1].name == "profile=bearish_smc|cost=percent|threshold=0.85"
+    assert all(spec.cost_model == "percent" for spec in specs)
+    assert all(spec.commission_pct == 0.0004 for spec in specs)
+
+
 def test_direction_quality_preset_config_expands_long_strict_rules() -> None:
     config = direction_quality_preset_config("regime_known_displacement_score100")
 
@@ -845,3 +980,45 @@ def test_run_comparison_passes_decision_filter_mode_to_engine(monkeypatch) -> No
     StrategyComparisonEngine().run_comparison(FIXTURE_PATH, [spec], min_candles=50)
 
     assert captured_configs[0].decision_filter_mode == "approve_only"
+
+
+def test_run_comparison_passes_decision_score_threshold_to_engine(monkeypatch) -> None:
+    captured_configs = []
+
+    class FakeRollingBacktestEngine:
+        def __init__(self, *args, config, **kwargs):
+            captured_configs.append(config)
+
+        def run(self, candles):
+            return RollingBacktestResult(
+                total_windows=1,
+                processed_windows=1,
+                skipped_windows=0,
+                failed_windows=0,
+                min_candles=1,
+                total_paper_trades=0,
+                closed_trades=0,
+                open_trades=0,
+                wins=0,
+                losses=0,
+                win_rate=0,
+                net_pnl=0,
+                average_pnl=0,
+                max_drawdown=0,
+                ignored_contexts=1,
+            )
+
+    monkeypatch.setattr(strategy_module, "RollingBacktestEngine", FakeRollingBacktestEngine)
+    spec = StrategyConfigSpec(
+        "profile=balanced_smc|cost=percent|threshold=0.75",
+        "recent_50",
+        "fixed_1_5r",
+        1.5,
+        strategy_profile="balanced_smc",
+        cost_model="percent",
+        decision_score_threshold=0.75,
+    )
+
+    StrategyComparisonEngine().run_comparison(FIXTURE_PATH, [spec], min_candles=50)
+
+    assert captured_configs[0].decision_score_threshold == 0.75

@@ -99,6 +99,9 @@ def format_rolling_backtest_report(
     decision_filter_simulation = getattr(result, "decision_filter_simulation", None)
     if decision_filter_simulation is not None:
         lines.extend(_format_decision_filter_simulation(decision_filter_simulation))
+    decision_threshold_calibration = getattr(result, "decision_threshold_calibration", None)
+    if decision_threshold_calibration is not None:
+        lines.extend(_format_decision_threshold_calibration(decision_threshold_calibration))
     regime_direction = getattr(result, "regime_direction_diagnostics", None)
     if regime_direction is not None:
         lines.extend(_format_regime_direction_diagnostics(regime_direction))
@@ -295,6 +298,35 @@ def _format_decision_filter_simulation(simulation) -> list[str]:
 def _format_decision_filter_bucket(bucket) -> str:
     return (
         f"{bucket.name} | {bucket.total_trades} | {bucket.wins}/{bucket.losses} | "
+        f"{_format_optional_float(bucket.win_rate)} | {_format_optional_float(bucket.gross_net_pnl)} | "
+        f"{_format_optional_float(bucket.total_cost)} | {_format_optional_float(bucket.net_pnl_after_costs)} | "
+        f"{_format_optional_float(bucket.average_decision_score)} | "
+        f"{_format_optional_float(bucket.average_execution_quality)} | "
+        f"{_format_optional_float(bucket.max_drawdown)} | {_format_optional_float(bucket.profit_factor)}"
+    )
+
+
+def _format_decision_threshold_calibration(calibration) -> list[str]:
+    lines = [
+        "",
+        "===== DECISION THRESHOLD CALIBRATION =====",
+        f"Best By Net After Costs : {calibration.best_by_net_after_costs}",
+        f"Best By Drawdown        : {calibration.best_by_drawdown}",
+        f"Best By Profit Factor   : {calibration.best_by_profit_factor}",
+        "",
+        "Threshold | Trades | W/L | Win% | GrossPnL | Cost | NetAfterCost | AvgDecision | AvgExecQ | MaxDD | PF",
+    ]
+    if not calibration.thresholds:
+        lines.append("None")
+        return lines
+    for bucket in calibration.thresholds:
+        lines.append(_format_decision_threshold_bucket(bucket))
+    return lines
+
+
+def _format_decision_threshold_bucket(bucket) -> str:
+    return (
+        f"{_format_optional_float(bucket.threshold)} | {bucket.total_trades} | {bucket.wins}/{bucket.losses} | "
         f"{_format_optional_float(bucket.win_rate)} | {_format_optional_float(bucket.gross_net_pnl)} | "
         f"{_format_optional_float(bucket.total_cost)} | {_format_optional_float(bucket.net_pnl_after_costs)} | "
         f"{_format_optional_float(bucket.average_decision_score)} | "

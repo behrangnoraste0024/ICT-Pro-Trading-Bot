@@ -42,6 +42,7 @@ class EngineConfig:
     slippage_pct: float = 0.0
     spread_pct: float = 0.0
     decision_filter_mode: str = "off"
+    decision_score_threshold: float | None = None
 
     def __post_init__(self) -> None:
         if self.strategy_profile not in self.VALID_STRATEGY_PROFILES:
@@ -78,3 +79,5 @@ class EngineConfig:
                 raise ValueError(f"Unsupported {field_name}: {value}")
         if self.decision_filter_mode not in self.VALID_DECISION_FILTER_MODES:
             raise ValueError(f"Unsupported decision filter mode: {self.decision_filter_mode}")
+        if self.decision_score_threshold is not None and not 0 <= self.decision_score_threshold <= 1:
+            raise ValueError(f"Unsupported decision score threshold: {self.decision_score_threshold}")

@@ -13,6 +13,7 @@ def _report() -> StrategyComparisonReport:
                 "recent_50|fixed_1_5r|min_rr=1.5|dir=auto_trend|trend_fallback=block",
                 strategy_profile="balanced_smc",
                 decision_filter_mode="approve_only",
+                decision_score_threshold=0.75,
                 average_execution_quality=0.876,
                 direction_mode="auto_trend",
                 auto_trend_fallback="block",
@@ -64,10 +65,12 @@ def test_report_includes_comparison_table() -> None:
     output = format_strategy_comparison_report(_report())
 
     assert "Comparison Table:" in output
-    assert "Rank | Strategy | Profile | DecisionFilter | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB" in output
+    assert "Rank | Strategy | Profile | DecisionFilter | ScoreThreshold | DR Mode | Exit | MinRR | Dir | DQ | LongPreset | TrendFB" in output
     assert "balanced_smc" in output
     assert "DecisionFilter" in output
+    assert "ScoreThreshold" in output
     assert "approve_only" in output
+    assert "0.75" in output
     assert "Regime | Lookback | Thr | RegimeFB" in output
     assert "GrossPnL | Cost | NetAfterCost" in output
     assert "DecisionScore" in output
