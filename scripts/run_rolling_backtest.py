@@ -75,7 +75,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-windows", type=int, default=None)
     parser.add_argument(
         "--strategy-profile",
-        choices=["default", "balanced_smc", "bearish_smc", "research_baseline"],
+        choices=[
+            "default",
+            "balanced_smc",
+            "bearish_smc",
+            "research_baseline",
+            "balanced_smc_decision_065",
+            "bearish_smc_decision_065",
+        ],
         default="default",
     )
     parser.add_argument("--dealing-range-mode", choices=["current_external", "recent_50"], default="current_external")

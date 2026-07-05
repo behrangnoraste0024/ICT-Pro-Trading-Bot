@@ -20,6 +20,7 @@ from engine.backtest.strategy_comparison_engine import (
     build_default_strategy_specs,
     build_exit_modes_recent_50_specs,
     build_long_strict_recent_50_fixed_1_5r_specs,
+    build_recommended_decision_profile_with_cost_specs,
     build_recommended_profile_specs,
     build_recommended_profile_with_cost_specs,
     build_regime_direction_recent_50_fixed_1_5r_specs,
@@ -768,6 +769,32 @@ def test_decision_threshold_profile_with_cost_specs_exist() -> None:
     assert specs[-1].name == "profile=bearish_smc|cost=percent|threshold=0.85"
     assert all(spec.cost_model == "percent" for spec in specs)
     assert all(spec.commission_pct == 0.0004 for spec in specs)
+
+
+def test_recommended_decision_profile_with_cost_specs_exist() -> None:
+    specs = build_recommended_decision_profile_with_cost_specs()
+
+    assert [spec.name for spec in specs] == [
+        "profile=balanced_smc|cost=percent",
+        "profile=balanced_smc_decision_065|cost=percent",
+        "profile=bearish_smc|cost=percent",
+        "profile=bearish_smc_decision_065|cost=percent",
+        "profile=research_baseline|cost=percent",
+    ]
+    assert [spec.strategy_profile for spec in specs] == [
+        "balanced_smc",
+        "balanced_smc_decision_065",
+        "bearish_smc",
+        "bearish_smc_decision_065",
+        "research_baseline",
+    ]
+    assert specs[0].decision_score_threshold is None
+    assert specs[1].decision_score_threshold == 0.65
+    assert specs[3].decision_score_threshold == 0.65
+    assert all(spec.cost_model == "percent" for spec in specs)
+    assert all(spec.commission_pct == 0.0004 for spec in specs)
+    assert all(spec.slippage_pct == 0.0002 for spec in specs)
+    assert all(spec.spread_pct == 0.0001 for spec in specs)
 
 
 def test_direction_quality_preset_config_expands_long_strict_rules() -> None:

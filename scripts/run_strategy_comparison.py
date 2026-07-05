@@ -19,11 +19,13 @@ from engine.backtest.strategy_comparison_engine import (
     build_direction_modes_recent_50_fixed_1_5r_specs,
     build_exit_modes_recent_50_specs,
     build_long_strict_recent_50_fixed_1_5r_specs,
+    build_recommended_decision_profile_with_cost_specs,
     build_recommended_profile_specs,
     build_recommended_profile_with_cost_specs,
     build_regime_direction_recent_50_fixed_1_5r_specs,
     build_trend_direction_recent_50_fixed_1_5r_specs,
     direction_quality_preset_config,
+    _profile_spec,
 )
 from models.engine_config import EngineConfig
 from models.strategy_comparison import StrategyComparisonReport, StrategyConfigSpec
@@ -154,6 +156,7 @@ def _parser() -> argparse.ArgumentParser:
             "long_strict_recent_50_fixed_1_5r",
             "recommended_profiles",
             "recommended_profiles_with_costs",
+            "recommended_decision_profiles_with_costs",
             "decision_gate_profiles_with_costs",
             "decision_threshold_profiles_with_costs",
             "current_external_only",
@@ -216,6 +219,8 @@ def build_strategy_specs(args) -> list[StrategyConfigSpec]:
         return build_recommended_profile_specs()
     if args.strategy_set == "recommended_profiles_with_costs":
         return build_recommended_profile_with_cost_specs()
+    if args.strategy_set == "recommended_decision_profiles_with_costs":
+        return build_recommended_decision_profile_with_cost_specs()
     if args.strategy_set == "decision_gate_profiles_with_costs":
         return build_decision_gate_profile_with_cost_specs()
     if args.strategy_set == "decision_threshold_profiles_with_costs":
@@ -407,7 +412,7 @@ def build_profile_strategy_specs(
     spread_pcts = [0.0] if spread_pcts is None else spread_pcts
     specs: list[StrategyConfigSpec] = []
     for profile in strategy_profiles:
-        base = recommended[profile]
+        base = recommended.get(profile, _profile_spec(profile))
         for cost_model in cost_models:
             commission_options = commission_pcts if cost_model != "off" else [0.0]
             slippage_options = slippage_pcts if cost_model != "off" else [0.0]

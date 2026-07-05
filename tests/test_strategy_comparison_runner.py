@@ -214,6 +214,30 @@ def test_decision_threshold_profiles_with_costs_strategy_set_works(capsys) -> No
     assert "ScoreThreshold" in captured.out
 
 
+def test_recommended_decision_profiles_with_costs_strategy_set_works(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "recommended_decision_profiles_with_costs",
+            "--sort-by",
+            "net_pnl_after_costs",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Strategies   : 5" in captured.out
+    assert "profile=balanced_smc_decision_065|cost=percent" in captured.out
+    assert "profile=bearish_smc_decision_065|cost=percent" in captured.out
+    assert "ScoreThreshold" in captured.out
+    assert "0.65" in captured.out
+
+
 def test_current_external_only_strategy_set_works(capsys) -> None:
     return_code = main(["--fixture", FIXTURE_PATH, "--min-candles", "50", "--strategy-set", "current_external_only"])
 

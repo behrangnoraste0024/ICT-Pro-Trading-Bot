@@ -30,6 +30,7 @@ def test_balanced_smc_applies_expected_fields() -> None:
     assert config.regime_lookback == 200
     assert config.regime_threshold_pct == 0.0
     assert config.regime_fallback == "all"
+    assert config.decision_score_threshold is None
 
 
 def test_bearish_smc_applies_expected_fields() -> None:
@@ -40,6 +41,43 @@ def test_bearish_smc_applies_expected_fields() -> None:
     assert config.min_risk_reward == 1.5
     assert config.direction_mode == "short_only"
     assert config.direction_quality_mode == "off"
+    assert config.decision_score_threshold is None
+
+
+def test_balanced_smc_decision_065_applies_balanced_fields_with_threshold() -> None:
+    base = apply_strategy_profile(EngineConfig(), "balanced_smc")
+    config = apply_strategy_profile(EngineConfig(), "balanced_smc_decision_065")
+
+    assert config.strategy_profile == "balanced_smc_decision_065"
+    assert config.dealing_range_mode == base.dealing_range_mode
+    assert config.exit_mode == base.exit_mode
+    assert config.min_risk_reward == base.min_risk_reward
+    assert config.direction_mode == base.direction_mode
+    assert config.direction_quality_mode == base.direction_quality_mode
+    assert config.strict_long_require_regime_known == base.strict_long_require_regime_known
+    assert config.strict_long_require_displacement == base.strict_long_require_displacement
+    assert config.regime_mode == base.regime_mode
+    assert config.regime_lookback == base.regime_lookback
+    assert config.regime_threshold_pct == base.regime_threshold_pct
+    assert config.regime_fallback == base.regime_fallback
+    assert config.decision_score_threshold == 0.65
+
+
+def test_bearish_smc_decision_065_applies_bearish_fields_with_threshold() -> None:
+    base = apply_strategy_profile(EngineConfig(), "bearish_smc")
+    config = apply_strategy_profile(EngineConfig(), "bearish_smc_decision_065")
+
+    assert config.strategy_profile == "bearish_smc_decision_065"
+    assert config.dealing_range_mode == base.dealing_range_mode
+    assert config.exit_mode == base.exit_mode
+    assert config.min_risk_reward == base.min_risk_reward
+    assert config.direction_mode == base.direction_mode
+    assert config.direction_quality_mode == base.direction_quality_mode
+    assert config.regime_mode == base.regime_mode
+    assert config.regime_lookback == base.regime_lookback
+    assert config.regime_threshold_pct == base.regime_threshold_pct
+    assert config.regime_fallback == base.regime_fallback
+    assert config.decision_score_threshold == 0.65
 
 
 def test_research_baseline_applies_expected_fields() -> None:

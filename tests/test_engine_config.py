@@ -116,7 +116,17 @@ def test_engine_config_rejects_invalid_direction_quality_mode() -> None:
         EngineConfig(direction_quality_mode="medium_spicy")
 
 
-@pytest.mark.parametrize("strategy_profile", ["default", "balanced_smc", "bearish_smc", "research_baseline"])
+@pytest.mark.parametrize(
+    "strategy_profile",
+    [
+        "default",
+        "balanced_smc",
+        "bearish_smc",
+        "research_baseline",
+        "balanced_smc_decision_065",
+        "bearish_smc_decision_065",
+    ],
+)
 def test_engine_config_accepts_valid_strategy_profiles(strategy_profile: str) -> None:
     config = EngineConfig(strategy_profile=strategy_profile)
 
