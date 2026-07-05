@@ -15,6 +15,7 @@ from engine.backtest.virtual_exit_diagnostics_engine import VirtualExitDiagnosti
 from engine.decision.adaptive_decision_engine import AdaptiveDecisionEngine
 from engine.decision.decision_fusion_engine import DecisionFusionEngine
 from engine.diagnostics.decision_filter_simulation_engine import DecisionFilterSimulationEngine
+from engine.diagnostics.decision_threshold_calibration_engine import DecisionThresholdCalibrationEngine
 from engine.diagnostics.regime_direction_diagnostics_engine import RegimeDirectionDiagnosticsEngine
 from engine.execution_quality.execution_quality_engine import ExecutionQualityEngine
 from engine.ict_engine import ICTEngine
@@ -161,6 +162,7 @@ class RollingBacktestEngine:
         self.decision_fusion_engine = DecisionFusionEngine()
         self.adaptive_decision_engine = AdaptiveDecisionEngine()
         self.decision_filter_simulation_engine = DecisionFilterSimulationEngine()
+        self.decision_threshold_calibration_engine = DecisionThresholdCalibrationEngine()
         self.trade_state_manager = TradeStateManager()
 
     def run(self, candles: pd.DataFrame) -> RollingBacktestResult:
@@ -434,6 +436,10 @@ class RollingBacktestEngine:
             contexts,
             cost_diagnostics,
         )
+        decision_threshold_calibration = self.decision_threshold_calibration_engine.summarize_contexts(
+            contexts,
+            cost_diagnostics,
+        )
         return RollingBacktestResult(
             total_windows=total_windows,
             processed_windows=processed_windows,
@@ -490,6 +496,7 @@ class RollingBacktestEngine:
             net_pnl_after_costs=cost_diagnostics.net_pnl_after_costs,
             total_cost=cost_diagnostics.total_cost,
             decision_filter_simulation=decision_filter_simulation,
+            decision_threshold_calibration=decision_threshold_calibration,
             trade_outcome_contexts=contexts,
         )
 

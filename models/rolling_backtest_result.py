@@ -9,6 +9,7 @@ from models.trade_outcome_diagnostics import TradeOutcomeDiagnostics
 from models.virtual_exit_diagnostics import VirtualExitDiagnostics
 from models.regime_direction_diagnostics import RegimeDirectionDiagnostics
 from models.decision_filter_simulation import DecisionFilterSimulationResult
+from models.decision_threshold_calibration import DecisionThresholdCalibrationResult
 
 
 @dataclass
@@ -69,6 +70,7 @@ class RollingBacktestResult:
     net_pnl_after_costs: float = 0.0
     total_cost: float = 0.0
     decision_filter_simulation: DecisionFilterSimulationResult | None = None
+    decision_threshold_calibration: DecisionThresholdCalibrationResult | None = None
     trade_outcome_contexts: list[Any] = field(default_factory=list)
     event_type: str = "ROLLING_BACKTEST_RESULT"
 

@@ -24,6 +24,7 @@ def test_engine_config_defaults() -> None:
     assert config.slippage_pct == 0.0
     assert config.spread_pct == 0.0
     assert config.decision_filter_mode == "off"
+    assert config.decision_score_threshold is None
 
 
 @pytest.mark.parametrize("exit_mode", ["original", "fixed_1r", "fixed_1_5r", "fixed_2r", "fixed_3r"])
@@ -173,3 +174,15 @@ def test_engine_config_accepts_valid_decision_filter_modes(decision_filter_mode:
 def test_engine_config_rejects_invalid_decision_filter_mode() -> None:
     with pytest.raises(ValueError, match="Unsupported decision filter mode"):
         EngineConfig(decision_filter_mode="approve_sometimes")
+
+
+def test_engine_config_accepts_decision_score_threshold() -> None:
+    config = EngineConfig(decision_score_threshold=0.75)
+
+    assert config.decision_score_threshold == 0.75
+
+
+@pytest.mark.parametrize("threshold", [-0.1, 1.1])
+def test_engine_config_rejects_invalid_decision_score_threshold(threshold: float) -> None:
+    with pytest.raises(ValueError, match="Unsupported decision score threshold"):
+        EngineConfig(decision_score_threshold=threshold)

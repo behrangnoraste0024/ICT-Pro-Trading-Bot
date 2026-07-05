@@ -34,6 +34,7 @@ class StrategyConfigSpec:
     slippage_pct: float = 0.0
     spread_pct: float = 0.0
     decision_filter_mode: str = "off"
+    decision_score_threshold: float | None = None
     event_type: str = "STRATEGY_CONFIG_SPEC"
 
     def __str__(self) -> str:
@@ -49,6 +50,8 @@ class StrategyConfigSpec:
             value = f"{value}|dq={self.direction_quality_mode}|long_preset={self.strict_long_preset}"
         if self.decision_filter_mode != "off":
             value = f"{value}|decision={self.decision_filter_mode}"
+        if self.decision_score_threshold is not None:
+            value = f"{value}|threshold={self.decision_score_threshold:.2f}"
         return value
 
 
@@ -73,6 +76,9 @@ class StrategyComparisonRow:
     decision_filter_mode: str = "off"
     decision_filtered: bool = False
     decision_filter_bucket: str | None = None
+    decision_score_threshold: float | None = None
+    decision_threshold_filtered: bool = False
+    decision_threshold_bucket: str | None = None
     average_execution_quality: float | None = None
     average_decision_score: float | None = None
     direction_quality_mode: str = "off"

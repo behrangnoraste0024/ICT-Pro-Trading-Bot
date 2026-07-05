@@ -15,6 +15,7 @@ from engine.backtest.strategy_comparison_engine import (
     build_current_external_only_specs,
     build_default_strategy_specs,
     build_decision_gate_profile_with_cost_specs,
+    build_decision_threshold_profile_with_cost_specs,
     build_direction_modes_recent_50_fixed_1_5r_specs,
     build_exit_modes_recent_50_specs,
     build_long_strict_recent_50_fixed_1_5r_specs,
@@ -154,6 +155,7 @@ def _parser() -> argparse.ArgumentParser:
             "recommended_profiles",
             "recommended_profiles_with_costs",
             "decision_gate_profiles_with_costs",
+            "decision_threshold_profiles_with_costs",
             "current_external_only",
             "custom",
         ],
@@ -216,6 +218,8 @@ def build_strategy_specs(args) -> list[StrategyConfigSpec]:
         return build_recommended_profile_with_cost_specs()
     if args.strategy_set == "decision_gate_profiles_with_costs":
         return build_decision_gate_profile_with_cost_specs()
+    if args.strategy_set == "decision_threshold_profiles_with_costs":
+        return build_decision_threshold_profile_with_cost_specs()
     if args.strategy_set == "current_external_only":
         return build_current_external_only_specs()
     return build_custom_strategy_specs(

@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 from models.decision_filter_simulation import DecisionFilterBucket
 from models.decision_filter_simulation import DecisionFilterSimulationResult
+from models.decision_threshold_calibration import DecisionThresholdBucket
+from models.decision_threshold_calibration import DecisionThresholdCalibrationResult
 from models.rolling_backtest_result import RollingBacktestResult
 from reporting.rolling_backtest_report import format_rolling_backtest_report
 
@@ -60,6 +62,30 @@ def _result() -> RollingBacktestResult:
         best_by_net_after_costs="all_trades",
         best_by_drawdown="all_trades",
     )
+    result.decision_threshold_calibration = DecisionThresholdCalibrationResult(
+        thresholds=[
+            DecisionThresholdBucket(
+                threshold=0.7,
+                name="score_gte_0.70",
+                total_trades=1,
+                wins=1,
+                losses=0,
+                win_rate=100,
+                gross_net_pnl=10,
+                total_cost=1,
+                net_pnl_after_costs=9,
+                average_pnl=10,
+                average_net_pnl_after_costs=9,
+                max_drawdown=0,
+                profit_factor=None,
+                average_execution_quality=0.83,
+                average_decision_score=0.74,
+            )
+        ],
+        best_by_net_after_costs="score_gte_0.70",
+        best_by_drawdown="score_gte_0.70",
+        best_by_profit_factor=None,
+    )
     return result
 
 
@@ -79,3 +105,13 @@ def test_report_includes_decision_filter_simulation_section() -> None:
     assert "===== DECISION FILTER SIMULATION =====" in output
     assert "Bucket | Trades | W/L | Win% | GrossPnL | Cost | NetAfterCost | AvgDecision | AvgExecQ | MaxDD | PF" in output
     assert "all_trades | 1 | 1/0 | 100" in output
+
+
+def test_report_includes_decision_threshold_calibration_section() -> None:
+    output = format_rolling_backtest_report(_result(), "fixture.json", 1)
+
+    assert "===== DECISION THRESHOLD CALIBRATION =====" in output
+    assert "Best By Net After Costs : score_gte_0.70" in output
+    assert "Best By Profit Factor   : None" in output
+    assert "Threshold | Trades | W/L | Win% | GrossPnL | Cost | NetAfterCost | AvgDecision | AvgExecQ | MaxDD | PF" in output
+    assert "0.7 | 1 | 1/0 | 100" in output

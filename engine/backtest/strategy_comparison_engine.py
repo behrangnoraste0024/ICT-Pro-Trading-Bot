@@ -6,6 +6,7 @@ from collections.abc import Callable
 from data.historical_data_utils import load_candles_json
 from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngine
 from models.decision_filter_simulation import DecisionFilterBucket
+from models.decision_threshold_calibration import DecisionThresholdBucket
 from models.engine_config import EngineConfig
 from models.rolling_backtest_result import RollingBacktestResult
 from models.strategy_comparison import StrategyComparisonReport, StrategyComparisonRow, StrategyConfigSpec
@@ -133,6 +134,21 @@ def build_decision_gate_profile_with_cost_specs() -> list[StrategyConfigSpec]:
     ]
 
 
+def build_decision_threshold_profile_with_cost_specs() -> list[StrategyConfigSpec]:
+    realistic_cost = {
+        "cost_model": "percent",
+        "commission_pct": 0.0004,
+        "slippage_pct": 0.0002,
+        "spread_pct": 0.0001,
+    }
+    thresholds = [None, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85]
+    specs: list[StrategyConfigSpec] = []
+    for profile in ("balanced_smc", "bearish_smc"):
+        for threshold in thresholds:
+            specs.append(_profile_spec(profile, decision_score_threshold=threshold, **realistic_cost))
+    return specs
+
+
 def build_current_external_only_specs() -> list[StrategyConfigSpec]:
     return [
         _spec("current_external", "original", 2.0),
@@ -190,12 +206,14 @@ def _profile_spec(
     slippage_pct: float = 0.0,
     spread_pct: float = 0.0,
     decision_filter_mode: str = "off",
+    decision_score_threshold: float | None = None,
 ) -> StrategyConfigSpec:
     config = apply_strategy_profile(EngineConfig(), strategy_profile)
     cost_suffix = "" if cost_model == "off" else "|cost=percent"
     decision_suffix = "" if decision_filter_mode == "off" else f"|decision={decision_filter_mode}"
+    threshold_suffix = "" if decision_score_threshold is None else f"|threshold={decision_score_threshold:.2f}"
     return StrategyConfigSpec(
-        f"profile={strategy_profile}{cost_suffix}{decision_suffix}",
+        f"profile={strategy_profile}{cost_suffix}{decision_suffix}{threshold_suffix}",
         config.dealing_range_mode,
         config.exit_mode,
         config.min_risk_reward,
@@ -223,6 +241,7 @@ def _profile_spec(
         slippage_pct,
         spread_pct,
         decision_filter_mode,
+        decision_score_threshold,
     )
 
 
@@ -318,6 +337,7 @@ class StrategyComparisonEngine:
                     slippage_pct=spec.slippage_pct,
                     spread_pct=spec.spread_pct,
                     decision_filter_mode=spec.decision_filter_mode,
+                    decision_score_threshold=spec.decision_score_threshold,
                 ),
             ).run(candles)
             elapsed_seconds = time.perf_counter() - started_at
@@ -379,26 +399,30 @@ class StrategyComparisonEngine:
         net_pnl_after_costs = result.net_pnl if cost_diagnostics is None else cost_diagnostics.net_pnl_after_costs
         decision_score = self._average_decision_score(result)
         average_execution_quality = self._average_execution_quality(result)
-        bucket = self._decision_filter_bucket(result, spec.decision_filter_mode)
-        decision_filtered = bucket is not None
-        decision_filter_bucket = None if bucket is None else bucket.name
-        if bucket is not None:
-            total_trades = bucket.total_trades
-            closed_trades = bucket.total_trades
+        threshold_bucket = self._decision_threshold_bucket(result, spec.decision_score_threshold)
+        decision_threshold_filtered = threshold_bucket is not None
+        decision_threshold_bucket = None if threshold_bucket is None else threshold_bucket.name
+        filter_bucket = None if threshold_bucket is not None else self._decision_filter_bucket(result, spec.decision_filter_mode)
+        decision_filtered = filter_bucket is not None
+        decision_filter_bucket = None if filter_bucket is None else filter_bucket.name
+        metric_bucket = threshold_bucket if threshold_bucket is not None else filter_bucket
+        if metric_bucket is not None:
+            total_trades = metric_bucket.total_trades
+            closed_trades = metric_bucket.total_trades
             open_trades = 0
-            wins = bucket.wins
-            losses = bucket.losses
-            win_rate = bucket.win_rate
-            net_pnl = bucket.gross_net_pnl
-            gross_net_pnl = bucket.gross_net_pnl
-            total_cost = bucket.total_cost
-            net_pnl_after_costs = bucket.net_pnl_after_costs
-            average_pnl = bucket.average_pnl
-            max_drawdown = bucket.max_drawdown
-            profit_factor = bucket.profit_factor
-            average_execution_quality = bucket.average_execution_quality
-            decision_score = bucket.average_decision_score
-            average_decision_score = bucket.average_decision_score
+            wins = metric_bucket.wins
+            losses = metric_bucket.losses
+            win_rate = metric_bucket.win_rate
+            net_pnl = metric_bucket.gross_net_pnl
+            gross_net_pnl = metric_bucket.gross_net_pnl
+            total_cost = metric_bucket.total_cost
+            net_pnl_after_costs = metric_bucket.net_pnl_after_costs
+            average_pnl = metric_bucket.average_pnl
+            max_drawdown = metric_bucket.max_drawdown
+            profit_factor = metric_bucket.profit_factor
+            average_execution_quality = metric_bucket.average_execution_quality
+            decision_score = metric_bucket.average_decision_score
+            average_decision_score = metric_bucket.average_decision_score
         else:
             total_trades = result.total_paper_trades
             closed_trades = result.closed_trades
@@ -430,6 +454,9 @@ class StrategyComparisonEngine:
             decision_filter_mode=spec.decision_filter_mode,
             decision_filtered=decision_filtered,
             decision_filter_bucket=decision_filter_bucket,
+            decision_score_threshold=spec.decision_score_threshold,
+            decision_threshold_filtered=decision_threshold_filtered,
+            decision_threshold_bucket=decision_threshold_bucket,
             average_execution_quality=average_execution_quality,
             average_decision_score=average_decision_score,
             direction_quality_mode=spec.direction_quality_mode,
@@ -487,6 +514,22 @@ class StrategyComparisonEngine:
             return None
         for bucket in simulation.buckets:
             if bucket.name == decision_filter_mode:
+                return bucket
+        return None
+
+    def _decision_threshold_bucket(
+        self,
+        result: RollingBacktestResult,
+        decision_score_threshold: float | None,
+    ) -> DecisionThresholdBucket | None:
+        if decision_score_threshold is None:
+            return None
+        calibration = result.decision_threshold_calibration
+        if calibration is None:
+            return None
+        target_name = f"score_gte_{decision_score_threshold:.2f}"
+        for bucket in calibration.thresholds:
+            if bucket.name == target_name:
                 return bucket
         return None
 
