@@ -113,6 +113,22 @@ def build_recommended_profile_with_cost_specs() -> list[StrategyConfigSpec]:
     ]
 
 
+def build_recommended_decision_profile_with_cost_specs() -> list[StrategyConfigSpec]:
+    realistic_cost = {
+        "cost_model": "percent",
+        "commission_pct": 0.0004,
+        "slippage_pct": 0.0002,
+        "spread_pct": 0.0001,
+    }
+    return [
+        _profile_spec("balanced_smc", **realistic_cost),
+        _profile_spec("balanced_smc_decision_065", **realistic_cost),
+        _profile_spec("bearish_smc", **realistic_cost),
+        _profile_spec("bearish_smc_decision_065", **realistic_cost),
+        _profile_spec("research_baseline", **realistic_cost),
+    ]
+
+
 def build_decision_gate_profile_with_cost_specs() -> list[StrategyConfigSpec]:
     realistic_cost = {
         "cost_model": "percent",
@@ -212,6 +228,9 @@ def _profile_spec(
     cost_suffix = "" if cost_model == "off" else "|cost=percent"
     decision_suffix = "" if decision_filter_mode == "off" else f"|decision={decision_filter_mode}"
     threshold_suffix = "" if decision_score_threshold is None else f"|threshold={decision_score_threshold:.2f}"
+    resolved_decision_score_threshold = (
+        config.decision_score_threshold if decision_score_threshold is None else decision_score_threshold
+    )
     return StrategyConfigSpec(
         f"profile={strategy_profile}{cost_suffix}{decision_suffix}{threshold_suffix}",
         config.dealing_range_mode,
@@ -224,7 +243,7 @@ def _profile_spec(
         config.regime_threshold_pct,
         config.regime_fallback,
         config.direction_quality_mode,
-        "regime_known_displacement" if strategy_profile == "balanced_smc" else "none",
+        "regime_known_displacement" if strategy_profile in {"balanced_smc", "balanced_smc_decision_065"} else "none",
         config.strict_long_require_regime_known,
         config.strict_long_block_unknown_regime,
         config.strict_long_require_regime_bullish,
@@ -241,7 +260,7 @@ def _profile_spec(
         slippage_pct,
         spread_pct,
         decision_filter_mode,
-        decision_score_threshold,
+        resolved_decision_score_threshold,
     )
 
 

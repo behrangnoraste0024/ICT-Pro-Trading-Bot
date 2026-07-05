@@ -12,7 +12,14 @@ class EngineConfig:
     VALID_REGIME_MODES = {"rolling_return"}
     VALID_REGIME_FALLBACKS = {"all", "block"}
     VALID_DIRECTION_QUALITY_MODES = {"off", "long_strict", "short_strict", "both_strict"}
-    VALID_STRATEGY_PROFILES = {"default", "balanced_smc", "bearish_smc", "research_baseline"}
+    VALID_STRATEGY_PROFILES = {
+        "default",
+        "balanced_smc",
+        "bearish_smc",
+        "research_baseline",
+        "balanced_smc_decision_065",
+        "bearish_smc_decision_065",
+    }
     VALID_COST_MODELS = {"off", "percent"}
     VALID_DECISION_FILTER_MODES = {"off", "approve_only", "warning_only", "reject_only", "approve_or_warning"}
 
