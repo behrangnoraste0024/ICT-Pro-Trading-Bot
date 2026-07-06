@@ -238,6 +238,50 @@ def test_recommended_decision_profiles_with_costs_strategy_set_works(capsys) -> 
     assert "0.65" in captured.out
 
 
+def test_show_recommendation_prints_validation_report(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "recommended_decision_profiles_with_costs",
+            "--sort-by",
+            "net_pnl_after_costs",
+            "--show-recommendation",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "===== RECOMMENDED PROFILE VALIDATION =====" in captured.out
+    assert "Recommended Strategy :" in captured.out
+    assert "Candidate Ranking:" in captured.out
+
+
+def test_default_comparison_does_not_print_recommendation_report(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "recommended_decision_profiles_with_costs",
+            "--sort-by",
+            "net_pnl_after_costs",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "===== STRATEGY COMPARISON REPORT =====" in captured.out
+    assert "===== RECOMMENDED PROFILE VALIDATION =====" not in captured.out
+
+
 def test_current_external_only_strategy_set_works(capsys) -> None:
     return_code = main(["--fixture", FIXTURE_PATH, "--min-candles", "50", "--strategy-set", "current_external_only"])
 
