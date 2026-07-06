@@ -27,9 +27,11 @@ from engine.backtest.strategy_comparison_engine import (
     direction_quality_preset_config,
     _profile_spec,
 )
+from engine.diagnostics.recommended_profile_validation_engine import RecommendedProfileValidationEngine
 from models.engine_config import EngineConfig
 from models.strategy_comparison import StrategyComparisonReport, StrategyConfigSpec
 from models.strategy_profile import VALID_STRATEGY_PROFILES
+from reporting.recommended_profile_validation_report import format_recommended_profile_validation_report
 from reporting.strategy_comparison_report import format_strategy_comparison_report
 
 
@@ -87,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
         show_all=args.show_all,
     )
     print(output)
+    if args.show_recommendation:
+        validation = RecommendedProfileValidationEngine().validate(report)
+        print()
+        print(format_recommended_profile_validation_report(validation))
     if args.output_json:
         _write_json(report, args.output_json)
     if args.output_csv:
@@ -197,6 +203,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--descending", action="store_true")
     parser.add_argument("--ascending", action="store_true")
     parser.add_argument("--show-all", action="store_true")
+    parser.add_argument("--show-recommendation", action="store_true")
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-csv", default=None)
     return parser
