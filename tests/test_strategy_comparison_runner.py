@@ -604,11 +604,12 @@ def test_strategy_comparison_with_use_cache_prints_miss_and_wrote(tmp_path, caps
     captured = capsys.readouterr()
     assert return_code == 0
     assert _FakeStrategyComparisonEngine.calls == 1
-    assert "[cache] miss" in captured.out
-    assert "[cache] wrote" in captured.out
+    assert "[cache] miss key=" in captured.out
+    assert "[cache] wrote path=" in captured.out
+    assert "compute_elapsed=" in captured.out
 
 
-def test_strategy_comparison_with_use_cache_prints_hit(tmp_path, capsys, monkeypatch) -> None:
+def test_strategy_comparison_with_use_cache_prints_hit_diagnostics(tmp_path, capsys, monkeypatch) -> None:
     fixture = tmp_path / "fixture.json"
     fixture.write_text("[]", encoding="utf-8")
     cache_dir = tmp_path / "cache"
@@ -631,7 +632,36 @@ def test_strategy_comparison_with_use_cache_prints_hit(tmp_path, capsys, monkeyp
     second = capsys.readouterr()
 
     assert _FakeStrategyComparisonEngine.calls == 1
-    assert "[cache] hit" in second.out
+    assert "[cache] hit path=" in second.out
+    assert "[cache] diagnostics age=" in second.out
+    assert "original_elapsed=" in second.out
+    assert "read_elapsed=" in second.out
+    assert "saved_estimate=" in second.out
+
+
+def test_strategy_comparison_with_refresh_cache_prints_refresh_and_wrote(tmp_path, capsys, monkeypatch) -> None:
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text("[]", encoding="utf-8")
+    _FakeStrategyComparisonEngine.calls = 0
+    monkeypatch.setattr("scripts.run_strategy_comparison.StrategyComparisonEngine", _FakeStrategyComparisonEngine)
+
+    return_code = main(
+        [
+            "--fixture",
+            str(fixture),
+            "--strategy-set",
+            "current_external_only",
+            "--refresh-cache",
+            "--cache-dir",
+            str(tmp_path / "cache"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert _FakeStrategyComparisonEngine.calls == 1
+    assert "[cache] refresh key=" in captured.out
+    assert "[cache] wrote path=" in captured.out
 
 
 def test_output_json_writes_valid_json(tmp_path) -> None:

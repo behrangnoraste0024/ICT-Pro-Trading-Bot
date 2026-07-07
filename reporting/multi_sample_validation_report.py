@@ -16,7 +16,7 @@ def format_multi_sample_validation_report(result: MultiSampleValidationResult, s
         f"Error Samples       : {result.error_samples}",
         "",
         "Samples:",
-        "Sample | Symbol | TF | Status | Profile | ScoreThr | Trades | W/L | Win% | NetAfterCost | MaxDD | WFStatus | ProfSeg | LosingSeg | EmptySeg | WorstSegNet | ImproveVsBase | Error",
+        "Sample | Symbol | TF | Status | Profile | ScoreThr | Trades | W/L | Win% | NetAfterCost | MaxDD | WFStatus | ProfSeg | LosingSeg | EmptySeg | WorstSegNet | ImproveVsBase | Cache | CacheRead | OrigElapsed | SavedEst | CacheAge | Error",
     ]
     for row in result.rows:
         lines.append(
@@ -26,6 +26,9 @@ def format_multi_sample_validation_report(result: MultiSampleValidationResult, s
             f"{_fmt(row.max_drawdown)} | {row.validation_status} | {_fmt(row.profitable_segments)} | "
             f"{_fmt(row.losing_segments)} | {_fmt(row.empty_segments)} | "
             f"{_fmt(row.worst_segment_net_pnl_after_costs)} | {_fmt(row.improvement_vs_baseline)} | "
+            f"{row.cache_status} | {_fmt(row.cache_read_elapsed_seconds)} | "
+            f"{_fmt(row.original_elapsed_seconds)} | {_fmt(row.estimated_saved_seconds)} | "
+            f"{_fmt(row.cache_age_seconds)} | "
             f"{row.error_message}"
         )
     if show_details:

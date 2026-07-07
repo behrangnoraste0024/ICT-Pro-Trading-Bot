@@ -64,18 +64,41 @@ def test_cache_miss_when_file_missing(tmp_path) -> None:
 
     assert result.hit is False
     assert result.error_message == "CACHE_MISSING"
+    assert result.diagnostics is not None
+    assert result.diagnostics.cache_status == "MISS"
+    assert result.diagnostics.cache_key_hash is not None
 
 
 def test_cache_write_creates_file_and_read_hit_returns_payload(tmp_path) -> None:
     engine = BacktestCacheEngine()
     key = _key(engine, _fixture(tmp_path))
-    write_result = engine.write(str(tmp_path / "cache"), key, {"value": 123})
+    write_result = engine.write(str(tmp_path / "cache"), key, {"value": 123}, compute_elapsed_seconds=3.5)
     read_result = engine.read(str(tmp_path / "cache"), key)
 
     assert write_result.cache_path is not None
     assert (tmp_path / "cache").exists()
     assert read_result.hit is True
     assert read_result.payload == {"value": 123}
+    assert read_result.diagnostics is not None
+    assert read_result.diagnostics.cache_status == "HIT"
+    assert read_result.diagnostics.cache_read_elapsed_seconds is not None
+    assert read_result.diagnostics.original_compute_elapsed_seconds == 3.5
+    assert read_result.diagnostics.estimated_saved_seconds is not None
+    assert read_result.diagnostics.estimated_saved_seconds <= 3.5
+    assert read_result.diagnostics.cache_age_seconds is not None
+
+
+def test_cache_write_records_compute_elapsed(tmp_path) -> None:
+    engine = BacktestCacheEngine()
+    key = _key(engine, _fixture(tmp_path))
+
+    result = engine.write(str(tmp_path / "cache"), key, {"value": 123}, compute_elapsed_seconds=7.25)
+
+    assert result.diagnostics is not None
+    assert result.diagnostics.cache_status == "WRITE"
+    assert result.diagnostics.current_compute_elapsed_seconds == 7.25
+    assert result.metadata is not None
+    assert result.metadata.original_compute_elapsed_seconds == 7.25
 
 
 def test_corrupt_cache_file_is_ignored_safely(tmp_path) -> None:
@@ -89,6 +112,8 @@ def test_corrupt_cache_file_is_ignored_safely(tmp_path) -> None:
 
     assert result.hit is False
     assert result.error_message is not None
+    assert result.diagnostics is not None
+    assert result.diagnostics.cache_status == "ERROR"
 
 
 def test_schema_mismatch_is_ignored_safely(tmp_path) -> None:
@@ -111,11 +136,19 @@ def test_refresh_cache_bypasses_existing_cache_by_caller_convention(tmp_path) ->
     engine = BacktestCacheEngine()
     key = _key(engine, _fixture(tmp_path))
     engine.write(str(tmp_path / "cache"), key, {"value": "old"})
-    engine.write(str(tmp_path / "cache"), key, {"value": "new"})
+    write_result = engine.write(
+        str(tmp_path / "cache"),
+        key,
+        {"value": "new"},
+        compute_elapsed_seconds=1.25,
+        cache_status="REFRESH",
+    )
 
     result = engine.read(str(tmp_path / "cache"), key)
 
     assert result.payload == {"value": "new"}
+    assert write_result.diagnostics is not None
+    assert write_result.diagnostics.cache_status == "REFRESH"
 
 
 def test_cache_directory_is_gitignored() -> None:

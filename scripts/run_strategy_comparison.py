@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import sys
+import time
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -33,6 +34,7 @@ from engine.diagnostics.walk_forward_validation_engine import WalkForwardValidat
 from engine.diagnostics.recommended_profile_validation_engine import RecommendedProfileValidationEngine
 from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngine
 from models.engine_config import EngineConfig
+from models.backtest_cache import BacktestCacheResult, BacktestCacheRuntimeDiagnostics
 from models.strategy_comparison import StrategyComparisonReport, StrategyComparisonRow, StrategyConfigSpec
 from models.strategy_profile import VALID_STRATEGY_PROFILES
 from reporting.recommended_profile_validation_report import format_recommended_profile_validation_report
@@ -83,11 +85,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.use_cache and not args.refresh_cache:
         cached = cache_engine.read(args.cache_dir, cache_key)
         if cached.hit and cached.payload is not None:
-            print(f"[cache] hit {cached.cache_path}")
+            _print_cache_hit(cached)
             report = _report_from_payload(cached.payload)
         else:
-            print("[cache] miss")
+            _print_cache_miss(cached)
+    elif args.refresh_cache:
+        print(f"[cache] refresh key={cache_engine.cache_key_hash(cache_key)}")
     if report is None:
+        compute_started_at = time.perf_counter()
         report = StrategyComparisonEngine().run_comparison(
             fixture_path=str(fixture_path),
             strategy_specs=specs,
@@ -98,10 +103,17 @@ def main(argv: list[str] | None = None) -> int:
             progress_callback=_print_progress,
             timeout_per_strategy=args.timeout_per_strategy,
         )
+        compute_elapsed = time.perf_counter() - compute_started_at
         if args.use_cache or args.refresh_cache:
-            written = cache_engine.write(args.cache_dir, cache_key, _report_to_payload(report))
+            written = cache_engine.write(
+                args.cache_dir,
+                cache_key,
+                _report_to_payload(report),
+                compute_elapsed_seconds=compute_elapsed,
+                cache_status="REFRESH" if args.refresh_cache else "WRITE",
+            )
             if written.error_message is None:
-                print(f"[cache] wrote {written.cache_path}")
+                _print_cache_write(written)
             else:
                 print(f"[cache] write failed {written.error_message}")
     output = format_strategy_comparison_report(
@@ -126,6 +138,49 @@ def main(argv: list[str] | None = None) -> int:
     if args.output_csv:
         _write_csv(report, args.output_csv)
     return 0
+
+
+def _fmt_cache_seconds(value: float | None) -> str:
+    if value is None:
+        return "None"
+    return f"{value:.2f}"
+
+
+def _print_cache_miss(result: BacktestCacheResult) -> None:
+    diagnostics = result.diagnostics
+    key = None if diagnostics is None else diagnostics.cache_key_hash
+    print(f"[cache] miss key={key}", flush=True)
+    if result.error_message and result.error_message != "CACHE_MISSING":
+        print(f"[cache] diagnostics status={result.error_message}", flush=True)
+
+
+def _print_cache_hit(result: BacktestCacheResult) -> None:
+    diagnostics = result.diagnostics
+    key = None if diagnostics is None else diagnostics.cache_key_hash
+    print(f"[cache] hit path={result.cache_path} key={key}", flush=True)
+    _print_cache_diagnostics(diagnostics)
+
+
+def _print_cache_write(result: BacktestCacheResult) -> None:
+    diagnostics = result.diagnostics
+    compute_elapsed = None if diagnostics is None else diagnostics.current_compute_elapsed_seconds
+    print(
+        f"[cache] wrote path={result.cache_path} compute_elapsed={_fmt_cache_seconds(compute_elapsed)}s",
+        flush=True,
+    )
+
+
+def _print_cache_diagnostics(diagnostics: BacktestCacheRuntimeDiagnostics | None) -> None:
+    if diagnostics is None:
+        return
+    print(
+        "[cache] diagnostics "
+        f"age={_fmt_cache_seconds(diagnostics.cache_age_seconds)}s "
+        f"original_elapsed={_fmt_cache_seconds(diagnostics.original_compute_elapsed_seconds)}s "
+        f"read_elapsed={_fmt_cache_seconds(diagnostics.cache_read_elapsed_seconds)}s "
+        f"saved_estimate={_fmt_cache_seconds(diagnostics.estimated_saved_seconds)}s",
+        flush=True,
+    )
 
 
 def _print_progress(payload: dict) -> None:

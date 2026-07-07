@@ -28,6 +28,11 @@ def test_report_displays_multi_sample_validation_section() -> None:
                 worst_segment_net_pnl_after_costs=10,
                 validation_status="PASS",
                 improvement_vs_baseline=1215.74,
+                cache_status="HIT",
+                cache_read_elapsed_seconds=0.03,
+                original_elapsed_seconds=2560.70,
+                estimated_saved_seconds=2560.67,
+                cache_age_seconds=5.0,
             )
         ],
         total_samples=1,
@@ -41,7 +46,9 @@ def test_report_displays_multi_sample_validation_section() -> None:
     assert "===== MULTI-SAMPLE VALIDATION =====" in output
     assert "Recommended Profile : balanced_smc_decision_065" in output
     assert "Sample | Symbol | TF | Status" in output
+    assert "Cache | CacheRead | OrigElapsed | SavedEst | CacheAge" in output
     assert "btcusdt_15m_1000 | BTC/USDT | 15m | PASSED" in output
+    assert "HIT | 0.03 | 2560.70 | 2560.67 | 5.00" in output
 
 
 def test_report_displays_skipped_missing_files_clearly() -> None:

@@ -74,15 +74,40 @@ def _print_progress(payload: dict) -> None:
         print(f"[multi-sample] running validation for {payload['sample']} ...", flush=True)
         return
     if event == "cache_hit":
-        print(f"[cache] hit {payload['cache_path']}", flush=True)
+        print(f"[cache] hit path={payload['cache_path']} key={payload.get('cache_key_hash')}", flush=True)
+        print(
+            "[cache] diagnostics "
+            f"age={_fmt_seconds(payload.get('cache_age_seconds'))}s "
+            f"original_elapsed={_fmt_seconds(payload.get('original_elapsed_seconds'))}s "
+            f"read_elapsed={_fmt_seconds(payload.get('cache_read_elapsed_seconds'))}s "
+            f"saved_estimate={_fmt_seconds(payload.get('estimated_saved_seconds'))}s",
+            flush=True,
+        )
         return
     if event == "cache_miss":
-        print("[cache] miss", flush=True)
+        print(f"[cache] miss key={payload.get('cache_key_hash')}", flush=True)
+        return
+    if event == "cache_refresh":
+        print(f"[cache] refresh key={payload.get('cache_key_hash')}", flush=True)
         return
     if event == "cache_wrote":
-        print(f"[cache] wrote {payload['cache_path']}", flush=True)
+        print(
+            f"[cache] wrote path={payload['cache_path']} "
+            f"compute_elapsed={_fmt_seconds(payload.get('current_compute_elapsed_seconds'))}s",
+            flush=True,
+        )
         return
     if event == "sample_finish":
+        if payload.get("cache_status") == "HIT":
+            print(
+                f"[multi-sample] finished {payload['sample']} status={payload['status']} "
+                f"original_elapsed={_fmt_seconds(payload.get('original_elapsed_seconds'))}s "
+                f"cache_read_elapsed={_fmt_seconds(payload.get('cache_read_elapsed_seconds'))}s "
+                f"saved_estimate={_fmt_seconds(payload.get('estimated_saved_seconds'))}s "
+                f"trades={payload['trades']} net_after_costs={payload['net_pnl_after_costs']:.2f}",
+                flush=True,
+            )
+            return
         print(
             f"[multi-sample] finished {payload['sample']} status={payload['status']} "
             f"elapsed={payload['elapsed_seconds']:.2f}s trades={payload['trades']} "
@@ -96,6 +121,12 @@ def _print_progress(payload: dict) -> None:
             f"skipped={payload['skipped']} errors={payload['errors']}",
             flush=True,
         )
+
+
+def _fmt_seconds(value) -> str:
+    if value is None:
+        return "None"
+    return f"{float(value):.2f}"
 
 
 def _parser() -> argparse.ArgumentParser:
