@@ -522,3 +522,47 @@ def test_generated_snapshot_files_are_gitignored() -> None:
 
     assert "reports/validation_snapshots/*.json" in text
     assert "reports/validation_snapshots/*.md" in text
+
+
+def test_quick_preset_prints_banner_and_skips_default_baseline(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+    _patch_comparison(monkeypatch, "FAIL")
+
+    return_code = main(["--preset", "quick", "--snapshot-dir", str(tmp_path), "--snapshot-format", "json"])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "[validation-gate] preset=quick" in captured.out
+    assert "[validation-gate] preset applied quick smoke validation" in captured.out
+    assert "[validation-gate] no baseline snapshot provided; comparison skipped" in captured.out
+    assert _FakeSnapshotComparisonEngine.compared is False
+    assert _FakeMultiSampleValidationEngine.last_kwargs["max_windows"] == 100
+    assert _FakeMultiSampleValidationEngine.last_kwargs["use_cache"] is True
+
+
+def test_full_preset_prints_banner_and_uses_baseline_config(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+    _patch_comparison(monkeypatch, "PASS")
+    baseline = _baseline(tmp_path)
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"baseline_snapshot_path": baseline}), encoding="utf-8")
+
+    return_code = main(
+        [
+            "--preset",
+            "full",
+            "--baseline-config",
+            str(config),
+            "--snapshot-dir",
+            str(tmp_path / "snapshots"),
+            "--snapshot-format",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "[validation-gate] preset=full" in captured.out
+    assert "[validation-gate] preset applied full daily research gate" in captured.out
+    assert _FakeSnapshotComparisonEngine.compared is True
+    assert _FakeMultiSampleValidationEngine.last_kwargs["use_cache"] is True
