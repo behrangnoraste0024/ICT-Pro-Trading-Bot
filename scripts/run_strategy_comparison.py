@@ -10,6 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from data.historical_data_utils import load_candles_json
 from engine.backtest.strategy_comparison_engine import (
     StrategyComparisonEngine,
     build_current_external_only_specs,
@@ -27,12 +28,15 @@ from engine.backtest.strategy_comparison_engine import (
     direction_quality_preset_config,
     _profile_spec,
 )
+from engine.diagnostics.walk_forward_validation_engine import WalkForwardValidationEngine
 from engine.diagnostics.recommended_profile_validation_engine import RecommendedProfileValidationEngine
+from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngine
 from models.engine_config import EngineConfig
 from models.strategy_comparison import StrategyComparisonReport, StrategyConfigSpec
 from models.strategy_profile import VALID_STRATEGY_PROFILES
 from reporting.recommended_profile_validation_report import format_recommended_profile_validation_report
 from reporting.strategy_comparison_report import format_strategy_comparison_report
+from reporting.walk_forward_validation_report import format_walk_forward_validation_report
 
 
 DEFAULT_FIXTURE = "tests/fixtures/btcusdt_100_candles.json"
@@ -89,10 +93,16 @@ def main(argv: list[str] | None = None) -> int:
         show_all=args.show_all,
     )
     print(output)
+    validation = None
     if args.show_recommendation:
         validation = RecommendedProfileValidationEngine().validate(report)
         print()
         print(format_recommended_profile_validation_report(validation))
+    if args.show_walk_forward_validation:
+        validation = validation or RecommendedProfileValidationEngine().validate(report)
+        walk_forward = _walk_forward_validation(args, specs, validation)
+        print()
+        print(format_walk_forward_validation_report(walk_forward))
     if args.output_json:
         _write_json(report, args.output_json)
     if args.output_csv:
@@ -204,6 +214,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--ascending", action="store_true")
     parser.add_argument("--show-all", action="store_true")
     parser.add_argument("--show-recommendation", action="store_true")
+    parser.add_argument("--show-walk-forward-validation", action="store_true")
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-csv", default=None)
     return parser
@@ -460,6 +471,76 @@ def build_profile_strategy_specs(
                             )
                         )
     return specs
+
+
+def _walk_forward_validation(args, specs: list[StrategyConfigSpec], validation):
+    selected = validation.selected
+    if selected is None:
+        return WalkForwardValidationEngine().validate_contexts(
+            [],
+            profile="unknown",
+            strategy_name="unknown",
+            score_threshold=0.65,
+        )
+
+    spec = next((item for item in specs if item.name == selected.recommended_strategy_name), None)
+    if spec is None:
+        spec = next((item for item in specs if item.strategy_profile == selected.recommended_profile), None)
+    if spec is None:
+        return WalkForwardValidationEngine().validate_contexts(
+            [],
+            profile=selected.recommended_profile or "unknown",
+            strategy_name=selected.recommended_strategy_name or "unknown",
+            score_threshold=selected.score_threshold,
+        )
+
+    candles = load_candles_json(str(Path(args.fixture)))
+    result = RollingBacktestEngine(
+        min_candles=args.min_candles,
+        progress_every=0,
+        max_windows=args.max_windows,
+        enable_diagnostics=not args.fast,
+        config=_config_from_spec(spec),
+    ).run(candles)
+    return WalkForwardValidationEngine().validate_contexts(
+        result.trade_outcome_contexts,
+        result.cost_diagnostics,
+        profile=spec.strategy_profile,
+        strategy_name=spec.name,
+        score_threshold=spec.decision_score_threshold if spec.decision_score_threshold is not None else selected.score_threshold,
+    )
+
+
+def _config_from_spec(spec: StrategyConfigSpec) -> EngineConfig:
+    return EngineConfig(
+        strategy_profile=spec.strategy_profile,
+        dealing_range_mode=spec.dealing_range_mode,
+        exit_mode=spec.exit_mode,
+        min_risk_reward=spec.min_risk_reward,
+        direction_mode=spec.direction_mode,
+        auto_trend_fallback=spec.auto_trend_fallback,
+        regime_mode=spec.regime_mode,
+        regime_lookback=spec.regime_lookback,
+        regime_threshold_pct=spec.regime_threshold_pct,
+        regime_fallback=spec.regime_fallback,
+        direction_quality_mode=spec.direction_quality_mode,
+        strict_long_require_regime_known=spec.strict_long_require_regime_known,
+        strict_long_block_unknown_regime=spec.strict_long_block_unknown_regime,
+        strict_long_require_regime_bullish=spec.strict_long_require_regime_bullish,
+        strict_long_require_displacement=spec.strict_long_require_displacement,
+        strict_long_min_setup_score=spec.strict_long_min_setup_score,
+        strict_short_require_regime_known=spec.strict_short_require_regime_known,
+        strict_short_block_unknown_regime=spec.strict_short_block_unknown_regime,
+        strict_short_require_regime_bearish=spec.strict_short_require_regime_bearish,
+        strict_short_require_displacement=spec.strict_short_require_displacement,
+        strict_short_min_setup_score=spec.strict_short_min_setup_score,
+        cost_model=spec.cost_model,
+        commission_pct=spec.commission_pct,
+        slippage_pct=spec.slippage_pct,
+        spread_pct=spec.spread_pct,
+        decision_filter_mode=spec.decision_filter_mode,
+        decision_score_threshold=spec.decision_score_threshold,
+    )
 
 
 def _parse_csv(value: str) -> list[str]:
