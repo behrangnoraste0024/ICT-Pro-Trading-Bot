@@ -13,6 +13,8 @@ if str(ROOT_DIR) not in sys.path:
 
 from engine.diagnostics.snapshot_comparison_engine import SnapshotComparisonEngine
 from engine.diagnostics.validation_baseline_engine import ValidationBaselineEngine
+from engine.diagnostics.validation_baseline_history_engine import ValidationBaselineHistoryEngine
+from models.validation_baseline_history import ValidationBaselineHistoryEntry
 from reporting.snapshot_comparison_report import format_snapshot_comparison_report
 
 
@@ -24,17 +26,27 @@ def main(argv: list[str] | None = None) -> int:
         print("Error: --snapshot, --promote-candidate, and --clear are mutually exclusive.")
         return 1
     engine = ValidationBaselineEngine(repo_root=ROOT_DIR)
+    history_engine = ValidationBaselineHistoryEngine()
     try:
+        if args.history_print or args.history_json:
+            _print_history(history_engine, args)
+            return 0
         if args.promote_candidate:
-            return _promote_candidate(engine, args)
+            return _promote_candidate(engine, history_engine, args)
         if args.snapshot:
+            previous_config = engine.load(args.config)
             config = engine.pin_snapshot(args.snapshot, args.config, dry_run=args.dry_run)
             _print_config(config)
             print(f"[baseline] pinned {config.baseline_snapshot_path}")
+            if not _record_history(history_engine, args, "PIN", previous_config, config):
+                return 1
         if args.clear:
+            previous_config = engine.load(args.config)
             config = engine.clear(args.config, dry_run=args.dry_run)
             _print_config(config)
             print("[baseline] cleared")
+            if not _record_history(history_engine, args, "CLEAR", previous_config, config):
+                return 1
         if args.print_config or (not args.snapshot and not args.clear and not args.validate):
             _print_config(engine.load(args.config))
         if args.validate:
@@ -60,6 +72,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--validate", action="store_true")
     parser.add_argument("--clear", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--history-config", default="configs/validation_baseline_history.json")
+    parser.add_argument("--record-history", action="store_true")
+    parser.add_argument("--history-print", action="store_true")
+    parser.add_argument("--history-limit", type=int, default=None)
+    parser.add_argument("--history-json", action="store_true")
+    parser.add_argument("--history-notes", default=None)
+    parser.add_argument("--no-history", action="store_true")
     return parser
 
 
@@ -67,7 +86,11 @@ def _print_config(config) -> None:
     print(json.dumps(config.to_dict(), indent=2))
 
 
-def _promote_candidate(engine: ValidationBaselineEngine, args: argparse.Namespace) -> int:
+def _promote_candidate(
+    engine: ValidationBaselineEngine,
+    history_engine: ValidationBaselineHistoryEngine,
+    args: argparse.Namespace,
+) -> int:
     candidate_path = Path(args.promote_candidate)
     print(f"[baseline] promotion candidate {candidate_path}")
     candidate = _load_candidate_snapshot(candidate_path)
@@ -103,12 +126,15 @@ def _promote_candidate(engine: ValidationBaselineEngine, args: argparse.Namespac
                 print("[baseline] promotion rejected status=WARNING")
                 return 1
 
+    previous_config = engine.load(args.config)
     config = engine.pin_snapshot(str(candidate_path), args.config, dry_run=args.dry_run)
     _print_config(config)
     if args.dry_run:
         print(f"[baseline] promotion dry-run accepted {candidate_path}")
     else:
         print(f"[baseline] promoted {candidate_path}")
+    if not _record_history(history_engine, args, "PROMOTE", previous_config, config, comparison):
+        return 1
     return 0
 
 
@@ -160,6 +186,83 @@ def _comparison_stem(comparison) -> str:
 
 def _safe_token(value: str) -> str:
     return "".join(character if character.isalnum() or character in ("-", "_") else "_" for character in value)
+
+
+def _record_history(
+    history_engine: ValidationBaselineHistoryEngine,
+    args: argparse.Namespace,
+    action: str,
+    previous_config,
+    config,
+    comparison=None,
+) -> bool:
+    if args.no_history or not args.record_history:
+        return True
+    entry = _history_entry(args, action, previous_config, config, comparison)
+    if args.dry_run:
+        _print_history_entry(entry)
+        print("[baseline-history] dry-run entry prepared")
+        return True
+    try:
+        history_engine.append_entry(args.history_config, entry)
+    except Exception as exc:
+        print(f"Error: baseline history append failed: {exc}")
+        if args.force:
+            print("[baseline-history] continuing after history failure force=true")
+            return True
+        return False
+    print(f"[baseline-history] recorded {action}")
+    return True
+
+
+def _history_entry(args: argparse.Namespace, action: str, previous_config, config, comparison=None) -> ValidationBaselineHistoryEntry:
+    return ValidationBaselineHistoryEntry(
+        promoted_at=datetime.now(UTC).isoformat(),
+        action=action,
+        baseline_snapshot_path=config.baseline_snapshot_path,
+        baseline_git_commit=config.baseline_git_commit,
+        baseline_created_at=config.baseline_created_at,
+        recommended_profile=config.recommended_profile,
+        previous_baseline_snapshot_path=previous_config.baseline_snapshot_path,
+        previous_baseline_git_commit=previous_config.baseline_git_commit,
+        comparison_status=None if comparison is None else comparison.regression_status,
+        comparison_net_after_costs_delta=None if comparison is None else comparison.aggregate_net_after_costs_delta,
+        comparison_max_drawdown_delta=None if comparison is None else comparison.aggregate_max_drawdown_delta,
+        comparison_regression_flags=[] if comparison is None else list(comparison.regression_flags),
+        promoted_by_command=" ".join(sys.argv),
+        notes=args.history_notes,
+    )
+
+
+def _print_history(history_engine: ValidationBaselineHistoryEngine, args: argparse.Namespace) -> None:
+    history = history_engine.load(args.history_config)
+    if args.history_json:
+        print(json.dumps(history.to_dict(), indent=2))
+        return
+    print("===== VALIDATION BASELINE HISTORY =====")
+    print(f"Total Entries: {len(history.entries)}")
+    entries = list(reversed(history.entries))
+    if args.history_limit is not None:
+        entries = entries[: max(args.history_limit, 0)]
+    for index, entry in enumerate(entries, start=1):
+        print(
+            f"{index}. {entry.promoted_at} {entry.action} "
+            f"commit={entry.baseline_git_commit} profile={entry.recommended_profile} "
+            f"path={entry.baseline_snapshot_path}"
+        )
+        print(f"   previous={entry.previous_baseline_git_commit}")
+        print(
+            f"   comparison={entry.comparison_status} "
+            f"net_delta={entry.comparison_net_after_costs_delta} "
+            f"maxdd_delta={entry.comparison_max_drawdown_delta}"
+        )
+        if entry.comparison_regression_flags:
+            print(f"   flags={','.join(entry.comparison_regression_flags)}")
+        print(f"   notes={entry.notes}")
+
+
+def _print_history_entry(entry: ValidationBaselineHistoryEntry) -> None:
+    print(json.dumps(entry.to_dict(), indent=2))
 
 
 if __name__ == "__main__":

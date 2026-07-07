@@ -382,3 +382,230 @@ def test_snapshot_and_promote_candidate_are_mutually_exclusive(tmp_path, capsys)
     captured = capsys.readouterr()
     assert return_code == 1
     assert "mutually exclusive" in captured.out
+
+
+def test_history_print_works_when_file_missing(tmp_path, capsys) -> None:
+    return_code = main(["--history-print", "--history-config", str(tmp_path / "missing_history.json")])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "===== VALIDATION BASELINE HISTORY =====" in captured.out
+    assert "Total Entries: 0" in captured.out
+
+
+def test_history_print_limit_shows_most_recent_entries(tmp_path, capsys) -> None:
+    history = tmp_path / "history.json"
+    history.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "entries": [
+                    {
+                        "promoted_at": "2026-07-07T10:00:00+00:00",
+                        "action": "PIN",
+                        "baseline_git_commit": "old",
+                    },
+                    {
+                        "promoted_at": "2026-07-07T11:00:00+00:00",
+                        "action": "PROMOTE",
+                        "baseline_git_commit": "new",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    return_code = main(["--history-print", "--history-config", str(history), "--history-limit", "1"])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "commit=new" in captured.out
+    assert "commit=old" not in captured.out
+
+
+def test_history_json_prints_raw_history(tmp_path, capsys) -> None:
+    history = tmp_path / "history.json"
+    history.write_text(json.dumps({"schema_version": "1.0", "entries": []}), encoding="utf-8")
+
+    return_code = main(["--history-json", "--history-config", str(history)])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    data = json.loads(captured.out)
+    assert data == {"schema_version": "1.0", "entries": []}
+
+
+def test_snapshot_with_record_history_appends_pin_entry(tmp_path, capsys) -> None:
+    snapshot = tmp_path / "snapshot.json"
+    config = tmp_path / "config.json"
+    history = tmp_path / "history.json"
+    _snapshot(snapshot, commit="pin123")
+
+    return_code = main(
+        [
+            "--snapshot",
+            str(snapshot),
+            "--config",
+            str(config),
+            "--record-history",
+            "--history-config",
+            str(history),
+            "--history-notes",
+            "Initial pinned baseline",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    entry = json.loads(history.read_text(encoding="utf-8"))["entries"][0]
+    assert return_code == 0
+    assert entry["action"] == "PIN"
+    assert entry["baseline_git_commit"] == "pin123"
+    assert entry["previous_baseline_snapshot_path"] is None
+    assert entry["notes"] == "Initial pinned baseline"
+    assert "[baseline-history] recorded PIN" in captured.out
+
+
+def test_promote_candidate_with_record_history_appends_promote_entry(tmp_path, capsys) -> None:
+    candidate = tmp_path / "candidate.json"
+    config = tmp_path / "config.json"
+    history = tmp_path / "history.json"
+    previous = tmp_path / "previous.json"
+    _snapshot(candidate, commit="cand456")
+    _snapshot(previous, commit="prev123")
+    _config_with_baseline(config, previous)
+
+    return_code = main(
+        [
+            "--promote-candidate",
+            str(candidate),
+            "--config",
+            str(config),
+            "--record-history",
+            "--history-config",
+            str(history),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    entry = json.loads(history.read_text(encoding="utf-8"))["entries"][0]
+    assert return_code == 0
+    assert entry["action"] == "PROMOTE"
+    assert entry["baseline_git_commit"] == "cand456"
+    assert entry["previous_baseline_git_commit"] == "base123"
+    assert entry["previous_baseline_snapshot_path"] == str(previous)
+    assert "[baseline-history] recorded PROMOTE" in captured.out
+
+
+def test_promotion_history_includes_comparison_status_when_require_pass_runs(tmp_path, capsys) -> None:
+    baseline = tmp_path / "baseline.json"
+    candidate = tmp_path / "candidate.json"
+    config = tmp_path / "config.json"
+    history = tmp_path / "history.json"
+    _snapshot(baseline, commit="base123", net_after_costs=1000.0)
+    _snapshot(candidate, commit="cand456", net_after_costs=1010.0)
+    _config_with_baseline(config, baseline)
+
+    return_code = main(
+        [
+            "--promote-candidate",
+            str(candidate),
+            "--config",
+            str(config),
+            "--require-pass",
+            "--record-history",
+            "--history-config",
+            str(history),
+        ]
+    )
+
+    capsys.readouterr()
+    entry = json.loads(history.read_text(encoding="utf-8"))["entries"][0]
+    assert return_code == 0
+    assert entry["comparison_status"] == "PASS"
+    assert entry["comparison_net_after_costs_delta"] == 10.0
+    assert entry["comparison_max_drawdown_delta"] == 0.0
+
+
+def test_promotion_dry_run_with_record_history_does_not_write_history(tmp_path, capsys) -> None:
+    candidate = tmp_path / "candidate.json"
+    config = tmp_path / "config.json"
+    history = tmp_path / "history.json"
+    _snapshot(candidate)
+
+    return_code = main(
+        [
+            "--promote-candidate",
+            str(candidate),
+            "--config",
+            str(config),
+            "--record-history",
+            "--history-config",
+            str(history),
+            "--dry-run",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert not history.exists()
+    assert "[baseline-history] dry-run entry prepared" in captured.out
+
+
+def test_clear_with_record_history_appends_clear_entry(tmp_path, capsys) -> None:
+    snapshot = tmp_path / "snapshot.json"
+    config = tmp_path / "config.json"
+    history = tmp_path / "history.json"
+    _snapshot(snapshot, commit="old123")
+    main(["--snapshot", str(snapshot), "--config", str(config)])
+    capsys.readouterr()
+
+    return_code = main(["--clear", "--config", str(config), "--record-history", "--history-config", str(history)])
+
+    captured = capsys.readouterr()
+    entry = json.loads(history.read_text(encoding="utf-8"))["entries"][0]
+    assert return_code == 0
+    assert entry["action"] == "CLEAR"
+    assert entry["baseline_snapshot_path"] is None
+    assert entry["previous_baseline_git_commit"] == "old123"
+    assert "[baseline-history] recorded CLEAR" in captured.out
+
+
+def test_malformed_history_file_returns_nonzero_when_recording(tmp_path, capsys) -> None:
+    snapshot = tmp_path / "snapshot.json"
+    config = tmp_path / "config.json"
+    history = tmp_path / "history.json"
+    _snapshot(snapshot)
+    history.write_text("{", encoding="utf-8")
+
+    return_code = main(["--snapshot", str(snapshot), "--config", str(config), "--record-history", "--history-config", str(history)])
+
+    captured = capsys.readouterr()
+    assert return_code == 1
+    assert "baseline history append failed" in captured.out
+
+
+def test_snapshot_without_record_history_does_not_create_history(tmp_path, capsys) -> None:
+    snapshot = tmp_path / "snapshot.json"
+    config = tmp_path / "config.json"
+    history = tmp_path / "history.json"
+    _snapshot(snapshot)
+
+    return_code = main(["--snapshot", str(snapshot), "--config", str(config), "--history-config", str(history)])
+
+    capsys.readouterr()
+    assert return_code == 0
+    assert not history.exists()
+
+
+def test_promotion_without_record_history_does_not_create_history(tmp_path, capsys) -> None:
+    candidate = tmp_path / "candidate.json"
+    config = tmp_path / "config.json"
+    history = tmp_path / "history.json"
+    _snapshot(candidate)
+
+    return_code = main(["--promote-candidate", str(candidate), "--config", str(config), "--history-config", str(history)])
+
+    capsys.readouterr()
+    assert return_code == 0
+    assert not history.exists()
