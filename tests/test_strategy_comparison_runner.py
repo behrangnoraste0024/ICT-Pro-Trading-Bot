@@ -261,6 +261,53 @@ def test_show_recommendation_prints_validation_report(capsys) -> None:
     assert "Candidate Ranking:" in captured.out
 
 
+def test_show_walk_forward_validation_prints_report(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "recommended_decision_profiles_with_costs",
+            "--sort-by",
+            "net_pnl_after_costs",
+            "--show-walk-forward-validation",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "===== WALK-FORWARD RECOMMENDED PROFILE VALIDATION =====" in captured.out
+    assert "Profile              : balanced_smc_decision_065" in captured.out
+    assert "Segments:" in captured.out
+
+
+def test_show_recommendation_prints_before_walk_forward_validation(capsys) -> None:
+    return_code = main(
+        [
+            "--fixture",
+            FIXTURE_PATH,
+            "--min-candles",
+            "50",
+            "--strategy-set",
+            "recommended_decision_profiles_with_costs",
+            "--sort-by",
+            "net_pnl_after_costs",
+            "--show-recommendation",
+            "--show-walk-forward-validation",
+            "--fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    recommendation_index = captured.out.index("===== RECOMMENDED PROFILE VALIDATION =====")
+    walk_forward_index = captured.out.index("===== WALK-FORWARD RECOMMENDED PROFILE VALIDATION =====")
+    assert recommendation_index < walk_forward_index
+
+
 def test_default_comparison_does_not_print_recommendation_report(capsys) -> None:
     return_code = main(
         [
@@ -280,6 +327,7 @@ def test_default_comparison_does_not_print_recommendation_report(capsys) -> None
     assert return_code == 0
     assert "===== STRATEGY COMPARISON REPORT =====" in captured.out
     assert "===== RECOMMENDED PROFILE VALIDATION =====" not in captured.out
+    assert "===== WALK-FORWARD RECOMMENDED PROFILE VALIDATION =====" not in captured.out
 
 
 def test_current_external_only_strategy_set_works(capsys) -> None:

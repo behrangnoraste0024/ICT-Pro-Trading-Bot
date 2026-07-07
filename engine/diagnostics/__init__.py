@@ -3,6 +3,7 @@ from engine.diagnostics.decision_threshold_calibration_engine import DecisionThr
 from engine.diagnostics.decision_threshold_robustness_engine import DecisionThresholdRobustnessEngine
 from engine.diagnostics.regime_direction_diagnostics_engine import RegimeDirectionDiagnosticsEngine
 from engine.diagnostics.recommended_profile_validation_engine import RecommendedProfileValidationEngine
+from engine.diagnostics.walk_forward_validation_engine import WalkForwardValidationEngine
 
 __all__ = [
     "DecisionFilterSimulationEngine",
@@ -10,4 +11,5 @@ __all__ = [
     "DecisionThresholdRobustnessEngine",
     "RegimeDirectionDiagnosticsEngine",
     "RecommendedProfileValidationEngine",
+    "WalkForwardValidationEngine",
 ]
