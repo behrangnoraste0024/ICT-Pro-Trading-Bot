@@ -20,6 +20,8 @@ from engine.diagnostics.validation_baseline_engine import ValidationBaselineEngi
 from engine.diagnostics.validation_snapshot_engine import ValidationSnapshotEngine
 from reporting.multi_sample_validation_report import format_multi_sample_validation_report
 from reporting.snapshot_comparison_report import format_snapshot_comparison_report
+from reporting.validation_gate_summary_report import format_validation_gate_summary
+from models.validation_gate_summary import ValidationGateSummary
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -71,6 +73,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if not baseline_snapshot:
         print("[validation-gate] no baseline snapshot provided; comparison skipped")
+        _print_summary_if_requested(
+            args,
+            result=result,
+            snapshot=snapshot,
+            baseline_snapshot=baseline_snapshot,
+            candidate_snapshot_path=snapshot_json_path or (snapshot_paths[0] if snapshot_paths else None),
+            comparison=None,
+            comparison_paths=[],
+        )
         print("[validation-gate] completed status=PASS")
         return 0
     if snapshot_json_path is None:
@@ -85,8 +96,19 @@ def main(argv: list[str] | None = None) -> int:
         comparison_paths = _export_comparison(comparison, comparison_report, args.comparison_dir)
         for path in comparison_paths:
             print(f"[validation-gate] comparison wrote {path}")
+    else:
+        comparison_paths = []
     if comparison.regression_status == "WARNING":
         print("[validation-gate] warning: regression guard reported WARNING")
+    _print_summary_if_requested(
+        args,
+        result=result,
+        snapshot=snapshot,
+        baseline_snapshot=baseline_snapshot,
+        candidate_snapshot_path=snapshot_json_path,
+        comparison=comparison,
+        comparison_paths=comparison_paths,
+    )
     if args.fail_on_regression and comparison.regression_status == "FAIL":
         print("[validation-gate] failed due to regression")
         return 1
@@ -111,7 +133,86 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-windows", type=int, default=None)
     parser.add_argument("--fast", action="store_true")
     parser.add_argument("--show-details", action="store_true")
+    parser.add_argument("--summary-badge", action="store_true")
     return parser
+
+
+def _print_summary_if_requested(
+    args,
+    result,
+    snapshot,
+    baseline_snapshot: str | None,
+    candidate_snapshot_path: str | None,
+    comparison,
+    comparison_paths: list[str],
+) -> None:
+    if not args.summary_badge:
+        return
+    summary = _build_summary(
+        result=result,
+        snapshot=snapshot,
+        baseline_snapshot=baseline_snapshot,
+        candidate_snapshot_path=candidate_snapshot_path,
+        comparison=comparison,
+        comparison_paths=comparison_paths,
+        fail_on_regression=args.fail_on_regression,
+    )
+    print(format_validation_gate_summary(summary))
+
+
+def _build_summary(
+    result,
+    snapshot,
+    baseline_snapshot: str | None,
+    candidate_snapshot_path: str | None,
+    comparison,
+    comparison_paths: list[str],
+    fail_on_regression: bool,
+) -> ValidationGateSummary:
+    primary = _primary_row(result)
+    regression_status = "SKIPPED" if comparison is None else comparison.regression_status
+    gate_status = _gate_status(result, comparison)
+    return ValidationGateSummary(
+        gate_status=gate_status,
+        regression_status=regression_status,
+        recommended_profile=result.recommended_profile,
+        baseline_commit=None if comparison is None else comparison.baseline_git_commit,
+        candidate_commit=snapshot.metadata.git_commit if comparison is None else comparison.candidate_git_commit,
+        baseline_snapshot_path=baseline_snapshot,
+        candidate_snapshot_path=candidate_snapshot_path,
+        comparison_paths=comparison_paths,
+        total_samples=result.total_samples,
+        completed_samples=result.completed_samples,
+        passed_samples=result.passed_samples,
+        failed_samples=result.failed_samples,
+        skipped_samples=result.skipped_samples,
+        net_after_costs_delta=None if comparison is None else comparison.aggregate_net_after_costs_delta,
+        max_drawdown_delta=None if comparison is None else comparison.aggregate_max_drawdown_delta,
+        regression_flag_count=0 if comparison is None else len(comparison.regression_flags),
+        warning_sample_count=0 if comparison is None else comparison.warning_samples,
+        failed_sample_count=0 if comparison is None else comparison.failed_samples,
+        primary_cache_status=None if primary is None else primary.cache_status,
+        primary_original_elapsed=None if primary is None else primary.original_elapsed_seconds,
+        primary_cache_read_elapsed=None if primary is None else primary.cache_read_elapsed_seconds,
+        primary_saved_estimate=None if primary is None else primary.estimated_saved_seconds,
+        fail_on_regression=fail_on_regression,
+    )
+
+
+def _gate_status(result, comparison) -> str:
+    if comparison is not None:
+        return comparison.regression_status
+    if any(row.status in ("FAILED", "ERROR") for row in result.rows):
+        return "FAIL"
+    if any(row.status == "WARNING" for row in result.rows):
+        return "WARNING"
+    return "PASS"
+
+
+def _primary_row(result):
+    if not result.rows:
+        return None
+    return next((row for row in result.rows if row.sample_name == "btcusdt_15m_1000"), result.rows[0])
 
 
 def _resolve_baseline_snapshot(args) -> str | None:
