@@ -3,23 +3,30 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from engine.diagnostics.snapshot_comparison_engine import SnapshotComparisonEngine
 from engine.diagnostics.validation_baseline_engine import ValidationBaselineEngine
+from reporting.snapshot_comparison_report import format_snapshot_comparison_report
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
-    if args.snapshot and args.clear:
-        print("Error: --snapshot and --clear cannot both be used.")
+    selected_actions = [bool(args.snapshot), bool(args.promote_candidate), bool(args.clear)]
+    if sum(selected_actions) > 1:
+        print("Error: --snapshot, --promote-candidate, and --clear are mutually exclusive.")
         return 1
     engine = ValidationBaselineEngine(repo_root=ROOT_DIR)
     try:
+        if args.promote_candidate:
+            return _promote_candidate(engine, args)
         if args.snapshot:
             config = engine.pin_snapshot(args.snapshot, args.config, dry_run=args.dry_run)
             _print_config(config)
@@ -42,6 +49,12 @@ def main(argv: list[str] | None = None) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pin or inspect validation baseline snapshot config.")
     parser.add_argument("--snapshot", default=None)
+    parser.add_argument("--promote-candidate", default=None)
+    parser.add_argument("--require-pass", action="store_true")
+    parser.add_argument("--allow-warning", action="store_true")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--expected-profile", default="balanced_smc_decision_065")
+    parser.add_argument("--comparison-export-dir", default=None)
     parser.add_argument("--config", default="configs/validation_baseline.json")
     parser.add_argument("--print", dest="print_config", action="store_true")
     parser.add_argument("--validate", action="store_true")
@@ -52,6 +65,101 @@ def _parser() -> argparse.ArgumentParser:
 
 def _print_config(config) -> None:
     print(json.dumps(config.to_dict(), indent=2))
+
+
+def _promote_candidate(engine: ValidationBaselineEngine, args: argparse.Namespace) -> int:
+    candidate_path = Path(args.promote_candidate)
+    print(f"[baseline] promotion candidate {candidate_path}")
+    candidate = _load_candidate_snapshot(candidate_path)
+    metadata = candidate["metadata"]
+    candidate_profile = metadata.get("recommended_profile")
+    if args.expected_profile and candidate_profile != args.expected_profile:
+        message = (
+            "[baseline] promotion rejected profile mismatch "
+            f"expected={args.expected_profile} candidate={candidate_profile}"
+        )
+        if not args.force:
+            print(message)
+            return 1
+        print(f"{message} force=true")
+
+    comparison = None
+    if args.require_pass:
+        comparison = _compare_current_baseline(engine, args, candidate_path)
+        if comparison is None:
+            if not args.force:
+                print("[baseline] promotion rejected missing current baseline")
+                return 1
+            print("[baseline] promotion continuing without comparison force=true")
+        else:
+            print(format_snapshot_comparison_report(comparison))
+            print(f"[baseline] promotion comparison status={comparison.regression_status}")
+            if args.comparison_export_dir:
+                _export_comparison(comparison, args.comparison_export_dir)
+            if comparison.regression_status == "FAIL" and not args.force:
+                print("[baseline] promotion rejected status=FAIL")
+                return 1
+            if comparison.regression_status == "WARNING" and not (args.allow_warning or args.force):
+                print("[baseline] promotion rejected status=WARNING")
+                return 1
+
+    config = engine.pin_snapshot(str(candidate_path), args.config, dry_run=args.dry_run)
+    _print_config(config)
+    if args.dry_run:
+        print(f"[baseline] promotion dry-run accepted {candidate_path}")
+    else:
+        print(f"[baseline] promoted {candidate_path}")
+    return 0
+
+
+def _load_candidate_snapshot(candidate_path: Path) -> dict[str, Any]:
+    if not candidate_path.exists():
+        raise FileNotFoundError(f"candidate snapshot not found: {candidate_path}")
+    with candidate_path.open("r", encoding="utf-8") as handle:
+        loaded = json.load(handle)
+    if not isinstance(loaded, dict):
+        raise ValueError(f"candidate snapshot must be a JSON object: {candidate_path}")
+    metadata = loaded.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError(f"candidate snapshot missing metadata: {candidate_path}")
+    result = loaded.get("multi_sample_result")
+    if not isinstance(result, dict):
+        raise ValueError(f"candidate snapshot missing multi_sample_result: {candidate_path}")
+    return loaded
+
+
+def _compare_current_baseline(engine: ValidationBaselineEngine, args: argparse.Namespace, candidate_path: Path):
+    try:
+        config = engine.load(args.config)
+        baseline_path = engine.validate_baseline_path(config)
+    except FileNotFoundError as exc:
+        print(f"[baseline] current baseline unavailable {exc}")
+        return None
+    print(f"[baseline] current baseline {baseline_path}")
+    return SnapshotComparisonEngine().compare_files(baseline_path, str(candidate_path))
+
+
+def _export_comparison(comparison, export_dir: str) -> None:
+    output_dir = Path(export_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = _comparison_stem(comparison)
+    json_path = output_dir / f"{stem}.json"
+    md_path = output_dir / f"{stem}.md"
+    json_path.write_text(json.dumps(comparison.to_dict(), indent=2), encoding="utf-8")
+    md_path.write_text(format_snapshot_comparison_report(comparison), encoding="utf-8")
+    print(f"[baseline] promotion comparison wrote {json_path}")
+    print(f"[baseline] promotion comparison wrote {md_path}")
+
+
+def _comparison_stem(comparison) -> str:
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    baseline = _safe_token(comparison.baseline_git_commit or "unknown")
+    candidate = _safe_token(comparison.candidate_git_commit or "unknown")
+    return f"baseline_promotion_comparison_{timestamp}_{baseline}_to_{candidate}"
+
+
+def _safe_token(value: str) -> str:
+    return "".join(character if character.isalnum() or character in ("-", "_") else "_" for character in value)
 
 
 if __name__ == "__main__":
