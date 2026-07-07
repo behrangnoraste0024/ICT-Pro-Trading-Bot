@@ -4,10 +4,36 @@ import json
 
 import pytest
 
+from models.strategy_comparison import StrategyComparisonReport, StrategyComparisonRow
 from scripts.run_strategy_comparison import main
 
 
 FIXTURE_PATH = "tests/fixtures/btcusdt_100_candles.json"
+
+
+class _FakeStrategyComparisonEngine:
+    calls = 0
+
+    def run_comparison(self, **kwargs) -> StrategyComparisonReport:
+        type(self).calls += 1
+        report = StrategyComparisonReport(
+            fixture=kwargs["fixture_path"],
+            min_candles=kwargs["min_candles"],
+            strategies=[
+                StrategyComparisonRow(
+                    strategy_name="fake",
+                    total_trades=1,
+                    wins=1,
+                    losses=0,
+                    win_rate=100,
+                    net_pnl=10,
+                    gross_net_pnl=10,
+                    net_pnl_after_costs=9,
+                )
+            ],
+        )
+        report.populate_best_fields()
+        return report
 
 
 def test_help_works(capsys) -> None:
@@ -541,6 +567,71 @@ def test_progress_every_prints_rolling_progress(capsys) -> None:
     assert return_code == 0
     assert "processed=" in captured.out
     assert "duplicates=" in captured.out
+
+
+def test_strategy_comparison_without_use_cache_does_not_print_cache_logs(tmp_path, capsys, monkeypatch) -> None:
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text("[]", encoding="utf-8")
+    _FakeStrategyComparisonEngine.calls = 0
+    monkeypatch.setattr("scripts.run_strategy_comparison.StrategyComparisonEngine", _FakeStrategyComparisonEngine)
+
+    return_code = main(["--fixture", str(fixture), "--strategy-set", "current_external_only"])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert _FakeStrategyComparisonEngine.calls == 1
+    assert "[cache]" not in captured.out
+
+
+def test_strategy_comparison_with_use_cache_prints_miss_and_wrote(tmp_path, capsys, monkeypatch) -> None:
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text("[]", encoding="utf-8")
+    _FakeStrategyComparisonEngine.calls = 0
+    monkeypatch.setattr("scripts.run_strategy_comparison.StrategyComparisonEngine", _FakeStrategyComparisonEngine)
+
+    return_code = main(
+        [
+            "--fixture",
+            str(fixture),
+            "--strategy-set",
+            "current_external_only",
+            "--use-cache",
+            "--cache-dir",
+            str(tmp_path / "cache"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert _FakeStrategyComparisonEngine.calls == 1
+    assert "[cache] miss" in captured.out
+    assert "[cache] wrote" in captured.out
+
+
+def test_strategy_comparison_with_use_cache_prints_hit(tmp_path, capsys, monkeypatch) -> None:
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text("[]", encoding="utf-8")
+    cache_dir = tmp_path / "cache"
+    _FakeStrategyComparisonEngine.calls = 0
+    monkeypatch.setattr("scripts.run_strategy_comparison.StrategyComparisonEngine", _FakeStrategyComparisonEngine)
+    args = [
+        "--fixture",
+        str(fixture),
+        "--strategy-set",
+        "current_external_only",
+        "--use-cache",
+        "--cache-dir",
+        str(cache_dir),
+    ]
+
+    assert main(args) == 0
+    first = capsys.readouterr()
+    assert "[cache] wrote" in first.out
+    assert main(args) == 0
+    second = capsys.readouterr()
+
+    assert _FakeStrategyComparisonEngine.calls == 1
+    assert "[cache] hit" in second.out
 
 
 def test_output_json_writes_valid_json(tmp_path) -> None:

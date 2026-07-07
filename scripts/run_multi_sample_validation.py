@@ -40,6 +40,9 @@ def main(argv: list[str] | None = None) -> int:
         fast=args.fast,
         max_windows=args.max_windows,
         progress_callback=_print_progress,
+        use_cache=args.use_cache,
+        refresh_cache=args.refresh_cache,
+        cache_dir=args.cache_dir,
     )
     print(format_multi_sample_validation_report(result, show_details=args.show_details))
     return 0
@@ -70,6 +73,15 @@ def _print_progress(payload: dict) -> None:
     if event == "running_validation":
         print(f"[multi-sample] running validation for {payload['sample']} ...", flush=True)
         return
+    if event == "cache_hit":
+        print(f"[cache] hit {payload['cache_path']}", flush=True)
+        return
+    if event == "cache_miss":
+        print("[cache] miss", flush=True)
+        return
+    if event == "cache_wrote":
+        print(f"[cache] wrote {payload['cache_path']}", flush=True)
+        return
     if event == "sample_finish":
         print(
             f"[multi-sample] finished {payload['sample']} status={payload['status']} "
@@ -95,6 +107,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-details", action="store_true")
     parser.add_argument("--fast", action="store_true")
     parser.add_argument("--max-windows", type=int, default=None)
+    parser.add_argument("--use-cache", action="store_true")
+    parser.add_argument("--refresh-cache", action="store_true")
+    parser.add_argument("--cache-dir", default=".cache/backtests")
     return parser
 
 
