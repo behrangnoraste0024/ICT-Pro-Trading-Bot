@@ -16,6 +16,7 @@ from engine.diagnostics.multi_sample_validation_engine import (
     MultiSampleValidationEngine,
 )
 from engine.diagnostics.snapshot_comparison_engine import SnapshotComparisonEngine
+from engine.diagnostics.validation_baseline_engine import ValidationBaselineEngine
 from engine.diagnostics.validation_snapshot_engine import ValidationSnapshotEngine
 from reporting.multi_sample_validation_report import format_multi_sample_validation_report
 from reporting.snapshot_comparison_report import format_snapshot_comparison_report
@@ -33,8 +34,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.max_windows is not None and args.max_windows <= 0:
         print("Error: --max-windows must be greater than 0.")
         return 1
-    if args.baseline_snapshot and not Path(args.baseline_snapshot).exists():
-        print(f"Error: baseline snapshot not found: {args.baseline_snapshot}")
+    baseline_snapshot = _resolve_baseline_snapshot(args)
+    if baseline_snapshot == "__ERROR__":
         return 1
 
     print("[validation-gate] starting")
@@ -63,12 +64,12 @@ def main(argv: list[str] | None = None) -> int:
         fast=args.fast,
         command=_command_text(argv),
     )
-    snapshot_paths = _export_snapshot(snapshot_engine, snapshot, args.snapshot_dir, args.snapshot_format, bool(args.baseline_snapshot))
+    snapshot_paths = _export_snapshot(snapshot_engine, snapshot, args.snapshot_dir, args.snapshot_format, bool(baseline_snapshot))
     for path in snapshot_paths:
         print(f"[validation-gate] snapshot wrote {path}")
     snapshot_json_path = _snapshot_json_path(snapshot_paths)
 
-    if not args.baseline_snapshot:
+    if not baseline_snapshot:
         print("[validation-gate] no baseline snapshot provided; comparison skipped")
         print("[validation-gate] completed status=PASS")
         return 0
@@ -76,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         print("[validation-gate] failed: JSON snapshot unavailable for comparison")
         return 1
 
-    comparison = SnapshotComparisonEngine().compare_files(args.baseline_snapshot, snapshot_json_path)
+    comparison = SnapshotComparisonEngine().compare_files(baseline_snapshot, snapshot_json_path)
     comparison_report = format_snapshot_comparison_report(comparison)
     print(comparison_report)
     print(f"[validation-gate] regression_status={comparison.regression_status}")
@@ -96,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run one-command validation gate for research snapshots.")
     parser.add_argument("--baseline-snapshot", default=None)
+    parser.add_argument("--baseline-config", default="configs/validation_baseline.json")
     parser.add_argument("--fail-on-regression", action="store_true")
     parser.add_argument("--snapshot-dir", default="reports/validation_snapshots")
     parser.add_argument("--snapshot-format", choices=["json", "md", "both"], default="both")
@@ -110,6 +112,30 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--fast", action="store_true")
     parser.add_argument("--show-details", action="store_true")
     return parser
+
+
+def _resolve_baseline_snapshot(args) -> str | None:
+    if args.baseline_snapshot:
+        if not Path(args.baseline_snapshot).exists():
+            print(f"Error: baseline snapshot not found: {args.baseline_snapshot}")
+            return "__ERROR__"
+        return args.baseline_snapshot
+    config_path = Path(args.baseline_config)
+    if not config_path.exists():
+        print(f"[validation-gate] baseline config not found; comparison skipped")
+        return None
+    engine = ValidationBaselineEngine(repo_root=ROOT_DIR)
+    config = engine.load(str(config_path))
+    if not config.baseline_snapshot_path:
+        return None
+    try:
+        resolved = engine.validate_baseline_path(config)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}")
+        return "__ERROR__"
+    print(f"[validation-gate] using baseline config {args.baseline_config}")
+    print(f"[validation-gate] baseline snapshot {resolved}")
+    return resolved
 
 
 def _export_snapshot(
