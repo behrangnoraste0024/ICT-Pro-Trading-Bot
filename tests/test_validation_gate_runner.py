@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from models.multi_sample_validation import MultiSampleValidationResult, MultiSampleValidationRow
+from models.historical_sample_registry import HistoricalSampleRegistryReport
 from models.snapshot_comparison import SnapshotComparisonResult
 from scripts.run_validation_gate import main
 
@@ -89,6 +90,23 @@ class _FakeSnapshotComparisonEngine:
             failed_samples=1 if self.status == "FAIL" else 0,
             regression_status=self.status,
             regression_flags=["mock:FAIL"] if self.status == "FAIL" else [],
+        )
+
+
+class _FakeHistoricalSampleRegistryEngine:
+    last_registry = None
+
+    def __init__(self, repo_root=None) -> None:
+        self.repo_root = repo_root
+
+    def check(self, registry_path: str) -> HistoricalSampleRegistryReport:
+        type(self).last_registry = registry_path
+        return HistoricalSampleRegistryReport(
+            registry_path=registry_path,
+            total_samples=1,
+            available_samples=1,
+            required_full_available=True,
+            required_ci_available=True,
         )
 
 
@@ -566,3 +584,27 @@ def test_full_preset_prints_banner_and_uses_baseline_config(tmp_path, capsys, mo
     assert "[validation-gate] preset applied full daily research gate" in captured.out
     assert _FakeSnapshotComparisonEngine.compared is True
     assert _FakeMultiSampleValidationEngine.last_kwargs["use_cache"] is True
+
+
+def test_check_samples_prints_registry_report_before_validation(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+    monkeypatch.setattr("scripts.run_validation_gate.HistoricalSampleRegistryEngine", _FakeHistoricalSampleRegistryEngine)
+
+    return_code = main(
+        [
+            "--baseline-config",
+            str(tmp_path / "missing_config.json"),
+            "--snapshot-dir",
+            str(tmp_path),
+            "--snapshot-format",
+            "json",
+            "--check-samples",
+            "--sample-registry",
+            str(tmp_path / "registry.json"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "===== HISTORICAL SAMPLE REGISTRY =====" in captured.out
+    assert _FakeHistoricalSampleRegistryEngine.last_registry == str(tmp_path / "registry.json")

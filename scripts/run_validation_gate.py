@@ -15,10 +15,12 @@ from engine.diagnostics.multi_sample_validation_engine import (
     DEFAULT_MULTI_SAMPLE_DEFINITIONS,
     MultiSampleValidationEngine,
 )
+from engine.diagnostics.historical_sample_registry_engine import HistoricalSampleRegistryEngine
 from engine.diagnostics.snapshot_comparison_engine import SnapshotComparisonEngine
 from engine.diagnostics.validation_baseline_engine import ValidationBaselineEngine
 from engine.diagnostics.validation_snapshot_engine import ValidationSnapshotEngine
 from reporting.multi_sample_validation_report import format_multi_sample_validation_report
+from reporting.historical_sample_registry_report import format_historical_sample_registry_report
 from reporting.snapshot_comparison_report import format_snapshot_comparison_report
 from reporting.validation_gate_summary_report import format_validation_gate_summary
 from models.validation_gate_summary import ValidationGateSummary
@@ -41,6 +43,14 @@ def main(argv: list[str] | None = None) -> int:
     baseline_snapshot = _resolve_baseline_snapshot(args)
     if baseline_snapshot == "__ERROR__":
         return 1
+
+    if args.check_samples:
+        try:
+            sample_report = HistoricalSampleRegistryEngine(repo_root=ROOT_DIR).check(args.sample_registry)
+        except Exception as exc:
+            print(f"Error: {exc}")
+            return 1
+        print(format_historical_sample_registry_report(sample_report))
 
     print("[validation-gate] starting")
     result = MultiSampleValidationEngine().validate(
@@ -142,6 +152,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--fast", action="store_true")
     parser.add_argument("--show-details", action="store_true")
     parser.add_argument("--summary-badge", action="store_true")
+    parser.add_argument("--check-samples", action="store_true")
+    parser.add_argument("--sample-registry", default="configs/historical_sample_registry.json")
     return parser
 
 
