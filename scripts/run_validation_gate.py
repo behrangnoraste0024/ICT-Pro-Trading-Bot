@@ -27,6 +27,8 @@ from models.validation_gate_summary import ValidationGateSummary
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
+    provided_options = _provided_options(argv)
+    apply_validation_gate_preset(args, provided_options)
     if args.strategy_set != "recommended_decision_profiles_with_costs":
         print(f"Error: unsupported strategy set: {args.strategy_set}")
         return 1
@@ -118,6 +120,12 @@ def main(argv: list[str] | None = None) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run one-command validation gate for research snapshots.")
+    parser.add_argument(
+        "--preset",
+        choices=["quick", "full", "ci", "snapshot-only"],
+        default=None,
+        help="Apply common validation gate defaults for local smoke, daily full, CI, or snapshot export workflows.",
+    )
     parser.add_argument("--baseline-snapshot", default=None)
     parser.add_argument("--baseline-config", default="configs/validation_baseline.json")
     parser.add_argument("--fail-on-regression", action="store_true")
@@ -135,6 +143,65 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-details", action="store_true")
     parser.add_argument("--summary-badge", action="store_true")
     return parser
+
+
+def apply_validation_gate_preset(args, provided_options: set[str]) -> None:
+    if not args.preset:
+        return
+    descriptions = {
+        "quick": "quick smoke validation",
+        "full": "full daily research gate",
+        "ci": "CI regression gate",
+        "snapshot-only": "snapshot export only",
+    }
+    print(f"[validation-gate] preset={args.preset}")
+    print(f"[validation-gate] preset applied {descriptions[args.preset]}")
+    if args.preset == "quick":
+        _set_if_missing(args, provided_options, "max_windows", "max-windows", 100)
+        _set_if_missing(args, provided_options, "use_cache", "use-cache", True)
+        _set_if_missing(args, provided_options, "cache_dir", "cache-dir", ".cache/backtests")
+        _set_if_missing(args, provided_options, "snapshot_dir", "snapshot-dir", "reports/validation_snapshots")
+        _set_if_missing(args, provided_options, "snapshot_format", "snapshot-format", "both")
+        _set_if_missing(args, provided_options, "summary_badge", "summary-badge", True)
+        if "baseline-config" not in provided_options and "baseline-snapshot" not in provided_options:
+            args.baseline_config = None
+        return
+    if args.preset in ("full", "ci"):
+        _set_if_missing(args, provided_options, "baseline_config", "baseline-config", "configs/validation_baseline.json")
+        _set_if_missing(args, provided_options, "fail_on_regression", "fail-on-regression", True)
+        _set_if_missing(args, provided_options, "export_comparison", "export-comparison", True)
+        _set_if_missing(args, provided_options, "summary_badge", "summary-badge", True)
+        if args.preset == "full":
+            _set_if_missing(args, provided_options, "show_details", "show-details", True)
+        _set_if_missing(args, provided_options, "use_cache", "use-cache", True)
+        _set_if_missing(args, provided_options, "cache_dir", "cache-dir", ".cache/backtests")
+        _set_if_missing(args, provided_options, "snapshot_dir", "snapshot-dir", "reports/validation_snapshots")
+        _set_if_missing(args, provided_options, "snapshot_format", "snapshot-format", "both")
+        return
+    if args.preset == "snapshot-only":
+        _set_if_missing(args, provided_options, "summary_badge", "summary-badge", True)
+        _set_if_missing(args, provided_options, "use_cache", "use-cache", True)
+        _set_if_missing(args, provided_options, "cache_dir", "cache-dir", ".cache/backtests")
+        _set_if_missing(args, provided_options, "snapshot_dir", "snapshot-dir", "reports/validation_snapshots")
+        _set_if_missing(args, provided_options, "snapshot_format", "snapshot-format", "both")
+        if "baseline-config" not in provided_options and "baseline-snapshot" not in provided_options:
+            args.baseline_config = None
+
+
+def _set_if_missing(args, provided_options: set[str], attr: str, option: str, value) -> None:
+    if option not in provided_options:
+        setattr(args, attr, value)
+
+
+def _provided_options(argv: list[str] | None) -> set[str]:
+    tokens = sys.argv[1:] if argv is None else argv
+    options: set[str] = set()
+    for token in tokens:
+        if not token.startswith("--"):
+            continue
+        name = token[2:].split("=", 1)[0]
+        options.add(name)
+    return options
 
 
 def _print_summary_if_requested(
@@ -221,6 +288,8 @@ def _resolve_baseline_snapshot(args) -> str | None:
             print(f"Error: baseline snapshot not found: {args.baseline_snapshot}")
             return "__ERROR__"
         return args.baseline_snapshot
+    if not args.baseline_config:
+        return None
     config_path = Path(args.baseline_config)
     if not config_path.exists():
         print(f"[validation-gate] baseline config not found; comparison skipped")
