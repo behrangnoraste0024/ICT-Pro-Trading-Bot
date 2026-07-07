@@ -119,3 +119,48 @@ def test_script_rejects_invalid_max_windows(capsys) -> None:
     captured = capsys.readouterr()
     assert return_code == 1
     assert "--max-windows must be greater than 0" in captured.out
+
+
+def test_script_export_snapshot_json_writes_only_json(capsys, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "scripts.run_multi_sample_validation.MultiSampleValidationEngine",
+        _FakeMultiSampleValidationEngine,
+    )
+
+    return_code = main(["--export-snapshot", "--snapshot-dir", str(tmp_path), "--snapshot-format", "json"])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "[snapshot] wrote" in captured.out
+    assert list(tmp_path.glob("*.json"))
+    assert not list(tmp_path.glob("*.md"))
+
+
+def test_script_export_snapshot_md_writes_only_markdown(capsys, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "scripts.run_multi_sample_validation.MultiSampleValidationEngine",
+        _FakeMultiSampleValidationEngine,
+    )
+
+    return_code = main(["--export-snapshot", "--snapshot-dir", str(tmp_path), "--snapshot-format", "md"])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "[snapshot] wrote" in captured.out
+    assert list(tmp_path.glob("*.md"))
+    assert not list(tmp_path.glob("*.json"))
+
+
+def test_script_export_snapshot_both_writes_both_formats(capsys, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "scripts.run_multi_sample_validation.MultiSampleValidationEngine",
+        _FakeMultiSampleValidationEngine,
+    )
+
+    return_code = main(["--export-snapshot", "--snapshot-dir", str(tmp_path), "--snapshot-format", "both"])
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert captured.out.count("[snapshot] wrote") == 2
+    assert list(tmp_path.glob("*.json"))
+    assert list(tmp_path.glob("*.md"))

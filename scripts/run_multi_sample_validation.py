@@ -13,6 +13,7 @@ from engine.diagnostics.multi_sample_validation_engine import (
     DEFAULT_MULTI_SAMPLE_DEFINITIONS,
     MultiSampleValidationEngine,
 )
+from engine.diagnostics.validation_snapshot_engine import ValidationSnapshotEngine
 from reporting.multi_sample_validation_report import format_multi_sample_validation_report
 
 
@@ -45,6 +46,24 @@ def main(argv: list[str] | None = None) -> int:
         cache_dir=args.cache_dir,
     )
     print(format_multi_sample_validation_report(result, show_details=args.show_details))
+    if args.export_snapshot:
+        try:
+            snapshot = ValidationSnapshotEngine().build_snapshot(
+                result=result,
+                strategy_set=args.strategy_set,
+                sort_by=args.sort_by,
+                recommended_profile=args.recommended_profile,
+                cache_enabled=args.use_cache or args.refresh_cache,
+                cache_dir=args.cache_dir if args.use_cache or args.refresh_cache else None,
+                max_windows=args.max_windows,
+                fast=args.fast,
+                command=_command_text(argv),
+            )
+            paths = ValidationSnapshotEngine().export(snapshot, args.snapshot_dir, args.snapshot_format)
+            for path in paths:
+                print(f"[snapshot] wrote {path}")
+        except Exception as exc:
+            print(f"[snapshot] warning failed to write snapshot: {exc}")
     return 0
 
 
@@ -141,7 +160,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--use-cache", action="store_true")
     parser.add_argument("--refresh-cache", action="store_true")
     parser.add_argument("--cache-dir", default=".cache/backtests")
+    parser.add_argument("--export-snapshot", action="store_true")
+    parser.add_argument("--snapshot-dir", default="reports/validation_snapshots")
+    parser.add_argument("--snapshot-format", choices=["json", "md", "both"], default="both")
     return parser
+
+
+def _command_text(argv: list[str] | None) -> str:
+    if argv is None:
+        return " ".join(sys.argv)
+    return "run_multi_sample_validation.py " + " ".join(argv)
 
 
 if __name__ == "__main__":
