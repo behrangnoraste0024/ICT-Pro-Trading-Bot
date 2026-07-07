@@ -55,6 +55,10 @@ class _FakeMultiSampleValidationEngine:
                     empty_segments=0,
                     worst_segment_net_pnl_after_costs=157.54,
                     improvement_vs_baseline=1215.74,
+                    cache_status="HIT",
+                    original_elapsed_seconds=2999.44,
+                    cache_read_elapsed_seconds=0.0,
+                    estimated_saved_seconds=2999.44,
                 )
             ],
             total_samples=1,
@@ -108,7 +112,16 @@ def _baseline(tmp_path: Path) -> str:
 def test_gate_runs_validation_and_exports_snapshot_without_baseline(tmp_path, capsys, monkeypatch) -> None:
     _patch_validation(monkeypatch)
 
-    return_code = main(["--snapshot-dir", str(tmp_path), "--snapshot-format", "json"])
+    return_code = main(
+        [
+            "--baseline-config",
+            str(tmp_path / "missing_config.json"),
+            "--snapshot-dir",
+            str(tmp_path),
+            "--snapshot-format",
+            "json",
+        ]
+    )
 
     captured = capsys.readouterr()
     assert return_code == 0
@@ -116,6 +129,31 @@ def test_gate_runs_validation_and_exports_snapshot_without_baseline(tmp_path, ca
     assert "[validation-gate] no baseline snapshot provided; comparison skipped" in captured.out
     assert "[validation-gate] completed status=PASS" in captured.out
     assert list(tmp_path.glob("*.json"))
+
+
+def test_gate_summary_badge_prints_skipped_regression_without_baseline(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+
+    return_code = main(
+        [
+            "--baseline-config",
+            str(tmp_path / "missing_config.json"),
+            "--snapshot-dir",
+            str(tmp_path),
+            "--snapshot-format",
+            "json",
+            "--summary-badge",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "===== VALIDATION GATE SUMMARY =====" in captured.out
+    assert "Gate Status       : PASS" in captured.out
+    assert "Regression Status : SKIPPED" in captured.out
+    assert "Candidate Snapshot:" in captured.out
+    assert "Samples           : total=1 completed=1 passed=1 failed=0 skipped=0" in captured.out
+    assert "Cache             : HIT original=2999.44s read=0.00s saved=2999.44s" in captured.out
 
 
 def test_gate_with_baseline_compares_generated_snapshot(tmp_path, capsys, monkeypatch) -> None:
@@ -137,6 +175,32 @@ def test_gate_with_baseline_compares_generated_snapshot(tmp_path, capsys, monkey
     assert return_code == 0
     assert _FakeSnapshotComparisonEngine.compared is True
     assert "[validation-gate] regression_status=PASS" in captured.out
+
+
+def test_gate_summary_badge_prints_pass_comparison_details(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+    _patch_comparison(monkeypatch, "PASS")
+
+    return_code = main(
+        [
+            "--baseline-snapshot",
+            _baseline(tmp_path),
+            "--snapshot-dir",
+            str(tmp_path),
+            "--snapshot-format",
+            "json",
+            "--summary-badge",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Regression Status : PASS" in captured.out
+    assert "Baseline Commit   : base123" in captured.out
+    assert "Candidate Commit  : cand123" in captured.out
+    assert "NetAfterCost Delta: 0.00" in captured.out
+    assert "MaxDD Delta       : 0.00" in captured.out
+    assert "Regression Flags  : 0" in captured.out
 
 
 def test_gate_warning_exits_zero_even_with_fail_on_regression(tmp_path, capsys, monkeypatch) -> None:
@@ -178,6 +242,30 @@ def test_gate_fail_exits_one_with_fail_on_regression(tmp_path, capsys, monkeypat
 
     captured = capsys.readouterr()
     assert return_code == 1
+    assert "[validation-gate] failed due to regression" in captured.out
+
+
+def test_gate_fail_with_summary_prints_summary_before_exit_one(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+    _patch_comparison(monkeypatch, "FAIL")
+
+    return_code = main(
+        [
+            "--baseline-snapshot",
+            _baseline(tmp_path),
+            "--fail-on-regression",
+            "--snapshot-dir",
+            str(tmp_path),
+            "--snapshot-format",
+            "json",
+            "--summary-badge",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 1
+    assert "===== VALIDATION GATE SUMMARY =====" in captured.out
+    assert "Gate Status       : FAIL" in captured.out
     assert "[validation-gate] failed due to regression" in captured.out
 
 
@@ -343,6 +431,50 @@ def test_gate_export_comparison_writes_files(tmp_path, capsys, monkeypatch) -> N
     assert list((tmp_path / "comparisons").glob("*.md"))
 
 
+def test_gate_summary_includes_comparison_paths_when_exported(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+    _patch_comparison(monkeypatch, "PASS")
+
+    return_code = main(
+        [
+            "--baseline-snapshot",
+            _baseline(tmp_path),
+            "--export-comparison",
+            "--snapshot-dir",
+            str(tmp_path / "snapshots"),
+            "--comparison-dir",
+            str(tmp_path / "comparisons"),
+            "--snapshot-format",
+            "json",
+            "--summary-badge",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "Comparison        :" in captured.out
+    assert "validation_comparison_" in captured.out
+
+
+def test_gate_without_summary_badge_does_not_print_summary(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+
+    return_code = main(
+        [
+            "--baseline-config",
+            str(tmp_path / "missing_config.json"),
+            "--snapshot-dir",
+            str(tmp_path),
+            "--snapshot-format",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "===== VALIDATION GATE SUMMARY =====" not in captured.out
+
+
 def test_gate_snapshot_format_md_with_baseline_still_creates_json_for_comparison(tmp_path, monkeypatch) -> None:
     _patch_validation(monkeypatch)
     _patch_comparison(monkeypatch, "PASS")
@@ -367,7 +499,16 @@ def test_gate_snapshot_format_md_with_baseline_still_creates_json_for_comparison
 def test_gate_snapshot_format_both_writes_both(tmp_path, capsys, monkeypatch) -> None:
     _patch_validation(monkeypatch)
 
-    return_code = main(["--snapshot-dir", str(tmp_path), "--snapshot-format", "both"])
+    return_code = main(
+        [
+            "--baseline-config",
+            str(tmp_path / "missing_config.json"),
+            "--snapshot-dir",
+            str(tmp_path),
+            "--snapshot-format",
+            "both",
+        ]
+    )
 
     captured = capsys.readouterr()
     assert return_code == 0
