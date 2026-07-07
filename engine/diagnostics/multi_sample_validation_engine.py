@@ -142,13 +142,25 @@ class MultiSampleValidationEngine:
             if use_cache and not refresh_cache:
                 cached = self.cache_engine.read(cache_dir, cache_key)
                 if cached.hit and cached.payload is not None:
-                    self._emit(progress_callback, {"event": "cache_hit", "cache_path": cached.cache_path})
                     row = MultiSampleValidationRow(**cached.payload["multi_sample_row"])
+                    self._apply_cache_diagnostics(row, cached.diagnostics)
+                    self._emit(
+                        progress_callback,
+                        {
+                            "event": "cache_hit",
+                            "cache_path": cached.cache_path,
+                            "cache_key_hash": row.cache_key_hash,
+                            "cache_age_seconds": row.cache_age_seconds,
+                            "cache_read_elapsed_seconds": row.cache_read_elapsed_seconds,
+                            "original_elapsed_seconds": row.original_elapsed_seconds,
+                            "estimated_saved_seconds": row.estimated_saved_seconds,
+                        },
+                    )
                     self._emit_finished(progress_callback, row)
                     return row
-                self._emit(progress_callback, {"event": "cache_miss"})
+                self._emit(progress_callback, {"event": "cache_miss", "cache_key_hash": self.cache_engine.cache_key_hash(cache_key)})
             elif refresh_cache:
-                self._emit(progress_callback, {"event": "cache_miss"})
+                self._emit(progress_callback, {"event": "cache_refresh", "cache_key_hash": self.cache_engine.cache_key_hash(cache_key)})
             self._emit(
                 progress_callback,
                 {
@@ -206,10 +218,26 @@ class MultiSampleValidationEngine:
                 improvement_vs_baseline=selected.improvement_vs_baseline,
                 elapsed_seconds=time.perf_counter() - started_at,
             )
+            row.original_elapsed_seconds = row.elapsed_seconds
             if use_cache or refresh_cache:
-                written = self.cache_engine.write(cache_dir, cache_key, {"multi_sample_row": row.to_dict()})
+                written = self.cache_engine.write(
+                    cache_dir,
+                    cache_key,
+                    {"multi_sample_row": row.to_dict()},
+                    compute_elapsed_seconds=row.elapsed_seconds,
+                    cache_status="REFRESH" if refresh_cache else "WRITE",
+                )
                 if written.error_message is None:
-                    self._emit(progress_callback, {"event": "cache_wrote", "cache_path": written.cache_path})
+                    self._apply_cache_diagnostics(row, written.diagnostics)
+                    self._emit(
+                        progress_callback,
+                        {
+                            "event": "cache_wrote",
+                            "cache_path": written.cache_path,
+                            "cache_key_hash": row.cache_key_hash,
+                            "current_compute_elapsed_seconds": row.original_elapsed_seconds,
+                        },
+                    )
             self._emit_finished(progress_callback, row)
             return row
         except Exception as exc:
@@ -355,14 +383,26 @@ class MultiSampleValidationEngine:
             progress_callback(payload)
 
     def _emit_finished(self, progress_callback: Callable[[dict], None] | None, row: MultiSampleValidationRow) -> None:
-        self._emit(
-            progress_callback,
-            {
-                "event": "sample_finish",
-                "sample": row.sample_name,
-                "status": row.status,
-                "elapsed_seconds": row.elapsed_seconds,
-                "trades": row.total_trades,
-                "net_pnl_after_costs": row.net_pnl_after_costs,
-            },
-        )
+        payload = {
+            "event": "sample_finish",
+            "sample": row.sample_name,
+            "status": row.status,
+            "elapsed_seconds": row.elapsed_seconds,
+            "trades": row.total_trades,
+            "net_pnl_after_costs": row.net_pnl_after_costs,
+            "cache_status": row.cache_status,
+            "cache_read_elapsed_seconds": row.cache_read_elapsed_seconds,
+            "original_elapsed_seconds": row.original_elapsed_seconds,
+            "estimated_saved_seconds": row.estimated_saved_seconds,
+        }
+        self._emit(progress_callback, payload)
+
+    def _apply_cache_diagnostics(self, row: MultiSampleValidationRow, diagnostics) -> None:
+        if diagnostics is None:
+            return
+        row.cache_status = diagnostics.cache_status
+        row.cache_key_hash = diagnostics.cache_key_hash
+        row.cache_read_elapsed_seconds = diagnostics.cache_read_elapsed_seconds
+        row.original_elapsed_seconds = diagnostics.original_compute_elapsed_seconds or row.original_elapsed_seconds
+        row.estimated_saved_seconds = diagnostics.estimated_saved_seconds
+        row.cache_age_seconds = diagnostics.cache_age_seconds

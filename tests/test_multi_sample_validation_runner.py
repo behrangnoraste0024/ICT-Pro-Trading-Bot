@@ -20,6 +20,18 @@ class _FakeMultiSampleValidationEngine:
                 }
             )
             progress({"event": "skip_missing", "sample": "mock_sample", "fixture": "mock.json"})
+            if kwargs.get("use_cache"):
+                progress(
+                    {
+                        "event": "cache_hit",
+                        "cache_path": str(kwargs.get("cache_dir")),
+                        "cache_key_hash": "abc123",
+                        "cache_age_seconds": 10.0,
+                        "cache_read_elapsed_seconds": 0.03,
+                        "original_elapsed_seconds": 12.0,
+                        "estimated_saved_seconds": 11.97,
+                    }
+                )
             progress(
                 {
                     "event": "sample_finish",
@@ -28,6 +40,10 @@ class _FakeMultiSampleValidationEngine:
                     "elapsed_seconds": 0.0,
                     "trades": 0,
                     "net_pnl_after_costs": 0.0,
+                    "cache_status": "HIT" if kwargs.get("use_cache") else None,
+                    "cache_read_elapsed_seconds": 0.03 if kwargs.get("use_cache") else None,
+                    "original_elapsed_seconds": 12.0 if kwargs.get("use_cache") else None,
+                    "estimated_saved_seconds": 11.97 if kwargs.get("use_cache") else None,
                 }
             )
             progress({"event": "complete", "completed": 0, "skipped": 1, "errors": 0})
@@ -86,11 +102,15 @@ def test_script_passes_cache_options_to_engine(capsys, monkeypatch, tmp_path) ->
 
     return_code = main(["--use-cache", "--refresh-cache", "--cache-dir", str(cache_dir)])
 
-    capsys.readouterr()
+    captured = capsys.readouterr()
     assert return_code == 0
     assert _FakeMultiSampleValidationEngine.last_kwargs["use_cache"] is True
     assert _FakeMultiSampleValidationEngine.last_kwargs["refresh_cache"] is True
     assert _FakeMultiSampleValidationEngine.last_kwargs["cache_dir"] == str(cache_dir)
+    assert "[cache] hit path=" in captured.out
+    assert "original_elapsed=12.00s" in captured.out
+    assert "cache_read_elapsed=0.03s" in captured.out
+    assert "saved_estimate=11.97s" in captured.out
 
 
 def test_script_rejects_invalid_max_windows(capsys) -> None:

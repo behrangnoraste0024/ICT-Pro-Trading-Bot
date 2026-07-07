@@ -42,6 +42,12 @@ class MultiSampleValidationRow:
     improvement_vs_baseline: float | None = None
     elapsed_seconds: float = 0.0
     error_message: str | None = None
+    cache_status: str | None = None
+    cache_key_hash: str | None = None
+    cache_read_elapsed_seconds: float | None = None
+    original_elapsed_seconds: float | None = None
+    estimated_saved_seconds: float | None = None
+    cache_age_seconds: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
