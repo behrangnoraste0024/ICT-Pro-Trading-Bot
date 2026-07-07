@@ -1,0 +1,230 @@
+# Validation Gate Operator Runbook
+
+## Purpose
+
+The validation gate is research, audit, and CI tooling. It is not live trading approval, and it does not activate decision thresholds in live or paper trading. Use it to produce repeatable validation artifacts, compare a candidate snapshot against the pinned baseline, and decide whether a research change is safe to merge or promote.
+
+## Current Official Profile
+
+- Recommended profile: `balanced_smc_decision_065`
+- Decision threshold: `0.65`
+- Baseline config: `configs/validation_baseline.json`
+- Baseline history: `configs/validation_baseline_history.json`
+- Pinned baseline snapshot: `reports\validation_snapshots\validation_snapshot_20260707T130446Z_0b9a727_balanced_smc_decision_065.json`
+- Known BTC/USDT 15m baseline: `PASSED`, 5 trades, 5 wins, 0 losses, NetAfterCost about `+1404.24`, WFStatus `PASS`, MaxDD `0.00`
+
+## Daily Commands
+
+### Quick Smoke Check
+
+```powershell
+py scripts/run_validation_gate.py --preset quick
+```
+
+Use this for fast local smoke validation. It applies `--max-windows 100`, cache defaults, snapshot export, and the summary badge. It skips baseline comparison by default unless you explicitly provide `--baseline-snapshot` or `--baseline-config`.
+
+This preset is diagnostic only. On current BTC 15m data, `max-windows 100` may produce 0 trades and show a failed sample. That does not mean the official full validation failed. Do not use `quick` as the official regression gate.
+
+### Snapshot Only
+
+```powershell
+py scripts/run_validation_gate.py --preset snapshot-only
+```
+
+Use this to export the current validation snapshot without comparing to the baseline. It is useful when you need an audit artifact but are not running a regression decision.
+
+### Full Research Gate
+
+```powershell
+py scripts/run_validation_gate.py --preset full
+```
+
+This is the daily full research validation. It uses the pinned baseline config, enables cache, exports a snapshot, compares to the baseline, exports the comparison, prints the summary badge, shows details, and fails on hard regression according to the existing regression rules.
+
+Equivalent long form:
+
+```powershell
+py scripts/run_validation_gate.py --baseline-config configs/validation_baseline.json --fail-on-regression --export-comparison --summary-badge --show-details --use-cache --cache-dir .cache/backtests --snapshot-dir reports/validation_snapshots --snapshot-format both
+```
+
+### CI Gate
+
+```powershell
+py scripts/run_validation_gate.py --preset ci
+```
+
+Use this for CI or research guard automation. It is like `full`, but keeps logs shorter by not enabling `--show-details` by default. It exits `1` on regression `FAIL`. A regression `WARNING` currently exits `0` unless future configuration changes that behavior.
+
+## Reading The Summary Badge
+
+- `Gate Status`: overall gate decision for the run.
+- `Regression Status`: baseline comparison result, or `SKIPPED` when no comparison ran.
+- `Profile`: recommended profile used by the validation run.
+- `Baseline Commit`: commit recorded in the baseline snapshot.
+- `Candidate Commit`: commit recorded in the candidate snapshot.
+- `Samples`: total, completed, passed, failed, and skipped sample counts.
+- `NetAfterCost Delta`: aggregate candidate minus baseline net PnL after costs.
+- `MaxDD Delta`: aggregate candidate minus baseline max drawdown.
+- `Regression Flags`: number of regression flags raised by comparison.
+- `Cache`: cache status and elapsed-time savings for the primary sample when available.
+- `Fail On Regression`: whether `--fail-on-regression` was active.
+
+## Snapshot System
+
+Validation snapshots are generated under `reports/validation_snapshots`. JSON and Markdown snapshots are ignored by Git:
+
+- `reports/validation_snapshots/*.json`
+- `reports/validation_snapshots/*.md`
+
+Snapshots include metadata, git commit, sample rows, validation status, cache diagnostics, and enough data for regression comparison. Generated snapshots and comparisons should generally not be committed.
+
+## Baseline Pinning
+
+Inspect the current baseline config:
+
+```powershell
+py scripts/pin_validation_baseline.py --print --config configs/validation_baseline.json
+```
+
+Validate that the configured snapshot exists locally:
+
+```powershell
+py scripts/pin_validation_baseline.py --validate --config configs/validation_baseline.json
+```
+
+`configs/validation_baseline.json` is tracked. It points to the official local baseline snapshot. The snapshot file itself is generated and ignored, so another machine may not have it. If the file is missing, `full` and `ci` can fail with a clear missing-baseline error.
+
+## Baseline Promotion
+
+Prefer a dry-run first:
+
+```powershell
+$candidate = Get-ChildItem reports\validation_snapshots\validation_snapshot_*.json | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+py scripts/pin_validation_baseline.py --promote-candidate "$($candidate.FullName)" --config configs/validation_baseline.json --require-pass --record-history --history-config configs/validation_baseline_history.json --history-notes "promotion dry-run" --comparison-export-dir reports/validation_snapshots --dry-run
+```
+
+Run the real promotion only after explicit review:
+
+```powershell
+py scripts/pin_validation_baseline.py --promote-candidate "$($candidate.FullName)" --config configs/validation_baseline.json --require-pass --record-history --history-config configs/validation_baseline_history.json --history-notes "promote validated baseline" --comparison-export-dir reports/validation_snapshots
+```
+
+Promotion updates `configs/validation_baseline.json`. When `--record-history` is used, it also appends an audit entry to `configs/validation_baseline_history.json`. After real promotion, commit both tracked config files. Do not commit the generated snapshot or comparison files unless a future release explicitly changes that policy.
+
+## Baseline History
+
+Print friendly history:
+
+```powershell
+py scripts/pin_validation_baseline.py --history-print --history-config configs/validation_baseline_history.json
+```
+
+Print raw JSON:
+
+```powershell
+py scripts/pin_validation_baseline.py --history-json --history-config configs/validation_baseline_history.json
+```
+
+`configs/validation_baseline_history.json` is tracked. It records `PIN`, `PROMOTE`, and `CLEAR` entries when `--record-history` is used. Dry-run prepares and prints the entry but does not write history.
+
+## Regression Interpretation
+
+`PASS` means no warning or fail flags were raised.
+
+`WARNING` means mild degradation was detected, but not a hard fail. Review the flags and decide whether the change is acceptable.
+
+`FAIL` means an official regression was detected. Do not merge or promote without explicit review.
+
+Common regression signals include:
+
+- sample status changed from `PASSED` to `FAILED`
+- walk-forward status changed from `PASS` to `FAIL`
+- large NetAfterCost drop
+- large MaxDD increase
+- recommended profile mismatch
+
+## Cache Notes
+
+Backtest cache files live under `.cache/backtests` and are ignored by Git. Cache hits report original elapsed time, cache read time, and estimated saved time. Cache does not change strategy results; it only speeds repeated validation.
+
+## Git Hygiene
+
+Generated snapshots and comparisons should not appear in tracked git status. Expected tracked files are source, tests, docs, and selected configs such as:
+
+- `configs/validation_baseline.json`
+- `configs/validation_baseline_history.json`
+- `docs/validation_gate_runbook.md`
+
+Before pushing a validation-related change:
+
+```powershell
+git status --short --untracked-files=all
+py -m pytest
+py scripts/run_validation_gate.py --preset full
+```
+
+If generated snapshots appear in `git status`, check `.gitignore` before committing.
+
+## Troubleshooting
+
+### Full Or CI Says Baseline Snapshot Not Found
+
+Run:
+
+```powershell
+py scripts/pin_validation_baseline.py --print --config configs/validation_baseline.json
+py scripts/pin_validation_baseline.py --validate --config configs/validation_baseline.json
+```
+
+Ensure the local baseline snapshot exists. If it does not, create or copy a valid baseline snapshot, then pin it deliberately.
+
+### Quick Preset Shows Failed
+
+This can be expected because `quick` uses `max-windows 100`, which may produce 0 trades on current BTC 15m data. Use `full` for official validation.
+
+### Generated Snapshots Appear In Git Status
+
+Check `.gitignore` for:
+
+```text
+reports/validation_snapshots/*.json
+reports/validation_snapshots/*.md
+```
+
+Do not commit generated snapshots or comparisons during ordinary validation work.
+
+### Regression Fail
+
+Inspect the comparison report and regression flags. Do not promote the candidate. Investigate code, config, data, and profile changes before rerunning validation.
+
+### Cache Seems Stale
+
+Clear `.cache/backtests` or use the available cache refresh or no-cache controls for the relevant runner. Cache is a speed layer only; it should not change validation metrics.
+
+## Current Recommended Workflow
+
+Daily local validation:
+
+```powershell
+py scripts/run_validation_gate.py --preset full
+```
+
+Fast smoke check:
+
+```powershell
+py scripts/run_validation_gate.py --preset quick
+```
+
+CI:
+
+```powershell
+py scripts/run_validation_gate.py --preset ci
+```
+
+Baseline promotion:
+
+1. Run the full gate.
+2. Inspect the snapshot, comparison, and summary badge.
+3. Run promotion dry-run with `--require-pass --record-history`.
+4. Run real promotion only after explicit approval.
+5. Commit the tracked baseline config and history files.
