@@ -25,3 +25,7 @@ data/historical/*.json
 
 # Local research caches
 .cache/
+
+# Validation snapshot exports
+reports/validation_snapshots/*.json
+reports/validation_snapshots/*.md
