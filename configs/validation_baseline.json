@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "baseline_snapshot_path": null,
-  "baseline_git_commit": null,
-  "baseline_created_at": null,
+  "baseline_snapshot_path": "reports\\validation_snapshots\\validation_snapshot_20260707T130446Z_0b9a727_balanced_smc_decision_065.json",
+  "baseline_git_commit": "0b9a727",
+  "baseline_created_at": "2026-07-07T13:04:46+00:00",
   "recommended_profile": "balanced_smc_decision_065",
   "notes": "Set baseline_snapshot_path to a local validation snapshot JSON file for regression gate comparisons."
 }
