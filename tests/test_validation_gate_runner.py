@@ -67,9 +67,11 @@ class _FakeMultiSampleValidationEngine:
 class _FakeSnapshotComparisonEngine:
     status = "PASS"
     compared = False
+    last_baseline_path = None
 
     def compare_files(self, baseline_path: str, candidate_path: str) -> SnapshotComparisonResult:
         type(self).compared = True
+        type(self).last_baseline_path = baseline_path
         return SnapshotComparisonResult(
             baseline_path=baseline_path,
             candidate_path=candidate_path,
@@ -93,6 +95,7 @@ def _patch_validation(monkeypatch) -> None:
 def _patch_comparison(monkeypatch, status: str) -> None:
     _FakeSnapshotComparisonEngine.status = status
     _FakeSnapshotComparisonEngine.compared = False
+    _FakeSnapshotComparisonEngine.last_baseline_path = None
     monkeypatch.setattr("scripts.run_validation_gate.SnapshotComparisonEngine", _FakeSnapshotComparisonEngine)
 
 
@@ -202,6 +205,113 @@ def test_gate_missing_baseline_path_exits_nonzero(capsys, monkeypatch) -> None:
     _patch_validation(monkeypatch)
 
     return_code = main(["--baseline-snapshot", "missing.json"])
+
+    captured = capsys.readouterr()
+    assert return_code == 1
+    assert "baseline snapshot not found" in captured.out
+
+
+def test_gate_uses_baseline_snapshot_over_baseline_config(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+    _patch_comparison(monkeypatch, "PASS")
+    explicit = _baseline(tmp_path)
+    configured = tmp_path / "configured.json"
+    configured.write_text(json.dumps({"metadata": {}, "multi_sample_result": {"rows": []}}), encoding="utf-8")
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"baseline_snapshot_path": str(configured)}), encoding="utf-8")
+
+    return_code = main(
+        [
+            "--baseline-snapshot",
+            explicit,
+            "--baseline-config",
+            str(config),
+            "--snapshot-dir",
+            str(tmp_path / "snapshots"),
+            "--snapshot-format",
+            "json",
+        ]
+    )
+
+    capsys.readouterr()
+    assert return_code == 0
+    assert _FakeSnapshotComparisonEngine.last_baseline_path == explicit
+
+
+def test_gate_uses_baseline_config_when_snapshot_omitted(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+    _patch_comparison(monkeypatch, "PASS")
+    baseline = _baseline(tmp_path)
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"baseline_snapshot_path": baseline}), encoding="utf-8")
+
+    return_code = main(
+        [
+            "--baseline-config",
+            str(config),
+            "--snapshot-dir",
+            str(tmp_path / "snapshots"),
+            "--snapshot-format",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "[validation-gate] using baseline config" in captured.out
+    assert _FakeSnapshotComparisonEngine.compared is True
+
+
+def test_gate_skips_comparison_when_baseline_config_missing(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+    _patch_comparison(monkeypatch, "PASS")
+
+    return_code = main(
+        [
+            "--baseline-config",
+            str(tmp_path / "missing_config.json"),
+            "--snapshot-dir",
+            str(tmp_path / "snapshots"),
+            "--snapshot-format",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "baseline config not found" in captured.out
+    assert _FakeSnapshotComparisonEngine.compared is False
+
+
+def test_gate_skips_comparison_when_baseline_config_null(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+    _patch_comparison(monkeypatch, "PASS")
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"baseline_snapshot_path": None}), encoding="utf-8")
+
+    return_code = main(
+        [
+            "--baseline-config",
+            str(config),
+            "--snapshot-dir",
+            str(tmp_path / "snapshots"),
+            "--snapshot-format",
+            "json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert return_code == 0
+    assert "comparison skipped" in captured.out
+    assert _FakeSnapshotComparisonEngine.compared is False
+
+
+def test_gate_exits_nonzero_when_config_points_to_missing_baseline(tmp_path, capsys, monkeypatch) -> None:
+    _patch_validation(monkeypatch)
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"baseline_snapshot_path": "missing.json"}), encoding="utf-8")
+
+    return_code = main(["--baseline-config", str(config)])
 
     captured = capsys.readouterr()
     assert return_code == 1
