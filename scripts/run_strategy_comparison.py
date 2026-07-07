@@ -28,11 +28,12 @@ from engine.backtest.strategy_comparison_engine import (
     direction_quality_preset_config,
     _profile_spec,
 )
+from engine.diagnostics.backtest_cache_engine import BacktestCacheEngine
 from engine.diagnostics.walk_forward_validation_engine import WalkForwardValidationEngine
 from engine.diagnostics.recommended_profile_validation_engine import RecommendedProfileValidationEngine
 from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngine
 from models.engine_config import EngineConfig
-from models.strategy_comparison import StrategyComparisonReport, StrategyConfigSpec
+from models.strategy_comparison import StrategyComparisonReport, StrategyComparisonRow, StrategyConfigSpec
 from models.strategy_profile import VALID_STRATEGY_PROFILES
 from reporting.recommended_profile_validation_report import format_recommended_profile_validation_report
 from reporting.strategy_comparison_report import format_strategy_comparison_report
@@ -76,16 +77,33 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"Error: {exc}")
         return 1
-    report = StrategyComparisonEngine().run_comparison(
-        fixture_path=str(fixture_path),
-        strategy_specs=specs,
-        min_candles=args.min_candles,
-        progress_every=args.progress_every,
-        max_windows=args.max_windows,
-        enable_diagnostics=not args.fast,
-        progress_callback=_print_progress,
-        timeout_per_strategy=args.timeout_per_strategy,
-    )
+    cache_engine = BacktestCacheEngine()
+    cache_key = _cache_key(cache_engine, args)
+    report = None
+    if args.use_cache and not args.refresh_cache:
+        cached = cache_engine.read(args.cache_dir, cache_key)
+        if cached.hit and cached.payload is not None:
+            print(f"[cache] hit {cached.cache_path}")
+            report = _report_from_payload(cached.payload)
+        else:
+            print("[cache] miss")
+    if report is None:
+        report = StrategyComparisonEngine().run_comparison(
+            fixture_path=str(fixture_path),
+            strategy_specs=specs,
+            min_candles=args.min_candles,
+            progress_every=args.progress_every,
+            max_windows=args.max_windows,
+            enable_diagnostics=not args.fast,
+            progress_callback=_print_progress,
+            timeout_per_strategy=args.timeout_per_strategy,
+        )
+        if args.use_cache or args.refresh_cache:
+            written = cache_engine.write(args.cache_dir, cache_key, _report_to_payload(report))
+            if written.error_message is None:
+                print(f"[cache] wrote {written.cache_path}")
+            else:
+                print(f"[cache] write failed {written.error_message}")
     output = format_strategy_comparison_report(
         report,
         sort_by=args.sort_by,
@@ -217,6 +235,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--show-walk-forward-validation", action="store_true")
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-csv", default=None)
+    parser.add_argument("--use-cache", action="store_true")
+    parser.add_argument("--refresh-cache", action="store_true")
+    parser.add_argument("--cache-dir", default=".cache/backtests")
     return parser
 
 
@@ -471,6 +492,38 @@ def build_profile_strategy_specs(
                             )
                         )
     return specs
+
+
+def _cache_key(cache_engine: BacktestCacheEngine, args):
+    return cache_engine.build_key(
+        fixture_path=str(Path(args.fixture)),
+        strategy_set=args.strategy_set,
+        sort_by=args.sort_by,
+        min_candles=args.min_candles,
+        max_windows=args.max_windows,
+        fast=args.fast,
+        profile_version=BacktestCacheEngine.SCHEMA_VERSION,
+    )
+
+
+def _report_to_payload(report: StrategyComparisonReport) -> dict:
+    return {"strategy_comparison_report": report.to_dict()}
+
+
+def _report_from_payload(payload: dict) -> StrategyComparisonReport:
+    raw = payload["strategy_comparison_report"]
+    report = StrategyComparisonReport(
+        fixture=raw["fixture"],
+        min_candles=raw["min_candles"],
+        strategies=[StrategyComparisonRow(**row) for row in raw.get("strategies", [])],
+        best_by_net_pnl=raw.get("best_by_net_pnl"),
+        best_by_average_pnl=raw.get("best_by_average_pnl"),
+        best_by_win_rate=raw.get("best_by_win_rate"),
+        best_by_profit_factor=raw.get("best_by_profit_factor"),
+        best_by_drawdown=raw.get("best_by_drawdown"),
+        best_by_net_pnl_after_costs=raw.get("best_by_net_pnl_after_costs"),
+    )
+    return report
 
 
 def _walk_forward_validation(args, specs: list[StrategyConfigSpec], validation):

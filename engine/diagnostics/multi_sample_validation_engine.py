@@ -9,6 +9,7 @@ from engine.backtest.strategy_comparison_engine import (
     StrategyComparisonEngine,
     build_recommended_decision_profile_with_cost_specs,
 )
+from engine.diagnostics.backtest_cache_engine import BacktestCacheEngine
 from engine.diagnostics.recommended_profile_validation_engine import RecommendedProfileValidationEngine
 from engine.diagnostics.walk_forward_validation_engine import WalkForwardValidationEngine
 from engine.rolling_backtest.rolling_backtest_engine import RollingBacktestEngine
@@ -38,6 +39,7 @@ class MultiSampleValidationEngine:
         candles_loader: Callable[[str], object] = load_candles_json,
         rolling_engine_factory: Callable[..., RollingBacktestEngine] = RollingBacktestEngine,
         path_exists: Callable[[str], bool] | None = None,
+        cache_engine: BacktestCacheEngine | None = None,
     ) -> None:
         self.comparison_engine = comparison_engine or StrategyComparisonEngine()
         self.recommendation_engine = recommendation_engine or RecommendedProfileValidationEngine()
@@ -45,6 +47,7 @@ class MultiSampleValidationEngine:
         self.candles_loader = candles_loader
         self.rolling_engine_factory = rolling_engine_factory
         self.path_exists = path_exists or (lambda path: Path(path).exists())
+        self.cache_engine = cache_engine or BacktestCacheEngine()
 
     def validate(
         self,
@@ -56,6 +59,9 @@ class MultiSampleValidationEngine:
         fast: bool = False,
         max_windows: int | None = None,
         progress_callback: Callable[[dict], None] | None = None,
+        use_cache: bool = False,
+        refresh_cache: bool = False,
+        cache_dir: str = ".cache/backtests",
     ) -> MultiSampleValidationResult:
         selected_samples = list(DEFAULT_MULTI_SAMPLE_DEFINITIONS if samples is None else samples)
         specs = build_recommended_decision_profile_with_cost_specs() if strategy_specs is None else strategy_specs
@@ -78,6 +84,9 @@ class MultiSampleValidationEngine:
                 fast=fast,
                 max_windows=max_windows,
                 progress_callback=progress_callback,
+                use_cache=use_cache,
+                refresh_cache=refresh_cache,
+                cache_dir=cache_dir,
             )
             for sample in selected_samples
         ]
@@ -103,6 +112,9 @@ class MultiSampleValidationEngine:
         fast: bool,
         max_windows: int | None,
         progress_callback: Callable[[dict], None] | None,
+        use_cache: bool,
+        refresh_cache: bool,
+        cache_dir: str,
     ) -> MultiSampleValidationRow:
         started_at = time.perf_counter()
         if not self.path_exists(sample.fixture_path):
@@ -118,6 +130,25 @@ class MultiSampleValidationEngine:
             self._emit_finished(progress_callback, row)
             return row
         try:
+            cache_key = self.cache_engine.build_key(
+                fixture_path=sample.fixture_path,
+                strategy_set="multi_sample_validation:recommended_decision_profiles_with_costs",
+                sort_by=sort_by,
+                min_candles=min_candles,
+                max_windows=max_windows,
+                fast=fast,
+                profile_version=BacktestCacheEngine.SCHEMA_VERSION,
+            )
+            if use_cache and not refresh_cache:
+                cached = self.cache_engine.read(cache_dir, cache_key)
+                if cached.hit and cached.payload is not None:
+                    self._emit(progress_callback, {"event": "cache_hit", "cache_path": cached.cache_path})
+                    row = MultiSampleValidationRow(**cached.payload["multi_sample_row"])
+                    self._emit_finished(progress_callback, row)
+                    return row
+                self._emit(progress_callback, {"event": "cache_miss"})
+            elif refresh_cache:
+                self._emit(progress_callback, {"event": "cache_miss"})
             self._emit(
                 progress_callback,
                 {
@@ -175,6 +206,10 @@ class MultiSampleValidationEngine:
                 improvement_vs_baseline=selected.improvement_vs_baseline,
                 elapsed_seconds=time.perf_counter() - started_at,
             )
+            if use_cache or refresh_cache:
+                written = self.cache_engine.write(cache_dir, cache_key, {"multi_sample_row": row.to_dict()})
+                if written.error_message is None:
+                    self._emit(progress_callback, {"event": "cache_wrote", "cache_path": written.cache_path})
             self._emit_finished(progress_callback, row)
             return row
         except Exception as exc:

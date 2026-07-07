@@ -5,7 +5,10 @@ from scripts.run_multi_sample_validation import main
 
 
 class _FakeMultiSampleValidationEngine:
+    last_kwargs = None
+
     def validate(self, **kwargs) -> MultiSampleValidationResult:
+        type(self).last_kwargs = kwargs
         progress = kwargs.get("progress_callback")
         if progress is not None:
             progress(
@@ -72,6 +75,22 @@ def test_script_show_details_works(capsys, monkeypatch) -> None:
     captured = capsys.readouterr()
     assert return_code == 0
     assert "Details:" in captured.out
+
+
+def test_script_passes_cache_options_to_engine(capsys, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "scripts.run_multi_sample_validation.MultiSampleValidationEngine",
+        _FakeMultiSampleValidationEngine,
+    )
+    cache_dir = tmp_path / "cache"
+
+    return_code = main(["--use-cache", "--refresh-cache", "--cache-dir", str(cache_dir)])
+
+    capsys.readouterr()
+    assert return_code == 0
+    assert _FakeMultiSampleValidationEngine.last_kwargs["use_cache"] is True
+    assert _FakeMultiSampleValidationEngine.last_kwargs["refresh_cache"] is True
+    assert _FakeMultiSampleValidationEngine.last_kwargs["cache_dir"] == str(cache_dir)
 
 
 def test_script_rejects_invalid_max_windows(capsys) -> None:
