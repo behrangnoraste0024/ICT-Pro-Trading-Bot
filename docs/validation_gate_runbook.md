@@ -106,6 +106,26 @@ To print the registry report before a gate run without changing preset behavior:
 py scripts/run_validation_gate.py --preset full --check-samples
 ```
 
+Plan missing or invalid sample preparation:
+
+```powershell
+py scripts/prepare_historical_samples.py
+```
+
+Dry-run a local import before writing anything:
+
+```powershell
+py scripts/prepare_historical_samples.py --sample btcusdt_1h_1000 --source C:\path\to\btcusdt_1h_1000.json --import-source --dry-run
+```
+
+Run the real local import only after reviewing the dry-run:
+
+```powershell
+py scripts/prepare_historical_samples.py --sample btcusdt_1h_1000 --source C:\path\to\btcusdt_1h_1000.json --import-source
+```
+
+The preparation helper never downloads from the network. It validates local source JSON, checks candle count, refuses overwrite unless `--overwrite` is passed, and copies into the registry fixture path. Historical files under `data/historical/*.json` are local/generated and should not be committed.
+
 ## Baseline Pinning
 
 Inspect the current baseline config:
