@@ -1,4 +1,21 @@
 {
   "schema_version": "1.0",
-  "entries": []
+  "entries": [
+    {
+      "promoted_at": "2026-07-08T11:52:01.493902+00:00",
+      "action": "PROMOTE",
+      "baseline_snapshot_path": "reports\\validation_snapshots\\validation_snapshot_20260708T115100Z_3e14e64_balanced_smc_decision_065.json",
+      "baseline_git_commit": "3e14e64",
+      "baseline_created_at": "2026-07-08T11:51:00+00:00",
+      "recommended_profile": "balanced_smc_decision_065",
+      "previous_baseline_snapshot_path": "reports\\validation_snapshots\\validation_snapshot_20260707T130446Z_0b9a727_balanced_smc_decision_065.json",
+      "previous_baseline_git_commit": "0b9a727",
+      "comparison_status": "PASS",
+      "comparison_net_after_costs_delta": 2458.0173470000054,
+      "comparison_max_drawdown_delta": 0.0,
+      "comparison_regression_flags": [],
+      "promoted_by_command": "scripts/pin_validation_baseline.py --promote-candidate C:\\Users\\Behii\\Desktop\\tradingbot\\reports\\validation_snapshots\\validation_snapshot_20260708T115100Z_3e14e64_balanced_smc_decision_065.json --config configs/validation_baseline.json --require-pass --expected-profile balanced_smc_decision_065 --record-history --history-config configs/validation_baseline_history.json --history-notes Promote BTC official required_full baseline after release 2.62 --comparison-export-dir reports/validation_snapshots",
+      "notes": "Promote BTC official required_full baseline after release 2.62"
+    }
+  ]
 }
