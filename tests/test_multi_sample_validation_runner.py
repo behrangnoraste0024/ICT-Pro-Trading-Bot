@@ -73,7 +73,7 @@ def test_script_default_command_works(capsys, monkeypatch) -> None:
 
     captured = capsys.readouterr()
     assert return_code == 0
-    assert "[multi-sample] samples=1 strategy_set=recommended_decision_profiles_with_costs sort_by=net_pnl_after_costs" in captured.out
+    assert "[multi-sample] samples=1 scope=all_registry strategy_set=recommended_decision_profiles_with_costs sort_by=net_pnl_after_costs" in captured.out
     assert "[multi-sample] skipping mock_sample missing file mock.json" in captured.out
     assert "[multi-sample] completed samples=0 skipped=1 errors=0" in captured.out
     assert "===== MULTI-SAMPLE VALIDATION =====" in captured.out

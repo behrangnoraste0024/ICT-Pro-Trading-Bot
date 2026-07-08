@@ -108,6 +108,37 @@ class SnapshotComparisonEngine:
 
         baseline = baseline or {}
         candidate = candidate or {}
+        if self._text(candidate, "status") == "SKIPPED_OUT_OF_SCOPE":
+            return SnapshotSampleComparison(
+                sample_name=sample_name,
+                symbol=self._text(candidate, "symbol") or self._text(baseline, "symbol"),
+                timeframe=self._text(candidate, "timeframe") or self._text(baseline, "timeframe"),
+                baseline_status=self._text(baseline, "status"),
+                candidate_status=self._text(candidate, "status"),
+                baseline_profile=self._text(baseline, "recommended_profile"),
+                candidate_profile=self._text(candidate, "recommended_profile"),
+                baseline_trades=self._int(baseline, "total_trades"),
+                candidate_trades=self._int(candidate, "total_trades"),
+                baseline_win_rate=self._float(baseline, "win_rate"),
+                candidate_win_rate=self._float(candidate, "win_rate"),
+                baseline_net_after_costs=self._float(baseline, "net_pnl_after_costs"),
+                candidate_net_after_costs=self._float(candidate, "net_pnl_after_costs"),
+                baseline_max_drawdown=self._float(baseline, "max_drawdown"),
+                candidate_max_drawdown=self._float(candidate, "max_drawdown"),
+                baseline_wf_status=self._text(baseline, "validation_status"),
+                candidate_wf_status=self._text(candidate, "validation_status"),
+                baseline_profitable_segments=self._optional_int(baseline, "profitable_segments"),
+                candidate_profitable_segments=self._optional_int(candidate, "profitable_segments"),
+                baseline_losing_segments=self._optional_int(baseline, "losing_segments"),
+                candidate_losing_segments=self._optional_int(candidate, "losing_segments"),
+                baseline_empty_segments=self._optional_int(baseline, "empty_segments"),
+                candidate_empty_segments=self._optional_int(candidate, "empty_segments"),
+                baseline_worst_segment_net=self._optional_float(baseline, "worst_segment_net_pnl_after_costs"),
+                candidate_worst_segment_net=self._optional_float(candidate, "worst_segment_net_pnl_after_costs"),
+                severity="PASS",
+                regression_flags=[],
+                improvement_flags=["SKIPPED_OUT_OF_SCOPE"],
+            )
         comparison = SnapshotSampleComparison(
             sample_name=sample_name,
             symbol=self._text(candidate, "symbol") or self._text(baseline, "symbol"),

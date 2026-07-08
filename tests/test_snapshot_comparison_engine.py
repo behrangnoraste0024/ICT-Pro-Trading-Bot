@@ -145,6 +145,18 @@ def test_handles_new_candidate_only_sample() -> None:
     assert "CANDIDATE_ONLY_NON_PASSED" in result.sample_comparisons[0].regression_flags
 
 
+def test_skipped_out_of_scope_candidate_does_not_flag_regression() -> None:
+    result = _compare(
+        baseline=_snapshot([_row(sample_name="ethusdt_15m_1000", net_pnl_after_costs=100)]),
+        candidate=_snapshot([_row(sample_name="ethusdt_15m_1000", status="SKIPPED_OUT_OF_SCOPE", net_pnl_after_costs=0)]),
+    )
+
+    comparison = result.sample_comparisons[0]
+    assert comparison.severity == "PASS"
+    assert comparison.regression_flags == []
+    assert "SKIPPED_OUT_OF_SCOPE" in comparison.improvement_flags
+
+
 def test_compare_files_loads_snapshot_json(tmp_path) -> None:
     baseline = tmp_path / "baseline.json"
     candidate = tmp_path / "candidate.json"

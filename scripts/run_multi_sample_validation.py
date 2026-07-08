@@ -10,9 +10,9 @@ if str(ROOT_DIR) not in sys.path:
 
 from engine.backtest.strategy_comparison_engine import build_recommended_decision_profile_with_cost_specs
 from engine.diagnostics.multi_sample_validation_engine import (
-    DEFAULT_MULTI_SAMPLE_DEFINITIONS,
     MultiSampleValidationEngine,
 )
+from engine.diagnostics.validation_sample_scope_engine import SAMPLE_SCOPE_CHOICES, ValidationSampleScopeEngine
 from engine.diagnostics.validation_snapshot_engine import ValidationSnapshotEngine
 from reporting.multi_sample_validation_report import format_multi_sample_validation_report
 
@@ -32,9 +32,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.max_windows is not None and args.max_windows <= 0:
         print("Error: --max-windows must be greater than 0.")
         return 1
+    try:
+        scope = ValidationSampleScopeEngine(repo_root=ROOT_DIR).select(
+            registry_path=args.sample_registry,
+            sample_scope=args.sample_scope,
+            sample_names=args.sample,
+        )
+    except Exception as exc:
+        print(f"Error: {exc}")
+        return 1
 
     result = MultiSampleValidationEngine().validate(
-        samples=DEFAULT_MULTI_SAMPLE_DEFINITIONS,
+        samples=scope.selected_samples,
+        excluded_samples=scope.excluded_samples,
+        sample_scope=scope.sample_scope,
         strategy_specs=build_recommended_decision_profile_with_cost_specs(),
         sort_by=args.sort_by,
         recommended_profile=args.recommended_profile,
@@ -58,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_windows=args.max_windows,
                 fast=args.fast,
                 command=_command_text(argv),
+                diagnostics=scope.diagnostics,
             )
             paths = ValidationSnapshotEngine().export(snapshot, args.snapshot_dir, args.snapshot_format)
             for path in paths:
@@ -72,6 +84,7 @@ def _print_progress(payload: dict) -> None:
     if event == "start":
         print(
             f"[multi-sample] samples={payload['samples']} "
+            f"scope={payload.get('sample_scope', 'all_registry')} "
             f"strategy_set={payload['strategy_set']} sort_by={payload['sort_by']}",
             flush=True,
         )
@@ -153,6 +166,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--sample-set", choices=["default"], default="default")
     parser.add_argument("--strategy-set", choices=["recommended_decision_profiles_with_costs"], default="recommended_decision_profiles_with_costs")
     parser.add_argument("--sort-by", choices=["net_pnl_after_costs"], default="net_pnl_after_costs")
+    parser.add_argument("--sample-registry", default="configs/historical_sample_registry.json")
+    parser.add_argument("--sample-scope", choices=SAMPLE_SCOPE_CHOICES, default="all_registry")
+    parser.add_argument("--sample", action="append", default=None)
     parser.add_argument("--recommended-profile", default="balanced_smc_decision_065")
     parser.add_argument("--show-details", action="store_true")
     parser.add_argument("--fast", action="store_true")

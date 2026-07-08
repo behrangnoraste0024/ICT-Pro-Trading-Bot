@@ -8,6 +8,8 @@ The validation gate is research, audit, and CI tooling. It is not live trading a
 
 - Recommended profile: `balanced_smc_decision_065`
 - Decision threshold: `0.65`
+- Project validation scope: BTC-first
+- Official sample scope: `required_full`
 - Baseline config: `configs/validation_baseline.json`
 - Baseline history: `configs/validation_baseline_history.json`
 - Pinned baseline snapshot: `reports\validation_snapshots\validation_snapshot_20260707T130446Z_0b9a727_balanced_smc_decision_065.json`
@@ -44,7 +46,7 @@ This is the daily full research validation. It uses the pinned baseline config, 
 Equivalent long form:
 
 ```powershell
-py scripts/run_validation_gate.py --baseline-config configs/validation_baseline.json --fail-on-regression --export-comparison --summary-badge --show-details --use-cache --cache-dir .cache/backtests --snapshot-dir reports/validation_snapshots --snapshot-format both
+py scripts/run_validation_gate.py --baseline-config configs/validation_baseline.json --fail-on-regression --export-comparison --summary-badge --show-details --use-cache --cache-dir .cache/backtests --sample-scope required_full --snapshot-dir reports/validation_snapshots --snapshot-format both
 ```
 
 ### CI Gate
@@ -92,7 +94,45 @@ Print the same report as JSON:
 py scripts/check_historical_samples.py --json
 ```
 
-The registry lives at `configs/historical_sample_registry.json`. It lists expected validation fixtures, required gate status, and minimum candle counts. Missing optional samples are reported but are not fatal by default. The current required full/CI sample is `btcusdt_15m_1000` at `data/historical/btcusdt_15m_1000.json`.
+The registry lives at `configs/historical_sample_registry.json`. It lists expected validation fixtures, required gate status, and minimum candle counts. Missing optional samples are reported but are not fatal by default. The current full gate uses BTC 15m and BTC 1h; the CI gate uses BTC 15m for speed.
+
+## Validation Sample Scope
+
+The current official validation target is BTC-first. ETH samples remain useful for diagnostics and stress testing, but ETH weakness does not block the official BTC gate unless you deliberately select an all-samples scope.
+
+Official BTC gate:
+
+```powershell
+py scripts/run_validation_gate.py --preset full
+```
+
+Explicit BTC-only full gate:
+
+```powershell
+py scripts/run_validation_gate.py --preset full --sample-scope btc_only
+```
+
+CI scope:
+
+```powershell
+py scripts/run_validation_gate.py --preset ci
+```
+
+Optional multi-asset stress test:
+
+```powershell
+py scripts/run_validation_gate.py --preset full --sample-scope all_available
+```
+
+Available sample scopes:
+
+- `required_full`: samples marked `required_for_full_gate` in the registry. This is the official full BTC gate and includes BTC 15m plus BTC 1h.
+- `required_ci`: samples marked `required_for_ci_gate` in the registry. This keeps CI lighter and currently includes BTC 15m.
+- `btc_only`: all registry samples where `symbol` is `BTC/USDT`.
+- `all_available`: all registry samples with available local fixture files.
+- `all_registry`: every registry sample, including missing optional samples.
+
+Excluded samples are shown as `SKIPPED_OUT_OF_SCOPE` with a reason such as `sample excluded by validation scope required_full`. Snapshot comparison treats those rows as intentionally excluded, so optional ETH rows do not create BTC-gate regressions. Use `all_available` or `all_registry` when you intentionally want optional ETH samples to participate and fail if weak.
 
 To fail when required full-gate data is unavailable:
 

@@ -81,6 +81,15 @@ class _WalkForwardEngine:
         )
 
 
+class _PathSensitiveWalkForwardEngine(_WalkForwardEngine):
+    def __init__(self) -> None:
+        self.current_fixture_path = ""
+
+    def validate_contexts(self, *args, **kwargs):
+        self.status = "FAIL" if "eth" in self.current_fixture_path else "PASS"
+        return super().validate_contexts(*args, **kwargs)
+
+
 class _RollingEngine:
     def __init__(self, **kwargs) -> None:
         self.kwargs = kwargs
@@ -162,3 +171,49 @@ def test_aggregate_counts_are_correct() -> None:
     assert result.warning_samples == 1
     assert result.skipped_samples == 1
     assert result.recommended_profile == "balanced_smc_decision_065"
+
+
+def test_excluded_samples_are_marked_out_of_scope() -> None:
+    result = _engine().validate(
+        samples=[_sample("exists.json")],
+        excluded_samples=[MultiSampleDefinition("eth", "eth.json", "ETH/USDT", "15m")],
+        sample_scope="required_full",
+    )
+
+    excluded = result.rows[1]
+    assert result.total_samples == 2
+    assert result.selected_samples == 1
+    assert result.excluded_samples == 1
+    assert result.skipped_samples == 1
+    assert result.completed_samples == 1
+    assert excluded.status == "SKIPPED_OUT_OF_SCOPE"
+    assert excluded.error_message == "sample excluded by validation scope required_full"
+
+
+def test_mocked_eth_failure_fails_all_samples_but_not_required_full_scope() -> None:
+    walk_forward = _PathSensitiveWalkForwardEngine()
+
+    class _PathAwareEngine(MultiSampleValidationEngine):
+        def _walk_forward(self, fixture_path, spec, selected_threshold, min_candles, fast, max_windows):
+            walk_forward.current_fixture_path = fixture_path
+            return super()._walk_forward(fixture_path, spec, selected_threshold, min_candles, fast, max_windows)
+
+    engine = _PathAwareEngine(
+        comparison_engine=_ComparisonEngine(),
+        recommendation_engine=_RecommendationEngine(),
+        walk_forward_engine=walk_forward,
+        candles_loader=lambda _path: [],
+        rolling_engine_factory=_RollingEngine,
+        path_exists=lambda _path: True,
+    )
+    btc = MultiSampleDefinition("btcusdt_15m_1000", "btc.json", "BTC/USDT", "15m")
+    eth = MultiSampleDefinition("ethusdt_15m_1000", "eth.json", "ETH/USDT", "15m")
+
+    all_result = engine.validate(samples=[btc, eth], sample_scope="all_available")
+    scoped_result = engine.validate(samples=[btc], excluded_samples=[eth], sample_scope="required_full")
+
+    assert all_result.failed_samples == 1
+    assert all_result.rows[1].sample_name == "ethusdt_15m_1000"
+    assert all_result.rows[1].status == "FAILED"
+    assert scoped_result.failed_samples == 0
+    assert scoped_result.rows[1].status == "SKIPPED_OUT_OF_SCOPE"
