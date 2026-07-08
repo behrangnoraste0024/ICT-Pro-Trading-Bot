@@ -78,6 +78,34 @@ Validation snapshots are generated under `reports/validation_snapshots`. JSON an
 
 Snapshots include metadata, git commit, sample rows, validation status, cache diagnostics, and enough data for regression comparison. Generated snapshots and comparisons should generally not be committed.
 
+## Historical Sample Registry
+
+Check local historical data availability:
+
+```powershell
+py scripts/check_historical_samples.py
+```
+
+Print the same report as JSON:
+
+```powershell
+py scripts/check_historical_samples.py --json
+```
+
+The registry lives at `configs/historical_sample_registry.json`. It lists expected validation fixtures, required gate status, and minimum candle counts. Missing optional samples are reported but are not fatal by default. The current required full/CI sample is `btcusdt_15m_1000` at `data/historical/btcusdt_15m_1000.json`.
+
+To fail when required full-gate data is unavailable:
+
+```powershell
+py scripts/check_historical_samples.py --fail-missing-required-full
+```
+
+To print the registry report before a gate run without changing preset behavior:
+
+```powershell
+py scripts/run_validation_gate.py --preset full --check-samples
+```
+
 ## Baseline Pinning
 
 Inspect the current baseline config:
