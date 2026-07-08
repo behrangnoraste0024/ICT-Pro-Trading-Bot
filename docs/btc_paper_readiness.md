@@ -115,3 +115,21 @@ py scripts/run_btc_paper_runner.py --stop --state-file reports/paper_runner/btc_
 ```
 
 Generated runner state files under `reports/paper_runner` are local and ignored by Git. This release prepares lifecycle visibility only.
+
+# BTC Paper Signal Evaluation Dry-Run
+
+Release 2.68 adds one-shot local fixture signal evaluation. It does not execute trades, create paper trades, submit orders, connect to an exchange, mutate runner state, or start a continuous loop.
+
+Commands:
+
+```powershell
+py scripts/run_btc_paper_signal_evaluation.py
+py scripts/run_btc_paper_signal_evaluation.py --json
+py scripts/run_btc_paper_signal_evaluation.py --strict
+py scripts/run_btc_paper_signal_evaluation.py --evaluate
+py scripts/run_btc_paper_signal_evaluation.py --evaluate --json
+py scripts/run_btc_paper_runner.py --evaluate-signal-dry-run
+py scripts/run_btc_paper_runner.py --evaluate-signal-dry-run --state-file reports/paper_runner/btc_paper_runner_state.json
+```
+
+Generated signal evaluation reports under `reports/paper_signal_evaluation` are local and ignored by Git.

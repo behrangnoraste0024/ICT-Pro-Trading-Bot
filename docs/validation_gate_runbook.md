@@ -399,3 +399,19 @@ py scripts/run_btc_paper_runner.py --stop --state-file reports/paper_runner/btc_
 ```
 
 This is lifecycle/reporting only. `--start` does not start a loop and does not generate signals, create trades, submit orders, connect to an exchange, or enable live/paper execution. Generated state files stay local under `reports/paper_runner`.
+
+# BTC Paper Signal Evaluation Dry-Run
+
+Use these commands to validate and run a one-shot local fixture signal evaluation:
+
+```powershell
+py scripts/run_btc_paper_signal_evaluation.py
+py scripts/run_btc_paper_signal_evaluation.py --json
+py scripts/run_btc_paper_signal_evaluation.py --strict
+py scripts/run_btc_paper_signal_evaluation.py --evaluate
+py scripts/run_btc_paper_signal_evaluation.py --evaluate --json
+py scripts/run_btc_paper_runner.py --evaluate-signal-dry-run
+py scripts/run_btc_paper_runner.py --evaluate-signal-dry-run --state-file reports/paper_runner/btc_paper_runner_state.json
+```
+
+This is diagnostics only. It does not create paper trades, persist trades, submit orders, connect to exchanges, mutate runner state, or activate live/paper execution. Generated signal evaluation reports stay local under `reports/paper_signal_evaluation`.

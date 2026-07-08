@@ -10,7 +10,10 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from engine.diagnostics.btc_paper_runner_engine import BTCPaperRunnerEngine
+from engine.diagnostics.btc_paper_signal_evaluation_engine import BTCPaperSignalEvaluationEngine
+from models.btc_paper_signal_evaluation import BTCPaperSignalEvaluationIssue
 from reporting.btc_paper_runner_report import format_btc_paper_runner_status_report
+from reporting.btc_paper_signal_evaluation_report import format_btc_paper_signal_evaluation_result
 
 
 ACTION_FLAGS = {
@@ -34,19 +37,39 @@ def main(argv: list[str] | None = None) -> int:
         state_path = ROOT_DIR / args.state_file if not Path(args.state_file).is_absolute() else Path(args.state_file)
         if state_path.exists():
             state = engine.load_state(args.state_file)
-    if action == "STATUS":
+    if args.evaluate_signal_dry_run:
+        status = engine.build_status(config_path=args.config, expected_profile=args.expected_profile, state=state)
+        signal_engine = BTCPaperSignalEvaluationEngine(repo_root=ROOT_DIR)
+        evaluation = signal_engine.evaluate(expected_profile=args.expected_profile)
+        if status.state not in ("RUNNING", "PAUSED"):
+            evaluation.issues.append(
+                BTCPaperSignalEvaluationIssue(
+                    name="runner_not_active",
+                    severity="WARNING",
+                    message="Runner is not running; signal evaluation executed as standalone dry-run diagnostic.",
+                    details={"runner_state": status.state},
+                )
+            )
+            if evaluation.status == "PASS":
+                evaluation.status = "WARNING"
+        transition = None
+        payload = {"runner_status": status.to_dict(), "signal_evaluation": evaluation.to_dict()}
+        rendered = format_btc_paper_runner_status_report(status, transition) + "\n\n" + format_btc_paper_signal_evaluation_result(evaluation)
+        accepted = evaluation.status in ("PASS", "WARNING")
+    elif action == "STATUS":
         status = engine.build_status(config_path=args.config, expected_profile=args.expected_profile, state=state)
         transition = None
         payload = status.to_dict()
+        rendered = format_btc_paper_runner_status_report(status, transition)
         accepted = not any(issue.severity == "FAIL" for issue in status.issues)
     else:
         transition = engine.apply(action, status=state, config_path=args.config, expected_profile=args.expected_profile)
         status = transition.status
         payload = transition.to_dict()
+        rendered = format_btc_paper_runner_status_report(status, transition)
         accepted = transition.accepted
         if args.state_file and (accepted or action == "HEARTBEAT"):
             engine.save_state(status, args.state_file)
-    rendered = format_btc_paper_runner_status_report(status, transition)
     if args.export_json:
         _atomic_write(args.export_json, json.dumps(payload, indent=2))
         print(f"[btc-paper-runner] wrote {args.export_json}", file=sys.stderr if args.json else sys.stdout)
@@ -57,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2))
     else:
         print(rendered)
+    if args.evaluate_signal_dry_run and not accepted:
+        return 1
     if not accepted and action not in ("HEARTBEAT", "STATUS"):
         return 1
     if any(issue.severity == "FAIL" for issue in status.issues):
@@ -81,6 +106,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--export-json", default=None)
     parser.add_argument("--export-md", default=None)
+    parser.add_argument("--evaluate-signal-dry-run", action="store_true")
     for flag in ACTION_FLAGS:
         parser.add_argument(f"--{flag.replace('_', '-')}", dest=flag, action="store_true")
     return parser

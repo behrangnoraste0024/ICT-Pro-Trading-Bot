@@ -46,3 +46,7 @@ reports/paper_monitoring/*.md
 # BTC paper runner dry-run state exports
 reports/paper_runner/*.json
 reports/paper_runner/*.md
+
+# BTC paper signal evaluation dry-run exports
+reports/paper_signal_evaluation/*.json
+reports/paper_signal_evaluation/*.md
