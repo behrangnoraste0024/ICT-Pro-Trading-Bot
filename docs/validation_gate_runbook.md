@@ -331,6 +331,26 @@ CI:
 py scripts/run_validation_gate.py --preset ci
 ```
 
+BTC paper readiness diagnostics:
+
+```powershell
+py scripts/run_btc_paper_readiness.py
+```
+
+Strict readiness diagnostics:
+
+```powershell
+py scripts/run_btc_paper_readiness.py --strict
+```
+
+Gate-backed readiness diagnostics:
+
+```powershell
+py scripts/run_btc_paper_readiness.py --run-gate --use-cache --cache-dir .cache/backtests
+```
+
+The BTC readiness report is diagnostics only. It does not execute trades, enable paper execution, or imply live trading approval. ETH samples remain optional/stress-test data and do not block BTC readiness unless a multi-asset/all-samples validation snapshot is intentionally used.
+
 Baseline promotion:
 
 1. Run the full gate.
