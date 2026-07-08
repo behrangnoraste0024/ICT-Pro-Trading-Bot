@@ -90,13 +90,49 @@ def _row(sample: str, symbol: str, timeframe: str, status: str, wf: str | None) 
 
 
 def _ready_files(root: Path) -> None:
-    _write_json(root / "configs" / "btc_paper_runtime.json", {"risk": "placeholder"})
+    _write_json(root / "configs" / "btc_paper_runtime.json", _runtime_config())
     path = root / "scripts" / "run_btc_paper_status.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("print('status')\n", encoding="utf-8")
     trade_plan = root / "engine" / "trade_plan" / "trade_plan_engine.py"
     trade_plan.parent.mkdir(parents=True, exist_ok=True)
     trade_plan.write_text("class TradePlanEngine: pass\n", encoding="utf-8")
+
+
+def _runtime_config(**overrides) -> dict:
+    values = {
+        "schema_version": "1.0",
+        "project_scope": "BTC_ONLY",
+        "symbol": "BTC/USDT",
+        "exchange": "binance",
+        "strategy_profile": "balanced_smc_decision_065",
+        "sample_scope": "required_full",
+        "primary_timeframe": "15m",
+        "confirmation_timeframe": "1h",
+        "enabled": False,
+        "paper_execution_enabled": False,
+        "live_trading_enabled": False,
+        "order_submission_enabled": False,
+        "dry_run": True,
+        "kill_switch_enabled": True,
+        "account_currency": "USDT",
+        "starting_equity": 10000.0,
+        "risk_per_trade_pct": 0.005,
+        "max_risk_per_trade_pct": 0.01,
+        "max_daily_loss_pct": 0.02,
+        "max_total_drawdown_pct": 0.05,
+        "max_open_positions": 1,
+        "max_trades_per_day": 3,
+        "min_trade_interval_minutes": 15,
+        "max_position_notional_pct": 0.25,
+        "min_risk_reward": 1.5,
+        "require_stop_loss": True,
+        "require_take_profit": True,
+        "allow_long": True,
+        "allow_short": True,
+    }
+    values.update(overrides)
+    return values
 
 
 def _report(root: Path, **kwargs):
@@ -198,6 +234,24 @@ def test_risk_and_monitoring_placeholders_warn_when_missing(tmp_path) -> None:
 
     assert _check(report, "risk_runtime_config").status == "WARNING"
     assert _check(report, "paper_monitoring").status == "WARNING"
+
+
+def test_readiness_risk_runtime_config_passes_when_valid_config_exists(tmp_path) -> None:
+    _write_json(tmp_path / "configs" / "btc_paper_runtime.json", _runtime_config())
+
+    report = _report(tmp_path)
+
+    assert _check(report, "risk_runtime_config").status == "PASS"
+    assert _check(report, "paper_monitoring").status == "WARNING"
+
+
+def test_readiness_blocks_when_runtime_config_is_dangerous(tmp_path) -> None:
+    _write_json(tmp_path / "configs" / "btc_paper_runtime.json", _runtime_config(live_trading_enabled=True))
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "BLOCKED"
+    assert _check(report, "risk_runtime_config").status == "FAIL"
 
 
 def test_gate_pass_and_failure_are_reported(tmp_path) -> None:
