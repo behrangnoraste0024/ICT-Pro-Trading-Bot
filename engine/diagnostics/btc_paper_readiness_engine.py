@@ -9,6 +9,7 @@ from typing import Any
 
 from engine.diagnostics.historical_sample_registry_engine import HistoricalSampleRegistryEngine
 from engine.diagnostics.validation_baseline_engine import ValidationBaselineEngine
+from engine.diagnostics.btc_paper_runtime_config_engine import BTCPaperRuntimeConfigEngine
 from models.btc_paper_readiness import BTCPaperReadinessCheck, BTCPaperReadinessReport
 
 
@@ -18,12 +19,14 @@ class BTCPaperReadinessEngine:
         repo_root: str | Path | None = None,
         registry_engine: HistoricalSampleRegistryEngine | None = None,
         baseline_engine: ValidationBaselineEngine | None = None,
+        runtime_config_engine: BTCPaperRuntimeConfigEngine | None = None,
         gate_runner: Callable[..., int] | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.registry_engine = registry_engine or HistoricalSampleRegistryEngine(repo_root=self.repo_root)
         self.baseline_engine = baseline_engine or ValidationBaselineEngine(repo_root=self.repo_root)
+        self.runtime_config_engine = runtime_config_engine or BTCPaperRuntimeConfigEngine(repo_root=self.repo_root)
         self.gate_runner = gate_runner
         self.env = os.environ if env is None else env
 
@@ -193,20 +196,46 @@ class BTCPaperReadinessEngine:
     def _risk_readiness_check(self) -> BTCPaperReadinessCheck:
         trade_plan_exists = (self.repo_root / "engine" / "trade_plan" / "trade_plan_engine.py").exists()
         runtime_config = self.repo_root / "configs" / "btc_paper_runtime.json"
-        if runtime_config.exists():
+        if not runtime_config.exists():
+            return self._check(
+                "risk_runtime_config",
+                "WARNING",
+                "RECOMMENDED",
+                "Create BTC paper runtime config before executing paper trades.",
+                {"trade_plan_engine_exists": trade_plan_exists, "runtime_config": str(runtime_config)},
+            )
+        report = self.runtime_config_engine.validate(str(runtime_config))
+        details = {
+            "trade_plan_engine_exists": trade_plan_exists,
+            "runtime_config": str(runtime_config),
+            "validation_status": report.status,
+            "issue_count": report.issue_count,
+            "warning_count": report.warning_count,
+            "fail_count": report.fail_count,
+            "issues": [issue.to_dict() for issue in report.issues],
+        }
+        if report.status == "PASS":
             return self._check(
                 "risk_runtime_config",
                 "PASS",
                 "RECOMMENDED",
-                "BTC paper runtime risk config is present.",
-                {"trade_plan_engine_exists": trade_plan_exists, "runtime_config": str(runtime_config)},
+                "BTC paper runtime risk config is present and valid.",
+                details,
+            )
+        if report.status == "WARNING":
+            return self._check(
+                "risk_runtime_config",
+                "WARNING",
+                "RECOMMENDED",
+                "BTC paper runtime risk config has warnings.",
+                details,
             )
         return self._check(
             "risk_runtime_config",
-            "WARNING",
-            "RECOMMENDED",
-            "Create BTC paper runtime config before executing paper trades.",
-            {"trade_plan_engine_exists": trade_plan_exists, "runtime_config": str(runtime_config)},
+            "FAIL",
+            "REQUIRED",
+            "BTC paper runtime risk config failed safety validation.",
+            details,
         )
 
     def _monitoring_readiness_check(self) -> BTCPaperReadinessCheck:

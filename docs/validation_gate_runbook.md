@@ -337,6 +337,14 @@ BTC paper readiness diagnostics:
 py scripts/run_btc_paper_readiness.py
 ```
 
+BTC paper runtime config validation:
+
+```powershell
+py scripts/validate_btc_paper_runtime_config.py
+py scripts/validate_btc_paper_runtime_config.py --json
+py scripts/validate_btc_paper_runtime_config.py --strict
+```
+
 Strict readiness diagnostics:
 
 ```powershell
@@ -350,6 +358,8 @@ py scripts/run_btc_paper_readiness.py --run-gate --use-cache --cache-dir .cache/
 ```
 
 The BTC readiness report is diagnostics only. It does not execute trades, enable paper execution, or imply live trading approval. ETH samples remain optional/stress-test data and do not block BTC readiness unless a multi-asset/all-samples validation snapshot is intentionally used.
+
+The BTC paper runtime config at `configs/btc_paper_runtime.json` is also diagnostics/config only. It keeps live trading, order submission, and paper execution disabled while validating BTC risk guardrails. After Release 2.65, the remaining expected readiness warning is `paper_monitoring`, which belongs to a later telemetry/runner release.
 
 Baseline promotion:
 
