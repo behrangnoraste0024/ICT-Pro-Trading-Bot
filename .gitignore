@@ -22,6 +22,7 @@ Thumbs.db
 
 # Historical Data (IMPORTANT)
 data/historical/*.json
+data/historical/*.metadata.json
 
 # Local research caches
 .cache/
