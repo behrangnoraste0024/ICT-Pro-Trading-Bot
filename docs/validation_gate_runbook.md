@@ -126,6 +126,28 @@ py scripts/prepare_historical_samples.py --sample btcusdt_1h_1000 --source C:\pa
 
 The preparation helper never downloads from the network. It validates local source JSON, checks candle count, refuses overwrite unless `--overwrite` is passed, and copies into the registry fixture path. Historical files under `data/historical/*.json` are local/generated and should not be committed.
 
+## Historical Sample Downloader
+
+Preview missing or invalid samples without network access:
+
+```powershell
+py scripts/download_missing_historical_samples.py --dry-run
+```
+
+Download missing samples from a public exchange source and write metadata sidecars:
+
+```powershell
+py scripts/download_missing_historical_samples.py --exchange binance --write-metadata --validate-after-download
+```
+
+Download a single sample:
+
+```powershell
+py scripts/download_missing_historical_samples.py --sample ethusdt_15m_1000 --exchange binance --write-metadata --validate-after-download
+```
+
+The downloader uses public OHLCV data through `ccxt.fetch_ohlcv`; it does not use API keys. Real downloads require project dependencies with `ccxt` installed. Dry-runs do not require `ccxt` and do not call the network. Historical data files and sidecar files under `data/historical/*.json` and `data/historical/*.metadata.json` are local/generated and must not be committed. Run `py scripts/check_historical_samples.py` after downloads to verify readiness.
+
 ## Baseline Pinning
 
 Inspect the current baseline config:
