@@ -30,3 +30,7 @@ data/historical/*.metadata.json
 # Validation snapshot exports
 reports/validation_snapshots/*.json
 reports/validation_snapshots/*.md
+
+# BTC paper readiness diagnostics
+reports/paper_readiness/*.json
+reports/paper_readiness/*.md
