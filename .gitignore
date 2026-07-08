@@ -38,3 +38,7 @@ reports/paper_readiness/*.md
 # BTC paper runtime config validation exports
 reports/paper_runtime/*.json
 reports/paper_runtime/*.md
+
+# BTC paper monitoring status exports
+reports/paper_monitoring/*.json
+reports/paper_monitoring/*.md

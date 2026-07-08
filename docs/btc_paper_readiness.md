@@ -78,3 +78,22 @@ Release 2.65 makes `risk_runtime_config` pass when this config is present and va
 The current project phase is BTC-first. The official full gate uses BTC required-full samples: BTC/USDT 15m and BTC/USDT 1h. ETH samples remain optional stress-test data and do not block BTC paper readiness unless an all-samples validation snapshot is deliberately used.
 
 Before any real paper execution work, keep the BTC paper runtime config safe and add dry-run monitoring/telemetry. This readiness tool is pre-paper diagnostics only.
+
+# BTC Paper Monitoring / Telemetry Readiness
+
+Release 2.66 adds pre-runner monitoring readiness. It does not execute trades, start a runner, submit orders, connect to an exchange, or enable live trading. Paper execution, live trading, and order submission remain disabled.
+
+Commands:
+
+```powershell
+py scripts/validate_btc_paper_monitoring.py
+py scripts/validate_btc_paper_monitoring.py --json
+py scripts/validate_btc_paper_monitoring.py --strict
+py scripts/validate_btc_paper_monitoring.py --status
+py scripts/validate_btc_paper_monitoring.py --status --json
+py scripts/run_btc_paper_readiness.py
+```
+
+The monitoring status is a pre-runner readiness snapshot. `last_heartbeat_at` and `last_signal_at` are `None` because no paper runner is active yet. A READY monitoring status means the BTC paper monitoring config, heartbeat thresholds, runtime config visibility, validation gate visibility, execution-state visibility, and kill-switch visibility are ready for a later runner release.
+
+Readiness after this release may become READY for BTC paper preparation. It is not approval for paper execution.
