@@ -12,12 +12,12 @@ if str(ROOT_DIR) not in sys.path:
 
 from engine.backtest.strategy_comparison_engine import build_recommended_decision_profile_with_cost_specs
 from engine.diagnostics.multi_sample_validation_engine import (
-    DEFAULT_MULTI_SAMPLE_DEFINITIONS,
     MultiSampleValidationEngine,
 )
 from engine.diagnostics.historical_sample_registry_engine import HistoricalSampleRegistryEngine
 from engine.diagnostics.snapshot_comparison_engine import SnapshotComparisonEngine
 from engine.diagnostics.validation_baseline_engine import ValidationBaselineEngine
+from engine.diagnostics.validation_sample_scope_engine import SAMPLE_SCOPE_CHOICES, ValidationSampleScopeEngine
 from engine.diagnostics.validation_snapshot_engine import ValidationSnapshotEngine
 from reporting.multi_sample_validation_report import format_multi_sample_validation_report
 from reporting.historical_sample_registry_report import format_historical_sample_registry_report
@@ -40,6 +40,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.max_windows is not None and args.max_windows <= 0:
         print("Error: --max-windows must be greater than 0.")
         return 1
+    try:
+        scope = ValidationSampleScopeEngine(repo_root=ROOT_DIR).select(
+            registry_path=args.sample_registry,
+            sample_scope=args.sample_scope,
+            sample_names=args.sample,
+        )
+    except Exception as exc:
+        print(f"Error: {exc}")
+        return 1
     baseline_snapshot = _resolve_baseline_snapshot(args)
     if baseline_snapshot == "__ERROR__":
         return 1
@@ -54,7 +63,9 @@ def main(argv: list[str] | None = None) -> int:
 
     print("[validation-gate] starting")
     result = MultiSampleValidationEngine().validate(
-        samples=DEFAULT_MULTI_SAMPLE_DEFINITIONS,
+        samples=scope.selected_samples,
+        excluded_samples=scope.excluded_samples,
+        sample_scope=scope.sample_scope,
         strategy_specs=build_recommended_decision_profile_with_cost_specs(),
         sort_by=args.sort_by,
         recommended_profile=args.recommended_profile,
@@ -77,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         max_windows=args.max_windows,
         fast=args.fast,
         command=_command_text(argv),
+        diagnostics=scope.diagnostics,
     )
     snapshot_paths = _export_snapshot(snapshot_engine, snapshot, args.snapshot_dir, args.snapshot_format, bool(baseline_snapshot))
     for path in snapshot_paths:
@@ -154,6 +166,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--summary-badge", action="store_true")
     parser.add_argument("--check-samples", action="store_true")
     parser.add_argument("--sample-registry", default="configs/historical_sample_registry.json")
+    parser.add_argument("--sample-scope", choices=SAMPLE_SCOPE_CHOICES, default="all_registry")
+    parser.add_argument("--sample", action="append", default=None)
     return parser
 
 
@@ -172,6 +186,7 @@ def apply_validation_gate_preset(args, provided_options: set[str]) -> None:
         _set_if_missing(args, provided_options, "max_windows", "max-windows", 100)
         _set_if_missing(args, provided_options, "use_cache", "use-cache", True)
         _set_if_missing(args, provided_options, "cache_dir", "cache-dir", ".cache/backtests")
+        _set_if_missing(args, provided_options, "sample_scope", "sample-scope", "required_ci")
         _set_if_missing(args, provided_options, "snapshot_dir", "snapshot-dir", "reports/validation_snapshots")
         _set_if_missing(args, provided_options, "snapshot_format", "snapshot-format", "both")
         _set_if_missing(args, provided_options, "summary_badge", "summary-badge", True)
@@ -185,6 +200,9 @@ def apply_validation_gate_preset(args, provided_options: set[str]) -> None:
         _set_if_missing(args, provided_options, "summary_badge", "summary-badge", True)
         if args.preset == "full":
             _set_if_missing(args, provided_options, "show_details", "show-details", True)
+            _set_if_missing(args, provided_options, "sample_scope", "sample-scope", "required_full")
+        else:
+            _set_if_missing(args, provided_options, "sample_scope", "sample-scope", "required_ci")
         _set_if_missing(args, provided_options, "use_cache", "use-cache", True)
         _set_if_missing(args, provided_options, "cache_dir", "cache-dir", ".cache/backtests")
         _set_if_missing(args, provided_options, "snapshot_dir", "snapshot-dir", "reports/validation_snapshots")
@@ -194,6 +212,7 @@ def apply_validation_gate_preset(args, provided_options: set[str]) -> None:
         _set_if_missing(args, provided_options, "summary_badge", "summary-badge", True)
         _set_if_missing(args, provided_options, "use_cache", "use-cache", True)
         _set_if_missing(args, provided_options, "cache_dir", "cache-dir", ".cache/backtests")
+        _set_if_missing(args, provided_options, "sample_scope", "sample-scope", "required_full")
         _set_if_missing(args, provided_options, "snapshot_dir", "snapshot-dir", "reports/validation_snapshots")
         _set_if_missing(args, provided_options, "snapshot_format", "snapshot-format", "both")
         if "baseline-config" not in provided_options and "baseline-snapshot" not in provided_options:
@@ -370,6 +389,7 @@ def _print_progress(payload: dict) -> None:
     if event == "start":
         print(
             f"[multi-sample] samples={payload['samples']} "
+            f"scope={payload.get('sample_scope', 'all_registry')} "
             f"strategy_set={payload['strategy_set']} sort_by={payload['sort_by']}",
             flush=True,
         )

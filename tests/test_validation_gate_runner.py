@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from models.multi_sample_validation import MultiSampleValidationResult, MultiSampleValidationRow
+from models.multi_sample_validation import MultiSampleDefinition, MultiSampleValidationResult, MultiSampleValidationRow
+from models.validation_sample_scope import ValidationSampleScopeResult
 from models.historical_sample_registry import HistoricalSampleRegistryReport
 from models.snapshot_comparison import SnapshotComparisonResult
 from scripts.run_validation_gate import main
@@ -107,6 +108,17 @@ class _FakeHistoricalSampleRegistryEngine:
             available_samples=1,
             required_full_available=True,
             required_ci_available=True,
+        )
+
+
+class _FakeValidationSampleScopeEngine:
+    def __init__(self, repo_root=None) -> None:
+        self.repo_root = repo_root
+
+    def select(self, registry_path: str, sample_scope: str, sample_names: list[str] | None = None) -> ValidationSampleScopeResult:
+        return ValidationSampleScopeResult(
+            sample_scope="explicit" if sample_names else sample_scope,
+            selected_samples=[MultiSampleDefinition("mock_sample", "mock.json", "BTC/USDT", "15m")],
         )
 
 
@@ -589,6 +601,7 @@ def test_full_preset_prints_banner_and_uses_baseline_config(tmp_path, capsys, mo
 def test_check_samples_prints_registry_report_before_validation(tmp_path, capsys, monkeypatch) -> None:
     _patch_validation(monkeypatch)
     monkeypatch.setattr("scripts.run_validation_gate.HistoricalSampleRegistryEngine", _FakeHistoricalSampleRegistryEngine)
+    monkeypatch.setattr("scripts.run_validation_gate.ValidationSampleScopeEngine", _FakeValidationSampleScopeEngine)
 
     return_code = main(
         [

@@ -17,9 +17,9 @@
       "timeframe": "1h",
       "fixture_path": "data/historical/btcusdt_1h_1000.json",
       "expected_min_candles": 1000,
-      "required_for_full_gate": false,
+      "required_for_full_gate": true,
       "required_for_ci_gate": false,
-      "notes": "Optional robustness sample; currently may be missing."
+      "notes": "BTC official full-gate sample; optional for CI speed."
     },
     {
       "sample_name": "ethusdt_15m_1000",

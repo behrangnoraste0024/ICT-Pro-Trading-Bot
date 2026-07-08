@@ -23,8 +23,8 @@ from models.strategy_comparison import StrategyConfigSpec
 
 
 DEFAULT_MULTI_SAMPLE_DEFINITIONS = [
-    MultiSampleDefinition("btcusdt_15m_1000", "data/historical/btcusdt_15m_1000.json", "BTC/USDT", "15m"),
-    MultiSampleDefinition("btcusdt_1h_1000", "data/historical/btcusdt_1h_1000.json", "BTC/USDT", "1h"),
+    MultiSampleDefinition("btcusdt_15m_1000", "data/historical/btcusdt_15m_1000.json", "BTC/USDT", "15m", required=True, required_for_full_gate=True, required_for_ci_gate=True),
+    MultiSampleDefinition("btcusdt_1h_1000", "data/historical/btcusdt_1h_1000.json", "BTC/USDT", "1h", required=True, required_for_full_gate=True, required_for_ci_gate=False),
     MultiSampleDefinition("ethusdt_15m_1000", "data/historical/ethusdt_15m_1000.json", "ETH/USDT", "15m"),
     MultiSampleDefinition("ethusdt_1h_1000", "data/historical/ethusdt_1h_1000.json", "ETH/USDT", "1h"),
 ]
@@ -52,6 +52,8 @@ class MultiSampleValidationEngine:
     def validate(
         self,
         samples: Iterable[MultiSampleDefinition] | None = None,
+        excluded_samples: Iterable[MultiSampleDefinition] | None = None,
+        sample_scope: str = "all_registry",
         strategy_specs: list[StrategyConfigSpec] | None = None,
         min_candles: int = 50,
         sort_by: str = "net_pnl_after_costs",
@@ -64,12 +66,16 @@ class MultiSampleValidationEngine:
         cache_dir: str = ".cache/backtests",
     ) -> MultiSampleValidationResult:
         selected_samples = list(DEFAULT_MULTI_SAMPLE_DEFINITIONS if samples is None else samples)
+        excluded_sample_rows = list(excluded_samples or [])
         specs = build_recommended_decision_profile_with_cost_specs() if strategy_specs is None else strategy_specs
         self._emit(
             progress_callback,
             {
                 "event": "start",
                 "samples": len(selected_samples),
+                "selected_samples": len(selected_samples),
+                "excluded_samples": len(excluded_sample_rows),
+                "sample_scope": sample_scope,
                 "strategy_set": "recommended_decision_profiles_with_costs",
                 "sort_by": sort_by,
             },
@@ -90,7 +96,8 @@ class MultiSampleValidationEngine:
             )
             for sample in selected_samples
         ]
-        result = self._result(rows, recommended_profile, sort_by)
+        rows.extend(self._out_of_scope_row(sample, sample_scope) for sample in excluded_sample_rows)
+        result = self._result(rows, recommended_profile, sort_by, sample_scope, len(selected_samples), len(excluded_sample_rows))
         self._emit(
             progress_callback,
             {
@@ -344,6 +351,16 @@ class MultiSampleValidationEngine:
             elapsed_seconds=time.perf_counter() - started_at,
         )
 
+    def _out_of_scope_row(self, sample: MultiSampleDefinition, sample_scope: str) -> MultiSampleValidationRow:
+        return MultiSampleValidationRow(
+            sample_name=sample.name,
+            fixture_path=sample.fixture_path,
+            symbol=sample.symbol,
+            timeframe=sample.timeframe,
+            status="SKIPPED_OUT_OF_SCOPE",
+            error_message=f"sample excluded by validation scope {sample_scope}",
+        )
+
     def _failed_row(self, sample: MultiSampleDefinition, started_at: float, message: str) -> MultiSampleValidationRow:
         return MultiSampleValidationRow(
             sample_name=sample.name,
@@ -360,20 +377,29 @@ class MultiSampleValidationEngine:
         rows: list[MultiSampleValidationRow],
         recommended_profile: str,
         sort_by: str,
+        sample_scope: str,
+        selected_samples: int,
+        excluded_samples: int,
     ) -> MultiSampleValidationResult:
-        completed = [row for row in rows if row.status not in ("SKIPPED_MISSING_FILE", "ERROR")]
+        completed = [row for row in rows if row.status not in ("SKIPPED_MISSING_FILE", "SKIPPED_OUT_OF_SCOPE", "ERROR")]
         return MultiSampleValidationResult(
             rows=rows,
             total_samples=len(rows),
+            selected_samples=selected_samples,
+            excluded_samples=excluded_samples,
+            sample_scope=sample_scope,
             completed_samples=len(completed),
             passed_samples=sum(1 for row in rows if row.status == "PASSED"),
             warning_samples=sum(1 for row in rows if row.status == "WARNING"),
             failed_samples=sum(1 for row in rows if row.status == "FAILED"),
-            skipped_samples=sum(1 for row in rows if row.status == "SKIPPED_MISSING_FILE"),
+            skipped_samples=sum(1 for row in rows if row.status in ("SKIPPED_MISSING_FILE", "SKIPPED_OUT_OF_SCOPE")),
             error_samples=sum(1 for row in rows if row.status == "ERROR"),
             recommended_profile=recommended_profile,
             diagnostics={
                 "sort_by": sort_by,
+                "sample_scope": sample_scope,
+                "selected_samples": selected_samples,
+                "excluded_samples": excluded_samples,
                 "sample_names": [row.sample_name for row in rows],
             },
         )

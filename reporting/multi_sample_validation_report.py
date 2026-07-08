@@ -7,7 +7,10 @@ def format_multi_sample_validation_report(result: MultiSampleValidationResult, s
     lines = [
         "===== MULTI-SAMPLE VALIDATION =====",
         f"Recommended Profile : {result.recommended_profile}",
+        f"Sample Scope        : {result.sample_scope}",
         f"Total Samples       : {result.total_samples}",
+        f"Selected Samples    : {result.selected_samples}",
+        f"Excluded Samples    : {result.excluded_samples}",
         f"Completed Samples   : {result.completed_samples}",
         f"Passed Samples      : {result.passed_samples}",
         f"Warning Samples     : {result.warning_samples}",
@@ -36,7 +39,7 @@ def format_multi_sample_validation_report(result: MultiSampleValidationResult, s
         for row in result.rows:
             lines.append(
                 f"{row.sample_name}: status={row.status}, fixture={row.fixture_path}, "
-                f"elapsed={_fmt(row.elapsed_seconds)}s"
+                f"elapsed={_fmt(row.elapsed_seconds)}s, reason={row.error_message}"
             )
     return "\n".join(lines)
 

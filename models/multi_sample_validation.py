@@ -11,6 +11,8 @@ class MultiSampleDefinition:
     symbol: str
     timeframe: str
     required: bool = False
+    required_for_full_gate: bool = False
+    required_for_ci_gate: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -57,6 +59,9 @@ class MultiSampleValidationRow:
 class MultiSampleValidationResult:
     rows: list[MultiSampleValidationRow] = field(default_factory=list)
     total_samples: int = 0
+    selected_samples: int = 0
+    excluded_samples: int = 0
+    sample_scope: str = "all_registry"
     completed_samples: int = 0
     passed_samples: int = 0
     warning_samples: int = 0
@@ -71,6 +76,9 @@ class MultiSampleValidationResult:
         return {
             "rows": [row.to_dict() for row in self.rows],
             "total_samples": self.total_samples,
+            "selected_samples": self.selected_samples,
+            "excluded_samples": self.excluded_samples,
+            "sample_scope": self.sample_scope,
             "completed_samples": self.completed_samples,
             "passed_samples": self.passed_samples,
             "warning_samples": self.warning_samples,
