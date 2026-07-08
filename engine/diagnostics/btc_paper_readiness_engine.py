@@ -10,6 +10,7 @@ from typing import Any
 from engine.diagnostics.historical_sample_registry_engine import HistoricalSampleRegistryEngine
 from engine.diagnostics.validation_baseline_engine import ValidationBaselineEngine
 from engine.diagnostics.btc_paper_runtime_config_engine import BTCPaperRuntimeConfigEngine
+from engine.diagnostics.btc_paper_monitoring_engine import BTCPaperMonitoringEngine
 from models.btc_paper_readiness import BTCPaperReadinessCheck, BTCPaperReadinessReport
 
 
@@ -20,6 +21,7 @@ class BTCPaperReadinessEngine:
         registry_engine: HistoricalSampleRegistryEngine | None = None,
         baseline_engine: ValidationBaselineEngine | None = None,
         runtime_config_engine: BTCPaperRuntimeConfigEngine | None = None,
+        monitoring_engine: BTCPaperMonitoringEngine | None = None,
         gate_runner: Callable[..., int] | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
@@ -27,6 +29,7 @@ class BTCPaperReadinessEngine:
         self.registry_engine = registry_engine or HistoricalSampleRegistryEngine(repo_root=self.repo_root)
         self.baseline_engine = baseline_engine or ValidationBaselineEngine(repo_root=self.repo_root)
         self.runtime_config_engine = runtime_config_engine or BTCPaperRuntimeConfigEngine(repo_root=self.repo_root)
+        self.monitoring_engine = monitoring_engine or BTCPaperMonitoringEngine(repo_root=self.repo_root)
         self.gate_runner = gate_runner
         self.env = os.environ if env is None else env
 
@@ -239,21 +242,47 @@ class BTCPaperReadinessEngine:
         )
 
     def _monitoring_readiness_check(self) -> BTCPaperReadinessCheck:
-        telemetry_script = self.repo_root / "scripts" / "run_btc_paper_status.py"
-        if telemetry_script.exists():
+        config_path = self.repo_root / "configs" / "btc_paper_monitoring.json"
+        if not config_path.exists():
+            return self._check(
+                "paper_monitoring",
+                "WARNING",
+                "RECOMMENDED",
+                "Add BTC paper monitoring config before execution.",
+                {"monitoring_config": str(config_path)},
+            )
+        report = self.monitoring_engine.validate(str(config_path))
+        details = {
+            "monitoring_config": str(config_path),
+            "validation_status": report.status,
+            "issue_count": report.issue_count,
+            "warning_count": report.warning_count,
+            "fail_count": report.fail_count,
+            "issues": [issue.to_dict() for issue in report.issues],
+            "diagnostics": dict(report.diagnostics),
+        }
+        if report.status == "PASS":
             return self._check(
                 "paper_monitoring",
                 "PASS",
                 "RECOMMENDED",
-                "BTC paper dry-run status and telemetry hook is present.",
-                {"telemetry_script": str(telemetry_script)},
+                "BTC paper monitoring config and pre-runner telemetry readiness are present and safe.",
+                details,
+            )
+        if report.status == "WARNING":
+            return self._check(
+                "paper_monitoring",
+                "WARNING",
+                "RECOMMENDED",
+                "BTC paper monitoring config has warnings.",
+                details,
             )
         return self._check(
             "paper_monitoring",
-            "WARNING",
-            "RECOMMENDED",
-            "Add BTC paper runner dry-run status and telemetry before execution.",
-            {"telemetry_script": str(telemetry_script)},
+            "FAIL",
+            "REQUIRED",
+            "BTC paper monitoring config failed safety validation.",
+            details,
         )
 
     def _cache_diagnostics_check(self, snapshot: dict[str, Any] | None) -> BTCPaperReadinessCheck:

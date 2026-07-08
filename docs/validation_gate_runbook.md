@@ -368,3 +368,18 @@ Baseline promotion:
 3. Run promotion dry-run with `--require-pass --record-history`.
 4. Run real promotion only after explicit approval.
 5. Commit the tracked baseline config and history files.
+
+# BTC Paper Monitoring / Telemetry Readiness
+
+Use these commands to validate the BTC paper monitoring configuration and pre-runner status:
+
+```powershell
+py scripts/validate_btc_paper_monitoring.py
+py scripts/validate_btc_paper_monitoring.py --json
+py scripts/validate_btc_paper_monitoring.py --strict
+py scripts/validate_btc_paper_monitoring.py --status
+py scripts/validate_btc_paper_monitoring.py --status --json
+py scripts/run_btc_paper_readiness.py
+```
+
+This monitoring layer is diagnostics-only. It does not start a paper runner, execute trades, place orders, read credentials, or connect to exchange APIs. The heartbeat fields are intentionally empty before a runner exists. Live trading, order submission, and paper execution must remain disabled until a later release explicitly introduces execution.

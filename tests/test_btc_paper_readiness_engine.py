@@ -91,9 +91,7 @@ def _row(sample: str, symbol: str, timeframe: str, status: str, wf: str | None) 
 
 def _ready_files(root: Path) -> None:
     _write_json(root / "configs" / "btc_paper_runtime.json", _runtime_config())
-    path = root / "scripts" / "run_btc_paper_status.py"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("print('status')\n", encoding="utf-8")
+    _write_json(root / "configs" / "btc_paper_monitoring.json", _monitoring_config())
     trade_plan = root / "engine" / "trade_plan" / "trade_plan_engine.py"
     trade_plan.parent.mkdir(parents=True, exist_ok=True)
     trade_plan.write_text("class TradePlanEngine: pass\n", encoding="utf-8")
@@ -135,6 +133,34 @@ def _runtime_config(**overrides) -> dict:
     return values
 
 
+def _monitoring_config(**overrides) -> dict:
+    values = {
+        "schema_version": "1.0",
+        "project_scope": "BTC_ONLY",
+        "symbol": "BTC/USDT",
+        "strategy_profile": "balanced_smc_decision_065",
+        "runtime_config_path": "configs/btc_paper_runtime.json",
+        "enabled": True,
+        "monitoring_only": True,
+        "paper_execution_expected": False,
+        "live_trading_expected": False,
+        "order_submission_expected": False,
+        "heartbeat_stale_after_seconds": 120,
+        "signal_stale_after_minutes": 60,
+        "validation_gate_stale_after_hours": 24,
+        "runtime_config_stale_after_hours": 24,
+        "max_consecutive_errors": 3,
+        "require_kill_switch_visible": True,
+        "require_execution_state_visible": True,
+        "require_runtime_config_visible": True,
+        "require_validation_gate_status_visible": True,
+        "require_last_signal_visible": False,
+        "status_export_dir": "reports/paper_monitoring",
+    }
+    values.update(overrides)
+    return values
+
+
 def _report(root: Path, **kwargs):
     registry = kwargs.pop("registry", None)
     if registry is None:
@@ -162,6 +188,8 @@ def test_ready_when_btc_samples_baseline_and_placeholders_exist(tmp_path) -> Non
     assert _check(report, "btcusdt_15m_1000").status == "PASS"
     assert _check(report, "btcusdt_1h_1000").status == "PASS"
     assert _check(report, "eth_optional_scope").status == "PASS"
+    assert _check(report, "risk_runtime_config").status == "PASS"
+    assert _check(report, "paper_monitoring").status == "PASS"
 
 
 def test_missing_btc_15m_required_sample_blocks(tmp_path) -> None:
@@ -243,6 +271,25 @@ def test_readiness_risk_runtime_config_passes_when_valid_config_exists(tmp_path)
 
     assert _check(report, "risk_runtime_config").status == "PASS"
     assert _check(report, "paper_monitoring").status == "WARNING"
+
+
+def test_readiness_monitoring_passes_when_valid_config_exists(tmp_path) -> None:
+    _write_json(tmp_path / "configs" / "btc_paper_runtime.json", _runtime_config())
+    _write_json(tmp_path / "configs" / "btc_paper_monitoring.json", _monitoring_config())
+
+    report = _report(tmp_path)
+
+    assert _check(report, "paper_monitoring").status == "PASS"
+
+
+def test_readiness_blocks_when_monitoring_config_is_dangerous(tmp_path) -> None:
+    _write_json(tmp_path / "configs" / "btc_paper_runtime.json", _runtime_config())
+    _write_json(tmp_path / "configs" / "btc_paper_monitoring.json", _monitoring_config(live_trading_expected=True))
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "BLOCKED"
+    assert _check(report, "paper_monitoring").status == "FAIL"
 
 
 def test_readiness_blocks_when_runtime_config_is_dangerous(tmp_path) -> None:
