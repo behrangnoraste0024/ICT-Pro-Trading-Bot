@@ -383,3 +383,19 @@ py scripts/run_btc_paper_readiness.py
 ```
 
 This monitoring layer is diagnostics-only. It does not start a paper runner, execute trades, place orders, read credentials, or connect to exchange APIs. The heartbeat fields are intentionally empty before a runner exists. Live trading, order submission, and paper execution must remain disabled until a later release explicitly introduces execution.
+
+# BTC Paper Runner Dry-Run State Machine
+
+Use these commands to exercise the dry-run lifecycle state machine:
+
+```powershell
+py scripts/run_btc_paper_runner.py --status
+py scripts/run_btc_paper_runner.py --initialize --state-file reports/paper_runner/btc_paper_runner_state.json
+py scripts/run_btc_paper_runner.py --start --state-file reports/paper_runner/btc_paper_runner_state.json
+py scripts/run_btc_paper_runner.py --heartbeat --state-file reports/paper_runner/btc_paper_runner_state.json
+py scripts/run_btc_paper_runner.py --pause --state-file reports/paper_runner/btc_paper_runner_state.json
+py scripts/run_btc_paper_runner.py --resume --state-file reports/paper_runner/btc_paper_runner_state.json
+py scripts/run_btc_paper_runner.py --stop --state-file reports/paper_runner/btc_paper_runner_state.json
+```
+
+This is lifecycle/reporting only. `--start` does not start a loop and does not generate signals, create trades, submit orders, connect to an exchange, or enable live/paper execution. Generated state files stay local under `reports/paper_runner`.

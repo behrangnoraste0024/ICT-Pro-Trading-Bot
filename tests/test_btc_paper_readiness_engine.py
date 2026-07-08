@@ -92,6 +92,7 @@ def _row(sample: str, symbol: str, timeframe: str, status: str, wf: str | None) 
 def _ready_files(root: Path) -> None:
     _write_json(root / "configs" / "btc_paper_runtime.json", _runtime_config())
     _write_json(root / "configs" / "btc_paper_monitoring.json", _monitoring_config())
+    _write_json(root / "configs" / "btc_paper_runner.json", _runner_config())
     trade_plan = root / "engine" / "trade_plan" / "trade_plan_engine.py"
     trade_plan.parent.mkdir(parents=True, exist_ok=True)
     trade_plan.write_text("class TradePlanEngine: pass\n", encoding="utf-8")
@@ -161,6 +162,30 @@ def _monitoring_config(**overrides) -> dict:
     return values
 
 
+def _runner_config(**overrides) -> dict:
+    values = {
+        "schema_version": "1.0",
+        "project_scope": "BTC_ONLY",
+        "symbol": "BTC/USDT",
+        "strategy_profile": "balanced_smc_decision_065",
+        "runtime_config_path": "configs/btc_paper_runtime.json",
+        "monitoring_config_path": "configs/btc_paper_monitoring.json",
+        "runner_enabled": False,
+        "dry_run_only": True,
+        "allow_signal_generation": False,
+        "allow_paper_trade_creation": False,
+        "allow_order_submission": False,
+        "allow_exchange_connection": False,
+        "require_runtime_config_pass": True,
+        "require_monitoring_config_pass": True,
+        "require_kill_switch_enabled": True,
+        "heartbeat_interval_seconds": 30,
+        "state_export_dir": "reports/paper_runner",
+    }
+    values.update(overrides)
+    return values
+
+
 def _report(root: Path, **kwargs):
     registry = kwargs.pop("registry", None)
     if registry is None:
@@ -190,6 +215,7 @@ def test_ready_when_btc_samples_baseline_and_placeholders_exist(tmp_path) -> Non
     assert _check(report, "eth_optional_scope").status == "PASS"
     assert _check(report, "risk_runtime_config").status == "PASS"
     assert _check(report, "paper_monitoring").status == "PASS"
+    assert _check(report, "btc_paper_runner_dry_run_state_machine").status == "PASS"
 
 
 def test_missing_btc_15m_required_sample_blocks(tmp_path) -> None:
@@ -290,6 +316,26 @@ def test_readiness_blocks_when_monitoring_config_is_dangerous(tmp_path) -> None:
 
     assert report.readiness_status == "BLOCKED"
     assert _check(report, "paper_monitoring").status == "FAIL"
+
+
+def test_readiness_remains_ready_with_valid_runner_config(tmp_path) -> None:
+    _ready_files(tmp_path)
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "READY"
+    assert _check(report, "btc_paper_runner_dry_run_state_machine").status == "PASS"
+
+
+def test_readiness_blocks_when_runner_config_is_dangerous(tmp_path) -> None:
+    _write_json(tmp_path / "configs" / "btc_paper_runtime.json", _runtime_config())
+    _write_json(tmp_path / "configs" / "btc_paper_monitoring.json", _monitoring_config())
+    _write_json(tmp_path / "configs" / "btc_paper_runner.json", _runner_config(allow_order_submission=True))
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "BLOCKED"
+    assert _check(report, "btc_paper_runner_dry_run_state_machine").status == "FAIL"
 
 
 def test_readiness_blocks_when_runtime_config_is_dangerous(tmp_path) -> None:

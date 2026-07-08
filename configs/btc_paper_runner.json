@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "project_scope": "BTC_ONLY",
+  "symbol": "BTC/USDT",
+  "strategy_profile": "balanced_smc_decision_065",
+  "runtime_config_path": "configs/btc_paper_runtime.json",
+  "monitoring_config_path": "configs/btc_paper_monitoring.json",
+  "runner_enabled": false,
+  "dry_run_only": true,
+  "allow_signal_generation": false,
+  "allow_paper_trade_creation": false,
+  "allow_order_submission": false,
+  "allow_exchange_connection": false,
+  "require_runtime_config_pass": true,
+  "require_monitoring_config_pass": true,
+  "require_kill_switch_enabled": true,
+  "heartbeat_interval_seconds": 30,
+  "state_export_dir": "reports/paper_runner",
+  "notes": "BTC paper runner dry-run lifecycle config. No signals, trades, orders, or exchange connections are enabled."
+}
