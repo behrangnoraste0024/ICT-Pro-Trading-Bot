@@ -42,3 +42,7 @@ reports/paper_runtime/*.md
 # BTC paper monitoring status exports
 reports/paper_monitoring/*.json
 reports/paper_monitoring/*.md
+
+# BTC paper runner dry-run state exports
+reports/paper_runner/*.json
+reports/paper_runner/*.md

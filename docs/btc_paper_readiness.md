@@ -97,3 +97,21 @@ py scripts/run_btc_paper_readiness.py
 The monitoring status is a pre-runner readiness snapshot. `last_heartbeat_at` and `last_signal_at` are `None` because no paper runner is active yet. A READY monitoring status means the BTC paper monitoring config, heartbeat thresholds, runtime config visibility, validation gate visibility, execution-state visibility, and kill-switch visibility are ready for a later runner release.
 
 Readiness after this release may become READY for BTC paper preparation. It is not approval for paper execution.
+
+# BTC Paper Runner Dry-Run State Machine
+
+Release 2.67 adds a dry-run runner lifecycle state machine. It does not execute trades, start a continuous loop, generate signals, create paper trades, submit orders, connect to an exchange, or read credentials. `--start` means a state transition only.
+
+Commands:
+
+```powershell
+py scripts/run_btc_paper_runner.py --status
+py scripts/run_btc_paper_runner.py --initialize --state-file reports/paper_runner/btc_paper_runner_state.json
+py scripts/run_btc_paper_runner.py --start --state-file reports/paper_runner/btc_paper_runner_state.json
+py scripts/run_btc_paper_runner.py --heartbeat --state-file reports/paper_runner/btc_paper_runner_state.json
+py scripts/run_btc_paper_runner.py --pause --state-file reports/paper_runner/btc_paper_runner_state.json
+py scripts/run_btc_paper_runner.py --resume --state-file reports/paper_runner/btc_paper_runner_state.json
+py scripts/run_btc_paper_runner.py --stop --state-file reports/paper_runner/btc_paper_runner_state.json
+```
+
+Generated runner state files under `reports/paper_runner` are local and ignored by Git. This release prepares lifecycle visibility only.
