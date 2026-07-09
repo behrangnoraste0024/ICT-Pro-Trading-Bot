@@ -151,3 +151,23 @@ py scripts/run_btc_paper_runner.py --simulate-trade-candidate-dry-run --state-fi
 ```
 
 Generated candidate reports under `reports/paper_trade_candidates` are local and ignored by Git.
+
+# BTC Paper Candidate Journal Dry-Run
+
+Release 2.70 adds a local diagnostic audit journal for BTC paper signal/candidate dry-runs. Journal entries are local audit records only: they do not execute trades, persist active paper trades, open positions, submit orders, connect to an exchange, or mutate runner state. Rejected candidates can be recorded too, so `candidate_created=false` is expected when the signal score is below threshold.
+
+Commands:
+
+```powershell
+py scripts/run_btc_paper_candidate_journal.py
+py scripts/run_btc_paper_candidate_journal.py --json
+py scripts/run_btc_paper_candidate_journal.py --strict
+py scripts/run_btc_paper_candidate_journal.py --simulate-and-record
+py scripts/run_btc_paper_candidate_journal.py --simulate-and-record --json
+py scripts/run_btc_paper_candidate_journal.py --summary
+py scripts/run_btc_paper_candidate_journal.py --summary --json
+py scripts/run_btc_paper_runner.py --simulate-and-journal-candidate-dry-run
+py scripts/run_btc_paper_runner.py --simulate-and-journal-candidate-dry-run --state-file reports/paper_runner/btc_paper_runner_state.json
+```
+
+Generated journal files under `reports/paper_candidate_journal` are local and ignored by Git.

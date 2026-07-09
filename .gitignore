@@ -54,3 +54,8 @@ reports/paper_signal_evaluation/*.md
 # BTC paper trade candidate dry-run exports
 reports/paper_trade_candidates/*.json
 reports/paper_trade_candidates/*.md
+
+# BTC paper candidate journal dry-run exports
+reports/paper_candidate_journal/*.jsonl
+reports/paper_candidate_journal/*.json
+reports/paper_candidate_journal/*.md
