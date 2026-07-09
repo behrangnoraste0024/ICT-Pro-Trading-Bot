@@ -7,6 +7,7 @@ from scripts import run_btc_paper_runner
 
 from tests.test_btc_paper_runner_engine import _write_configs
 from tests.test_btc_paper_signal_evaluation_engine import _write_configs as _write_signal_configs
+from tests.test_btc_paper_trade_candidate_engine import _write_trade_candidate_configs
 
 
 def test_status_works_without_state_file(tmp_path, capsys, monkeypatch) -> None:
@@ -85,3 +86,22 @@ def test_evaluate_signal_dry_run_does_not_mutate_state(tmp_path, capsys, monkeyp
     assert before == after
     assert "BTC PAPER SIGNAL EVALUATION DRY-RUN" in captured.out
     assert "No signals, trades, orders, or exchange connections were executed" in captured.out
+
+
+def test_simulate_trade_candidate_dry_run_does_not_mutate_state(tmp_path, capsys, monkeypatch) -> None:
+    _write_configs(tmp_path)
+    _write_signal_configs(tmp_path)
+    _write_trade_candidate_configs(tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "ROOT_DIR", tmp_path)
+    state_path = tmp_path / "reports" / "paper_runner" / "state.json"
+    run_btc_paper_runner.main(["--initialize", "--state-file", "reports/paper_runner/state.json"])
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+
+    code = run_btc_paper_runner.main(["--simulate-trade-candidate-dry-run", "--state-file", "reports/paper_runner/state.json"])
+
+    captured = capsys.readouterr()
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert before == after
+    assert "BTC PAPER TRADE CANDIDATE DRY-RUN" in captured.out
+    assert "Order Submitted     : false" in captured.out

@@ -133,3 +133,21 @@ py scripts/run_btc_paper_runner.py --evaluate-signal-dry-run --state-file report
 ```
 
 Generated signal evaluation reports under `reports/paper_signal_evaluation` are local and ignored by Git.
+
+# BTC Paper Trade Candidate Dry-Run
+
+Release 2.69 adds non-executable trade candidate diagnostics. A candidate is a report object only: it does not execute trades, persist paper trades, open positions, submit orders, connect to an exchange, or mutate runner state. If the dry-run signal score is below threshold, `candidate_created=false` is expected.
+
+Commands:
+
+```powershell
+py scripts/run_btc_paper_trade_candidate.py
+py scripts/run_btc_paper_trade_candidate.py --json
+py scripts/run_btc_paper_trade_candidate.py --strict
+py scripts/run_btc_paper_trade_candidate.py --simulate
+py scripts/run_btc_paper_trade_candidate.py --simulate --json
+py scripts/run_btc_paper_runner.py --simulate-trade-candidate-dry-run
+py scripts/run_btc_paper_runner.py --simulate-trade-candidate-dry-run --state-file reports/paper_runner/btc_paper_runner_state.json
+```
+
+Generated candidate reports under `reports/paper_trade_candidates` are local and ignored by Git.
