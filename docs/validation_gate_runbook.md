@@ -431,3 +431,21 @@ py scripts/run_btc_paper_runner.py --simulate-trade-candidate-dry-run --state-fi
 ```
 
 This is diagnostics only. A trade candidate is non-executable and is not a paper trade. It does not persist trades, open positions, submit orders, connect to an exchange, or mutate runner state. Generated candidate reports stay local under `reports/paper_trade_candidates`.
+
+# BTC Paper Candidate Journal Dry-Run
+
+Use these commands to validate, write, or summarize local BTC paper candidate journal diagnostics:
+
+```powershell
+py scripts/run_btc_paper_candidate_journal.py
+py scripts/run_btc_paper_candidate_journal.py --json
+py scripts/run_btc_paper_candidate_journal.py --strict
+py scripts/run_btc_paper_candidate_journal.py --simulate-and-record
+py scripts/run_btc_paper_candidate_journal.py --simulate-and-record --json
+py scripts/run_btc_paper_candidate_journal.py --summary
+py scripts/run_btc_paper_candidate_journal.py --summary --json
+py scripts/run_btc_paper_runner.py --simulate-and-journal-candidate-dry-run
+py scripts/run_btc_paper_runner.py --simulate-and-journal-candidate-dry-run --state-file reports/paper_runner/btc_paper_runner_state.json
+```
+
+This is diagnostics only. Journal entries are local audit records, not paper trades, positions, executable signals, or order records. Rejected candidates are recorded too. The command does not open positions, submit orders, connect to an exchange, or mutate runner state. Generated journal files stay local under `reports/paper_candidate_journal`.
