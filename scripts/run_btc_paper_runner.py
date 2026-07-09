@@ -11,9 +11,12 @@ if str(ROOT_DIR) not in sys.path:
 
 from engine.diagnostics.btc_paper_runner_engine import BTCPaperRunnerEngine
 from engine.diagnostics.btc_paper_signal_evaluation_engine import BTCPaperSignalEvaluationEngine
+from engine.diagnostics.btc_paper_trade_candidate_engine import BTCPaperTradeCandidateEngine
 from models.btc_paper_signal_evaluation import BTCPaperSignalEvaluationIssue
+from models.btc_paper_trade_candidate import BTCPaperTradeCandidateIssue
 from reporting.btc_paper_runner_report import format_btc_paper_runner_status_report
 from reporting.btc_paper_signal_evaluation_report import format_btc_paper_signal_evaluation_result
+from reporting.btc_paper_trade_candidate_report import format_btc_paper_trade_candidate_result
 
 
 ACTION_FLAGS = {
@@ -37,7 +40,26 @@ def main(argv: list[str] | None = None) -> int:
         state_path = ROOT_DIR / args.state_file if not Path(args.state_file).is_absolute() else Path(args.state_file)
         if state_path.exists():
             state = engine.load_state(args.state_file)
-    if args.evaluate_signal_dry_run:
+    if args.simulate_trade_candidate_dry_run:
+        status = engine.build_status(config_path=args.config, expected_profile=args.expected_profile, state=state)
+        candidate_engine = BTCPaperTradeCandidateEngine(repo_root=ROOT_DIR)
+        candidate_result = candidate_engine.simulate(expected_profile=args.expected_profile)
+        if status.state != "RUNNING":
+            candidate_result.issues.append(
+                BTCPaperTradeCandidateIssue(
+                    name="runner_not_running",
+                    severity="WARNING",
+                    message="Runner is not running; trade candidate simulation executed as standalone dry-run diagnostic.",
+                    details={"runner_state": status.state},
+                )
+            )
+            if candidate_result.status == "PASS":
+                candidate_result.status = "WARNING"
+        transition = None
+        payload = {"runner_status": status.to_dict(), "trade_candidate": candidate_result.to_dict()}
+        rendered = format_btc_paper_runner_status_report(status, transition) + "\n\n" + format_btc_paper_trade_candidate_result(candidate_result)
+        accepted = candidate_result.status in ("PASS", "WARNING")
+    elif args.evaluate_signal_dry_run:
         status = engine.build_status(config_path=args.config, expected_profile=args.expected_profile, state=state)
         signal_engine = BTCPaperSignalEvaluationEngine(repo_root=ROOT_DIR)
         evaluation = signal_engine.evaluate(expected_profile=args.expected_profile)
@@ -80,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2))
     else:
         print(rendered)
-    if args.evaluate_signal_dry_run and not accepted:
+    if (args.evaluate_signal_dry_run or args.simulate_trade_candidate_dry_run) and not accepted:
         return 1
     if not accepted and action not in ("HEARTBEAT", "STATUS"):
         return 1
@@ -107,6 +129,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--export-json", default=None)
     parser.add_argument("--export-md", default=None)
     parser.add_argument("--evaluate-signal-dry-run", action="store_true")
+    parser.add_argument("--simulate-trade-candidate-dry-run", action="store_true")
     for flag in ACTION_FLAGS:
         parser.add_argument(f"--{flag.replace('_', '-')}", dest=flag, action="store_true")
     return parser

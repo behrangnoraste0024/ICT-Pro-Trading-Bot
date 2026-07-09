@@ -13,6 +13,7 @@ from engine.diagnostics.btc_paper_runtime_config_engine import BTCPaperRuntimeCo
 from engine.diagnostics.btc_paper_monitoring_engine import BTCPaperMonitoringEngine
 from engine.diagnostics.btc_paper_runner_engine import BTCPaperRunnerEngine
 from engine.diagnostics.btc_paper_signal_evaluation_engine import BTCPaperSignalEvaluationEngine
+from engine.diagnostics.btc_paper_trade_candidate_engine import BTCPaperTradeCandidateEngine
 from models.btc_paper_readiness import BTCPaperReadinessCheck, BTCPaperReadinessReport
 
 
@@ -26,6 +27,7 @@ class BTCPaperReadinessEngine:
         monitoring_engine: BTCPaperMonitoringEngine | None = None,
         runner_engine: BTCPaperRunnerEngine | None = None,
         signal_evaluation_engine: BTCPaperSignalEvaluationEngine | None = None,
+        trade_candidate_engine: BTCPaperTradeCandidateEngine | None = None,
         gate_runner: Callable[..., int] | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
@@ -36,6 +38,7 @@ class BTCPaperReadinessEngine:
         self.monitoring_engine = monitoring_engine or BTCPaperMonitoringEngine(repo_root=self.repo_root)
         self.runner_engine = runner_engine or BTCPaperRunnerEngine(repo_root=self.repo_root)
         self.signal_evaluation_engine = signal_evaluation_engine or BTCPaperSignalEvaluationEngine(repo_root=self.repo_root)
+        self.trade_candidate_engine = trade_candidate_engine or BTCPaperTradeCandidateEngine(repo_root=self.repo_root)
         self.gate_runner = gate_runner
         self.env = os.environ if env is None else env
 
@@ -104,6 +107,7 @@ class BTCPaperReadinessEngine:
         checks.append(self._monitoring_readiness_check())
         checks.append(self._runner_readiness_check())
         checks.append(self._signal_evaluation_readiness_check())
+        checks.append(self._trade_candidate_readiness_check())
         checks.append(self._cache_diagnostics_check(snapshot))
         if run_gate:
             checks.append(self._gate_check(use_cache=use_cache, cache_dir=cache_dir))
@@ -368,6 +372,50 @@ class BTCPaperReadinessEngine:
             "FAIL",
             "REQUIRED",
             "BTC paper signal evaluation dry-run config failed safety validation.",
+            details,
+        )
+
+    def _trade_candidate_readiness_check(self) -> BTCPaperReadinessCheck:
+        config_path = self.repo_root / "configs" / "btc_paper_trade_candidate.json"
+        if not config_path.exists():
+            return self._check(
+                "btc_paper_trade_candidate_dry_run",
+                "WARNING",
+                "INFO",
+                "BTC paper trade candidate dry-run config is not present yet.",
+                {"trade_candidate_config": str(config_path)},
+            )
+        report = self.trade_candidate_engine.validate(str(config_path))
+        details = {
+            "trade_candidate_config": str(config_path),
+            "validation_status": report.status,
+            "issue_count": report.issue_count,
+            "warning_count": report.warning_count,
+            "fail_count": report.fail_count,
+            "issues": [issue.to_dict() for issue in report.issues],
+            "diagnostics": dict(report.diagnostics),
+        }
+        if report.status == "PASS":
+            return self._check(
+                "btc_paper_trade_candidate_dry_run",
+                "PASS",
+                "INFO",
+                "BTC paper trade candidate dry-run config is present and safe.",
+                details,
+            )
+        if report.status == "WARNING":
+            return self._check(
+                "btc_paper_trade_candidate_dry_run",
+                "WARNING",
+                "INFO",
+                "BTC paper trade candidate dry-run config has warnings.",
+                details,
+            )
+        return self._check(
+            "btc_paper_trade_candidate_dry_run",
+            "FAIL",
+            "REQUIRED",
+            "BTC paper trade candidate dry-run config failed safety validation.",
             details,
         )
 

@@ -94,6 +94,7 @@ def _ready_files(root: Path) -> None:
     _write_json(root / "configs" / "btc_paper_monitoring.json", _monitoring_config())
     _write_json(root / "configs" / "btc_paper_runner.json", _runner_config())
     _write_json(root / "configs" / "btc_paper_signal_evaluation.json", _signal_evaluation_config())
+    _write_json(root / "configs" / "btc_paper_trade_candidate.json", _trade_candidate_config())
     trade_plan = root / "engine" / "trade_plan" / "trade_plan_engine.py"
     trade_plan.parent.mkdir(parents=True, exist_ok=True)
     trade_plan.write_text("class TradePlanEngine: pass\n", encoding="utf-8")
@@ -220,6 +221,43 @@ def _signal_evaluation_config(**overrides) -> dict:
     return values
 
 
+def _trade_candidate_config(**overrides) -> dict:
+    values = {
+        "schema_version": "1.0",
+        "project_scope": "BTC_ONLY",
+        "symbol": "BTC/USDT",
+        "strategy_profile": "balanced_smc_decision_065",
+        "runtime_config_path": "configs/btc_paper_runtime.json",
+        "monitoring_config_path": "configs/btc_paper_monitoring.json",
+        "runner_config_path": "configs/btc_paper_runner.json",
+        "signal_evaluation_config_path": "configs/btc_paper_signal_evaluation.json",
+        "dry_run_only": True,
+        "allow_candidate_creation": True,
+        "allow_executable_trade_creation": False,
+        "allow_paper_trade_persistence": False,
+        "allow_position_creation": False,
+        "allow_order_submission": False,
+        "allow_exchange_connection": False,
+        "allow_state_mutation": False,
+        "require_signal_approved": True,
+        "require_runtime_config_pass": True,
+        "require_monitoring_config_pass": True,
+        "require_runner_config_pass": True,
+        "require_signal_config_pass": True,
+        "require_kill_switch_enabled": True,
+        "min_signal_score": 0.65,
+        "min_risk_reward": 1.5,
+        "entry_price_source": "latest_close",
+        "stop_loss_mode": "diagnostic_atr_like",
+        "take_profit_mode": "fixed_rr",
+        "diagnostic_stop_loss_pct": 0.01,
+        "max_candidate_notional_pct": 0.25,
+        "status_export_dir": "reports/paper_trade_candidates",
+    }
+    values.update(overrides)
+    return values
+
+
 def _report(root: Path, **kwargs):
     registry = kwargs.pop("registry", None)
     if registry is None:
@@ -251,6 +289,7 @@ def test_ready_when_btc_samples_baseline_and_placeholders_exist(tmp_path) -> Non
     assert _check(report, "paper_monitoring").status == "PASS"
     assert _check(report, "btc_paper_runner_dry_run_state_machine").status == "PASS"
     assert _check(report, "btc_paper_signal_evaluation_dry_run").status == "PASS"
+    assert _check(report, "btc_paper_trade_candidate_dry_run").status == "PASS"
 
 
 def test_missing_btc_15m_required_sample_blocks(tmp_path) -> None:
@@ -380,6 +419,28 @@ def test_readiness_remains_ready_with_valid_signal_evaluation_config(tmp_path) -
 
     assert report.readiness_status == "READY"
     assert _check(report, "btc_paper_signal_evaluation_dry_run").status == "PASS"
+
+
+def test_readiness_remains_ready_with_valid_trade_candidate_config(tmp_path) -> None:
+    _ready_files(tmp_path)
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "READY"
+    assert _check(report, "btc_paper_trade_candidate_dry_run").status == "PASS"
+
+
+def test_readiness_blocks_when_trade_candidate_config_is_dangerous(tmp_path) -> None:
+    _write_json(tmp_path / "configs" / "btc_paper_runtime.json", _runtime_config())
+    _write_json(tmp_path / "configs" / "btc_paper_monitoring.json", _monitoring_config())
+    _write_json(tmp_path / "configs" / "btc_paper_runner.json", _runner_config())
+    _write_json(tmp_path / "configs" / "btc_paper_signal_evaluation.json", _signal_evaluation_config())
+    _write_json(tmp_path / "configs" / "btc_paper_trade_candidate.json", _trade_candidate_config(allow_order_submission=True))
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "BLOCKED"
+    assert _check(report, "btc_paper_trade_candidate_dry_run").status == "FAIL"
 
 
 def test_readiness_blocks_when_signal_evaluation_config_is_dangerous(tmp_path) -> None:
