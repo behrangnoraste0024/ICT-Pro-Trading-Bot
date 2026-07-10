@@ -192,3 +192,25 @@ py scripts/run_btc_paper_runner.py --run-forward-test-dry-run
 ```
 
 Rejected candidates are expected when the signal score is below threshold. Generated forward-test files under `reports/forward_test` are local and ignored by Git.
+
+# BTC Live Market Read-Only Feed Dry-Run
+
+Release 2.72 adds a one-shot public BTC market-data observation dry-run. It may fetch public BTC OHLCV candles when explicitly requested, but it does not use API keys, private endpoints, account data, balances, positions, order endpoints, or any trading exchange connection.
+
+Commands:
+
+```powershell
+py scripts/run_btc_live_market_feed.py
+py scripts/run_btc_live_market_feed.py --json
+py scripts/run_btc_live_market_feed.py --strict
+py scripts/run_btc_live_market_feed.py --fetch-once
+py scripts/run_btc_live_market_feed.py --fetch-once --json
+py scripts/run_btc_live_market_feed.py --observe-once
+py scripts/run_btc_live_market_feed.py --observe-once --json
+py scripts/run_btc_live_market_feed.py --observe-once --no-journal
+py scripts/run_btc_paper_runner.py --observe-live-market-read-only-dry-run
+```
+
+This uses public read-only market data only. No API keys are used. No private endpoints are used. No account, balance, or position data is fetched. No orders are submitted or cancelled. No positions are opened. No executable trades are created. No active paper trades are persisted. No runner state is mutated.
+
+A rejected candidate is expected when the live-read-only signal score is below threshold. Generated live-feed reports and journals under `reports/live_market_feed` are local and ignored by Git. Network failures should fail safely and do not indicate trading risk.

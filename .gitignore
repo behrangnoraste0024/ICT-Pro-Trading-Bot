@@ -64,3 +64,8 @@ reports/paper_candidate_journal/*.md
 reports/forward_test/*.json
 reports/forward_test/*.md
 reports/forward_test/*.jsonl
+
+# BTC live market read-only feed dry-run exports
+reports/live_market_feed/*.json
+reports/live_market_feed/*.md
+reports/live_market_feed/*.jsonl

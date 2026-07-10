@@ -16,6 +16,7 @@ from engine.diagnostics.btc_paper_signal_evaluation_engine import BTCPaperSignal
 from engine.diagnostics.btc_paper_candidate_journal_engine import BTCPaperCandidateJournalEngine
 from engine.diagnostics.btc_paper_trade_candidate_engine import BTCPaperTradeCandidateEngine
 from engine.diagnostics.btc_forward_test_loop_engine import BTCForwardTestLoopEngine
+from engine.diagnostics.btc_live_market_feed_engine import BTCLiveMarketFeedEngine
 from models.btc_paper_readiness import BTCPaperReadinessCheck, BTCPaperReadinessReport
 
 
@@ -32,6 +33,7 @@ class BTCPaperReadinessEngine:
         trade_candidate_engine: BTCPaperTradeCandidateEngine | None = None,
         candidate_journal_engine: BTCPaperCandidateJournalEngine | None = None,
         forward_test_engine: BTCForwardTestLoopEngine | None = None,
+        live_market_feed_engine: BTCLiveMarketFeedEngine | None = None,
         gate_runner: Callable[..., int] | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
@@ -45,6 +47,7 @@ class BTCPaperReadinessEngine:
         self.trade_candidate_engine = trade_candidate_engine or BTCPaperTradeCandidateEngine(repo_root=self.repo_root)
         self.candidate_journal_engine = candidate_journal_engine or BTCPaperCandidateJournalEngine(repo_root=self.repo_root)
         self.forward_test_engine = forward_test_engine or BTCForwardTestLoopEngine(repo_root=self.repo_root)
+        self.live_market_feed_engine = live_market_feed_engine or BTCLiveMarketFeedEngine(repo_root=self.repo_root)
         self.gate_runner = gate_runner
         self.env = os.environ if env is None else env
 
@@ -116,6 +119,7 @@ class BTCPaperReadinessEngine:
         checks.append(self._trade_candidate_readiness_check())
         checks.append(self._candidate_journal_readiness_check())
         checks.append(self._forward_test_readiness_check())
+        checks.append(self._live_market_feed_readiness_check())
         checks.append(self._cache_diagnostics_check(snapshot))
         if run_gate:
             checks.append(self._gate_check(use_cache=use_cache, cache_dir=cache_dir))
@@ -512,6 +516,50 @@ class BTCPaperReadinessEngine:
             "FAIL",
             "REQUIRED",
             "BTC forward test loop dry-run config failed safety validation.",
+            details,
+        )
+
+    def _live_market_feed_readiness_check(self) -> BTCPaperReadinessCheck:
+        config_path = self.repo_root / "configs" / "btc_live_market_feed.json"
+        if not config_path.exists():
+            return self._check(
+                "btc_live_market_read_only_feed_dry_run",
+                "WARNING",
+                "INFO",
+                "BTC live market read-only feed dry-run config is not present yet.",
+                {"live_market_feed_config": str(config_path)},
+            )
+        report = self.live_market_feed_engine.validate(str(config_path))
+        details = {
+            "live_market_feed_config": str(config_path),
+            "validation_status": report.status,
+            "issue_count": report.issue_count,
+            "warning_count": report.warning_count,
+            "fail_count": report.fail_count,
+            "issues": [issue.to_dict() for issue in report.issues],
+            "diagnostics": dict(report.diagnostics),
+        }
+        if report.status == "PASS":
+            return self._check(
+                "btc_live_market_read_only_feed_dry_run",
+                "PASS",
+                "INFO",
+                "BTC live market read-only feed dry-run config is present and safe.",
+                details,
+            )
+        if report.status == "WARNING":
+            return self._check(
+                "btc_live_market_read_only_feed_dry_run",
+                "WARNING",
+                "INFO",
+                "BTC live market read-only feed dry-run config has warnings.",
+                details,
+            )
+        return self._check(
+            "btc_live_market_read_only_feed_dry_run",
+            "FAIL",
+            "REQUIRED",
+            "BTC live market read-only feed dry-run config failed safety validation.",
             details,
         )
 
