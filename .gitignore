@@ -74,3 +74,6 @@ reports/live_market_feed/*.jsonl
 reports/paper_account/*.json
 reports/paper_account/*.md
 reports/paper_account/*.jsonl
+reports/futures_read_only_feed/*.json
+reports/futures_read_only_feed/*.md
+reports/futures_read_only_feed/*.jsonl
