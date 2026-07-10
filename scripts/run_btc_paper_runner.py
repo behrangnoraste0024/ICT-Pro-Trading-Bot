@@ -14,11 +14,14 @@ from engine.diagnostics.btc_paper_signal_evaluation_engine import BTCPaperSignal
 from engine.diagnostics.btc_paper_candidate_journal_engine import BTCPaperCandidateJournalEngine
 from engine.diagnostics.btc_paper_trade_candidate_engine import BTCPaperTradeCandidateEngine
 from engine.diagnostics.btc_forward_test_loop_engine import BTCForwardTestLoopEngine
+from engine.diagnostics.btc_live_market_feed_engine import BTCLiveMarketFeedEngine
 from models.btc_forward_test_loop import BTCForwardTestIssue
+from models.btc_live_market_feed import BTCLiveMarketFeedIssue
 from models.btc_paper_candidate_journal import BTCPaperCandidateJournalIssue
 from models.btc_paper_signal_evaluation import BTCPaperSignalEvaluationIssue
 from models.btc_paper_trade_candidate import BTCPaperTradeCandidateIssue
 from reporting.btc_forward_test_loop_report import format_btc_forward_test_run_result
+from reporting.btc_live_market_feed_report import format_btc_live_market_observation_result
 from reporting.btc_paper_candidate_journal_report import format_btc_paper_candidate_journal_record_result
 from reporting.btc_paper_runner_report import format_btc_paper_runner_status_report
 from reporting.btc_paper_signal_evaluation_report import format_btc_paper_signal_evaluation_result
@@ -46,7 +49,26 @@ def main(argv: list[str] | None = None) -> int:
         state_path = ROOT_DIR / args.state_file if not Path(args.state_file).is_absolute() else Path(args.state_file)
         if state_path.exists():
             state = engine.load_state(args.state_file)
-    if args.run_forward_test_dry_run:
+    if args.observe_live_market_read_only_dry_run:
+        status = engine.build_status(config_path=args.config, expected_profile=args.expected_profile, state=state)
+        live_feed_engine = BTCLiveMarketFeedEngine(repo_root=ROOT_DIR)
+        observation = live_feed_engine.observe_once(expected_profile=args.expected_profile)
+        if status.state != "RUNNING":
+            observation.issues.append(
+                BTCLiveMarketFeedIssue(
+                    name="runner_not_running",
+                    severity="WARNING",
+                    message="Runner is not running; live market read-only observation executed as standalone dry-run diagnostic.",
+                    details={"runner_state": status.state},
+                )
+            )
+            if observation.status == "PASS":
+                observation.status = "WARNING"
+        transition = None
+        payload = {"runner_status": status.to_dict(), "live_market_observation": observation.to_dict()}
+        rendered = format_btc_paper_runner_status_report(status, transition) + "\n\n" + format_btc_live_market_observation_result(observation)
+        accepted = observation.status in ("PASS", "WARNING")
+    elif args.run_forward_test_dry_run:
         status = engine.build_status(config_path=args.config, expected_profile=args.expected_profile, state=state)
         forward_engine = BTCForwardTestLoopEngine(repo_root=ROOT_DIR)
         forward_result = forward_engine.run(expected_profile=args.expected_profile)
@@ -146,7 +168,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2))
     else:
         print(rendered)
-    if (args.evaluate_signal_dry_run or args.simulate_trade_candidate_dry_run or args.simulate_and_journal_candidate_dry_run or args.run_forward_test_dry_run) and not accepted:
+    if (
+        args.evaluate_signal_dry_run
+        or args.simulate_trade_candidate_dry_run
+        or args.simulate_and_journal_candidate_dry_run
+        or args.run_forward_test_dry_run
+        or args.observe_live_market_read_only_dry_run
+    ) and not accepted:
         return 1
     if not accepted and action not in ("HEARTBEAT", "STATUS"):
         return 1
@@ -176,6 +204,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--simulate-trade-candidate-dry-run", action="store_true")
     parser.add_argument("--simulate-and-journal-candidate-dry-run", action="store_true")
     parser.add_argument("--run-forward-test-dry-run", action="store_true")
+    parser.add_argument("--observe-live-market-read-only-dry-run", action="store_true")
     for flag in ACTION_FLAGS:
         parser.add_argument(f"--{flag.replace('_', '-')}", dest=flag, action="store_true")
     return parser

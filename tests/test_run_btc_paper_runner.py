@@ -3,13 +3,23 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from models.btc_live_market_feed import BTCLiveMarketObservationResult
 from scripts import run_btc_paper_runner
 
 from tests.test_btc_forward_test_loop_engine import _write_forward_configs
+from tests.test_btc_live_market_feed_engine import _write_live_configs
 from tests.test_btc_paper_runner_engine import _write_configs
 from tests.test_btc_paper_candidate_journal_engine import _write_journal_configs
 from tests.test_btc_paper_signal_evaluation_engine import _write_configs as _write_signal_configs
 from tests.test_btc_paper_trade_candidate_engine import _write_trade_candidate_configs
+
+
+class _FakeLiveMarketFeedEngine:
+    def __init__(self, repo_root=None) -> None:
+        self.repo_root = repo_root
+
+    def observe_once(self, expected_profile: str = "balanced_smc_decision_065", **kwargs) -> BTCLiveMarketObservationResult:
+        return BTCLiveMarketObservationResult(status="PASS", decision="FEED_OK_SIGNAL_APPROVED", public_market_data_fetch_used=True)
 
 
 def test_status_works_without_state_file(tmp_path, capsys, monkeypatch) -> None:
@@ -144,4 +154,24 @@ def test_run_forward_test_dry_run_does_not_mutate_runner_state(tmp_path, capsys,
     assert code == 0
     assert before == after
     assert "BTC FORWARD TEST LOOP DRY-RUN" in captured.out
+    assert "Order Submitted     : false" in captured.out
+
+
+def test_observe_live_market_read_only_dry_run_does_not_mutate_runner_state(tmp_path, capsys, monkeypatch) -> None:
+    _write_configs(tmp_path)
+    _write_live_configs(tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "ROOT_DIR", tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "BTCLiveMarketFeedEngine", _FakeLiveMarketFeedEngine)
+    state_path = tmp_path / "reports" / "paper_runner" / "state.json"
+    run_btc_paper_runner.main(["--initialize", "--state-file", "reports/paper_runner/state.json"])
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+
+    code = run_btc_paper_runner.main(["--observe-live-market-read-only-dry-run", "--state-file", "reports/paper_runner/state.json"])
+
+    captured = capsys.readouterr()
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert before == after
+    assert "BTC LIVE MARKET READ-ONLY OBSERVATION DRY-RUN" in captured.out
+    assert "Private API Used    : false" in captured.out
     assert "Order Submitted     : false" in captured.out

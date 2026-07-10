@@ -468,3 +468,23 @@ py scripts/run_btc_paper_runner.py --run-forward-test-dry-run
 ```
 
 This is local finite forward-test dry-run only. It does not use live market data, connect to an exchange, execute trades, persist active paper trades, open positions, submit orders, or mutate runner state. It may write local diagnostic journal entries and forward-test state/report files when explicitly requested. Generated forward-test files stay local under `reports/forward_test`.
+
+# BTC Live Market Read-Only Feed Dry-Run
+
+Use these commands to validate or run the one-shot public BTC market-data observation dry-run:
+
+```powershell
+py scripts/run_btc_live_market_feed.py
+py scripts/run_btc_live_market_feed.py --json
+py scripts/run_btc_live_market_feed.py --strict
+py scripts/run_btc_live_market_feed.py --fetch-once
+py scripts/run_btc_live_market_feed.py --fetch-once --json
+py scripts/run_btc_live_market_feed.py --observe-once
+py scripts/run_btc_live_market_feed.py --observe-once --json
+py scripts/run_btc_live_market_feed.py --observe-once --no-journal
+py scripts/run_btc_paper_runner.py --observe-live-market-read-only-dry-run
+```
+
+This uses public read-only market data only. It does not use API keys, private endpoints, account data, balance data, position data, order submission, order cancellation, paper persistence, executable trades, or runner state mutation. A rejected candidate is expected when the live-read-only signal score is below threshold. Generated live-feed reports stay local under `reports/live_market_feed`.
+
+If public network access is unavailable, fetch and observe commands fail safely with private API usage, API key usage, trading API usage, order submission, trading connection, and state mutation all reported as `false`.
