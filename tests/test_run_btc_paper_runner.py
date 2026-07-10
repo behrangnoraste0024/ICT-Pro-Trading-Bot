@@ -5,6 +5,7 @@ from pathlib import Path
 
 from scripts import run_btc_paper_runner
 
+from tests.test_btc_forward_test_loop_engine import _write_forward_configs
 from tests.test_btc_paper_runner_engine import _write_configs
 from tests.test_btc_paper_candidate_journal_engine import _write_journal_configs
 from tests.test_btc_paper_signal_evaluation_engine import _write_configs as _write_signal_configs
@@ -125,4 +126,22 @@ def test_simulate_and_journal_candidate_dry_run_does_not_mutate_state(tmp_path, 
     assert code == 0
     assert before == after
     assert "BTC PAPER CANDIDATE JOURNAL DRY-RUN RECORD" in captured.out
+    assert "Order Submitted     : false" in captured.out
+
+
+def test_run_forward_test_dry_run_does_not_mutate_runner_state(tmp_path, capsys, monkeypatch) -> None:
+    _write_configs(tmp_path)
+    _write_forward_configs(tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "ROOT_DIR", tmp_path)
+    state_path = tmp_path / "reports" / "paper_runner" / "state.json"
+    run_btc_paper_runner.main(["--initialize", "--state-file", "reports/paper_runner/state.json"])
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+
+    code = run_btc_paper_runner.main(["--run-forward-test-dry-run", "--state-file", "reports/paper_runner/state.json"])
+
+    captured = capsys.readouterr()
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert before == after
+    assert "BTC FORWARD TEST LOOP DRY-RUN" in captured.out
     assert "Order Submitted     : false" in captured.out

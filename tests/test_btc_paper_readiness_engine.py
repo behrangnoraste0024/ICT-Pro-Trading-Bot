@@ -96,6 +96,7 @@ def _ready_files(root: Path) -> None:
     _write_json(root / "configs" / "btc_paper_signal_evaluation.json", _signal_evaluation_config())
     _write_json(root / "configs" / "btc_paper_trade_candidate.json", _trade_candidate_config())
     _write_json(root / "configs" / "btc_paper_candidate_journal.json", _candidate_journal_config())
+    _write_json(root / "configs" / "btc_forward_test_loop.json", _forward_test_config())
     trade_plan = root / "engine" / "trade_plan" / "trade_plan_engine.py"
     trade_plan.parent.mkdir(parents=True, exist_ok=True)
     trade_plan.write_text("class TradePlanEngine: pass\n", encoding="utf-8")
@@ -293,6 +294,51 @@ def _candidate_journal_config(**overrides) -> dict:
     return values
 
 
+def _forward_test_config(**overrides) -> dict:
+    values = {
+        "schema_version": "1.0",
+        "project_scope": "BTC_ONLY",
+        "symbol": "BTC/USDT",
+        "strategy_profile": "balanced_smc_decision_065",
+        "runtime_config_path": "configs/btc_paper_runtime.json",
+        "monitoring_config_path": "configs/btc_paper_monitoring.json",
+        "runner_config_path": "configs/btc_paper_runner.json",
+        "signal_evaluation_config_path": "configs/btc_paper_signal_evaluation.json",
+        "trade_candidate_config_path": "configs/btc_paper_trade_candidate.json",
+        "candidate_journal_config_path": "configs/btc_paper_candidate_journal.json",
+        "fixture_path": "data/historical/btcusdt_15m_1000.json",
+        "confirmation_fixture_path": "data/historical/btcusdt_1h_1000.json",
+        "dry_run_only": True,
+        "allow_forward_loop": True,
+        "allow_journal_write": True,
+        "allow_live_market_data": False,
+        "allow_exchange_connection": False,
+        "allow_order_submission": False,
+        "allow_position_creation": False,
+        "allow_paper_trade_persistence": False,
+        "allow_executable_trade_creation": False,
+        "allow_state_mutation": False,
+        "require_runtime_config_pass": True,
+        "require_monitoring_config_pass": True,
+        "require_runner_config_pass": True,
+        "require_signal_config_pass": True,
+        "require_trade_candidate_config_pass": True,
+        "require_candidate_journal_config_pass": True,
+        "require_kill_switch_enabled": True,
+        "cycle_mode": "historical_cursor",
+        "start_index": 500,
+        "max_cycles": 5,
+        "min_candles": 1000,
+        "evaluation_window": 500,
+        "cycle_interval_seconds": 0,
+        "max_run_seconds": 60,
+        "state_export_dir": "reports/forward_test",
+        "report_export_dir": "reports/forward_test",
+    }
+    values.update(overrides)
+    return values
+
+
 def _report(root: Path, **kwargs):
     registry = kwargs.pop("registry", None)
     if registry is None:
@@ -326,6 +372,7 @@ def test_ready_when_btc_samples_baseline_and_placeholders_exist(tmp_path) -> Non
     assert _check(report, "btc_paper_signal_evaluation_dry_run").status == "PASS"
     assert _check(report, "btc_paper_trade_candidate_dry_run").status == "PASS"
     assert _check(report, "btc_paper_candidate_journal_dry_run").status == "PASS"
+    assert _check(report, "btc_forward_test_loop_dry_run").status == "PASS"
 
 
 def test_missing_btc_15m_required_sample_blocks(tmp_path) -> None:
@@ -473,6 +520,30 @@ def test_readiness_remains_ready_with_valid_candidate_journal_config(tmp_path) -
 
     assert report.readiness_status == "READY"
     assert _check(report, "btc_paper_candidate_journal_dry_run").status == "PASS"
+
+
+def test_readiness_remains_ready_with_valid_forward_test_config(tmp_path) -> None:
+    _ready_files(tmp_path)
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "READY"
+    assert _check(report, "btc_forward_test_loop_dry_run").status == "PASS"
+
+
+def test_readiness_blocks_when_forward_test_config_is_dangerous(tmp_path) -> None:
+    _write_json(tmp_path / "configs" / "btc_paper_runtime.json", _runtime_config())
+    _write_json(tmp_path / "configs" / "btc_paper_monitoring.json", _monitoring_config())
+    _write_json(tmp_path / "configs" / "btc_paper_runner.json", _runner_config())
+    _write_json(tmp_path / "configs" / "btc_paper_signal_evaluation.json", _signal_evaluation_config())
+    _write_json(tmp_path / "configs" / "btc_paper_trade_candidate.json", _trade_candidate_config())
+    _write_json(tmp_path / "configs" / "btc_paper_candidate_journal.json", _candidate_journal_config())
+    _write_json(tmp_path / "configs" / "btc_forward_test_loop.json", _forward_test_config(allow_order_submission=True))
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "BLOCKED"
+    assert _check(report, "btc_forward_test_loop_dry_run").status == "FAIL"
 
 
 def test_readiness_blocks_when_candidate_journal_config_is_dangerous(tmp_path) -> None:
