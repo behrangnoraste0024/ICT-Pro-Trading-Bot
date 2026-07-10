@@ -236,3 +236,22 @@ py scripts/run_btc_paper_runner.py --simulate-local-paper-account
 ```
 
 A no-action event is expected when the live signal score is below threshold. If a candidate is approved in the future, this layer may create local virtual orders and local virtual positions only. Generated paper-account state, ledger, and reports are local and ignored by Git.
+
+# BTC Futures Read-Only Market Feed
+
+Release 2.74 adds one-shot public BTCUSDT futures market-data diagnostics. It may fetch public futures candles, mark price, and funding metadata when explicitly requested, but it does not use API keys, private futures endpoints, account data, balances, positions, order endpoints, leverage, liquidation modeling, executable trades, paper futures positions, or runner state mutation.
+
+Commands:
+
+```powershell
+py scripts/run_btc_futures_read_only_feed.py
+py scripts/run_btc_futures_read_only_feed.py --json
+py scripts/run_btc_futures_read_only_feed.py --strict
+py scripts/run_btc_futures_read_only_feed.py --fetch-once
+py scripts/run_btc_futures_read_only_feed.py --fetch-once --json
+py scripts/run_btc_futures_read_only_feed.py --observe-once
+py scripts/run_btc_futures_read_only_feed.py --observe-once --json
+py scripts/run_btc_paper_runner.py --observe-futures-read-only-dry-run
+```
+
+This uses public futures market data only. Network failures should fail safely and do not indicate trading risk. Futures leverage and liquidation modeling are intentionally not modeled yet and remain later-release work. Generated futures-feed reports stay local under `reports/futures_read_only_feed` and are ignored by Git.

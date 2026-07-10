@@ -99,6 +99,7 @@ def _ready_files(root: Path) -> None:
     _write_json(root / "configs" / "btc_forward_test_loop.json", _forward_test_config())
     _write_json(root / "configs" / "btc_live_market_feed.json", _live_market_feed_config())
     _write_json(root / "configs" / "btc_paper_account.json", _paper_account_config())
+    _write_json(root / "configs" / "btc_futures_read_only_feed.json", _futures_read_only_feed_config())
     trade_plan = root / "engine" / "trade_plan" / "trade_plan_engine.py"
     trade_plan.parent.mkdir(parents=True, exist_ok=True)
     trade_plan.write_text("class TradePlanEngine: pass\n", encoding="utf-8")
@@ -462,6 +463,65 @@ def _paper_account_config(**overrides) -> dict:
     return values
 
 
+def _futures_read_only_feed_config(**overrides) -> dict:
+    values = {
+        "schema_version": "1.0",
+        "project_scope": "BTC_ONLY",
+        "symbol": "BTC/USDT",
+        "exchange": "binance",
+        "market_type": "futures",
+        "futures_contract_type": "USDT_PERPETUAL",
+        "exchange_symbol": "BTCUSDT",
+        "strategy_profile": "balanced_smc_decision_065",
+        "runtime_config_path": "configs/btc_paper_runtime.json",
+        "monitoring_config_path": "configs/btc_paper_monitoring.json",
+        "runner_config_path": "configs/btc_paper_runner.json",
+        "live_market_feed_config_path": "configs/btc_live_market_feed.json",
+        "paper_account_config_path": "configs/btc_paper_account.json",
+        "primary_timeframe": "15m",
+        "confirmation_timeframe": "1h",
+        "primary_limit": 500,
+        "confirmation_limit": 500,
+        "closed_candles_only": True,
+        "dry_run_only": True,
+        "feed_enabled": False,
+        "allow_public_futures_market_data_fetch": True,
+        "allow_public_futures_mark_price_fetch": True,
+        "allow_public_futures_funding_fetch": True,
+        "allow_private_api": False,
+        "allow_api_key_usage": False,
+        "allow_trading_api": False,
+        "allow_account_data": False,
+        "allow_balance_fetch": False,
+        "allow_position_fetch": False,
+        "allow_order_submission": False,
+        "allow_order_cancellation": False,
+        "allow_real_position_creation": False,
+        "allow_paper_position_creation": False,
+        "allow_leverage": False,
+        "allow_leverage_simulation": False,
+        "allow_liquidation_modeling": False,
+        "allow_paper_trade_persistence": False,
+        "allow_executable_trade_creation": False,
+        "allow_runner_state_mutation": False,
+        "allow_execution_state_mutation": False,
+        "require_runtime_config_pass": True,
+        "require_monitoring_config_pass": True,
+        "require_runner_config_pass": True,
+        "require_live_market_feed_config_pass": True,
+        "require_paper_account_config_pass": True,
+        "require_kill_switch_enabled": True,
+        "request_timeout_seconds": 10,
+        "max_fetch_retries": 1,
+        "min_primary_candles": 100,
+        "min_confirmation_candles": 100,
+        "observation_mode": "fetch_once",
+        "status_export_dir": "reports/futures_read_only_feed",
+    }
+    values.update(overrides)
+    return values
+
+
 def _report(root: Path, **kwargs):
     registry = kwargs.pop("registry", None)
     if registry is None:
@@ -498,6 +558,7 @@ def test_ready_when_btc_samples_baseline_and_placeholders_exist(tmp_path) -> Non
     assert _check(report, "btc_forward_test_loop_dry_run").status == "PASS"
     assert _check(report, "btc_live_market_read_only_feed_dry_run").status == "PASS"
     assert _check(report, "btc_local_paper_account_simulation").status == "PASS"
+    assert _check(report, "btc_futures_read_only_market_feed").status == "PASS"
 
 
 def test_missing_btc_15m_required_sample_blocks(tmp_path) -> None:
@@ -689,6 +750,16 @@ def test_readiness_blocks_when_paper_account_config_is_dangerous(tmp_path) -> No
 
     assert report.readiness_status == "BLOCKED"
     assert _check(report, "btc_local_paper_account_simulation").status == "FAIL"
+
+
+def test_readiness_blocks_when_futures_read_only_feed_config_is_dangerous(tmp_path) -> None:
+    _ready_files(tmp_path)
+    _write_json(tmp_path / "configs" / "btc_futures_read_only_feed.json", _futures_read_only_feed_config(allow_leverage=True))
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "BLOCKED"
+    assert _check(report, "btc_futures_read_only_market_feed").status == "FAIL"
 
 
 def test_readiness_blocks_when_forward_test_config_is_dangerous(tmp_path) -> None:

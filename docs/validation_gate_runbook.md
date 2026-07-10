@@ -510,3 +510,22 @@ py scripts/run_btc_paper_runner.py --simulate-local-paper-account
 This is local virtual paper account simulation only. It may write local state and ledger files under `reports/paper_account`. It does not submit or cancel orders, use API keys, call private endpoints, fetch real account/balance/position data, create real positions, create executable trades, mutate runner state, or enable runtime paper execution.
 
 A no-action event is expected when the live signal score is below threshold. If a candidate is approved in the future, any virtual order or virtual position remains a local diagnostic object only. Generated paper-account files stay local under `reports/paper_account`.
+
+# BTC Futures Read-Only Market Feed
+
+Use these commands to validate or run public BTCUSDT futures read-only diagnostics:
+
+```powershell
+py scripts/run_btc_futures_read_only_feed.py
+py scripts/run_btc_futures_read_only_feed.py --json
+py scripts/run_btc_futures_read_only_feed.py --strict
+py scripts/run_btc_futures_read_only_feed.py --fetch-once
+py scripts/run_btc_futures_read_only_feed.py --fetch-once --json
+py scripts/run_btc_futures_read_only_feed.py --observe-once
+py scripts/run_btc_futures_read_only_feed.py --observe-once --json
+py scripts/run_btc_paper_runner.py --observe-futures-read-only-dry-run
+```
+
+This uses public futures market data only. It does not use API keys, private futures endpoints, account/balance/position data, order submission, order cancellation, real futures positions, paper futures positions, leverage, leverage simulation, liquidation modeling, executable trades, or runner state mutation.
+
+If public network access is unavailable, fetch and observe commands fail safely with private API usage, API key usage, trading API usage, account data, balance fetch, position fetch, order submission, real position creation, paper position creation, leverage, liquidation modeling, trading connection, runner mutation, and execution mutation all reported as `false`. Generated futures-feed reports stay local under `reports/futures_read_only_feed`.

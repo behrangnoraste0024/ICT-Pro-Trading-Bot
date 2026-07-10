@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 
 from models.btc_live_market_feed import BTCLiveMarketObservationResult
+from models.btc_futures_read_only_feed import (
+    BTCFuturesReadOnlyFeedStatus,
+    BTCFuturesReadOnlyObservationDecision,
+    BTCFuturesReadOnlyObservationResult,
+)
 from models.btc_paper_account import (
     BTCPaperAccountAction,
     BTCPaperAccountActionResult,
@@ -39,6 +44,28 @@ class _FakePaperAccountEngine:
             decision=BTCPaperAccountDecision.NO_ACTION_NO_CANDIDATE.value,
             safety_summary={"real_order_submitted": False, "trading_api_used": False, "runner_state_mutated": False},
             no_action_recorded=True,
+        )
+
+
+class _FakeFuturesReadOnlyFeedEngine:
+    def __init__(self, repo_root=None) -> None:
+        self.repo_root = repo_root
+
+    def observe_once(self, expected_profile: str = "balanced_smc_decision_065", **kwargs) -> BTCFuturesReadOnlyObservationResult:
+        return BTCFuturesReadOnlyObservationResult(
+            status=BTCFuturesReadOnlyFeedStatus.PASS.value,
+            decision=BTCFuturesReadOnlyObservationDecision.FUTURES_FEED_OK_FUNDING_AVAILABLE.value,
+            feed_status=BTCFuturesReadOnlyFeedStatus.PASS.value,
+            public_futures_market_data_fetch_used=True,
+            private_api_used=False,
+            order_submitted=False,
+            leverage_used=False,
+            metadata={
+                "leverage_model_available": False,
+                "liquidation_model_available": False,
+                "paper_futures_position_created": False,
+                "futures_trade_pipeline_invoked": False,
+            },
         )
 
 
@@ -213,3 +240,22 @@ def test_simulate_local_paper_account_does_not_mutate_runner_state(tmp_path, cap
     assert before == after
     assert "BTC LOCAL PAPER ACCOUNT" in captured.out
     assert "Real Order Sent    : false" in captured.out
+
+
+def test_observe_futures_read_only_dry_run_does_not_mutate_runner_state(tmp_path, capsys, monkeypatch) -> None:
+    _write_configs(tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "ROOT_DIR", tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "BTCFuturesReadOnlyFeedEngine", _FakeFuturesReadOnlyFeedEngine)
+    state_path = tmp_path / "reports" / "paper_runner" / "state.json"
+    run_btc_paper_runner.main(["--initialize", "--state-file", "reports/paper_runner/state.json"])
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+
+    code = run_btc_paper_runner.main(["--observe-futures-read-only-dry-run", "--state-file", "reports/paper_runner/state.json"])
+
+    captured = capsys.readouterr()
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert before == after
+    assert "BTC FUTURES READ-ONLY OBSERVATION DRY-RUN" in captured.out
+    assert "Order Submitted     : false" in captured.out
+    assert "Leverage Used       : false" in captured.out
