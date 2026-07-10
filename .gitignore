@@ -69,3 +69,8 @@ reports/forward_test/*.jsonl
 reports/live_market_feed/*.json
 reports/live_market_feed/*.md
 reports/live_market_feed/*.jsonl
+
+# BTC local paper account simulation exports
+reports/paper_account/*.json
+reports/paper_account/*.md
+reports/paper_account/*.jsonl
