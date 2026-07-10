@@ -17,6 +17,7 @@ from engine.diagnostics.btc_paper_candidate_journal_engine import BTCPaperCandid
 from engine.diagnostics.btc_paper_trade_candidate_engine import BTCPaperTradeCandidateEngine
 from engine.diagnostics.btc_forward_test_loop_engine import BTCForwardTestLoopEngine
 from engine.diagnostics.btc_futures_read_only_feed_engine import BTCFuturesReadOnlyFeedEngine
+from engine.diagnostics.btc_futures_risk_model_engine import BTCFuturesRiskModelEngine
 from engine.diagnostics.btc_live_market_feed_engine import BTCLiveMarketFeedEngine
 from engine.diagnostics.btc_paper_account_engine import BTCPaperAccountEngine
 from models.btc_paper_readiness import BTCPaperReadinessCheck, BTCPaperReadinessReport
@@ -38,6 +39,7 @@ class BTCPaperReadinessEngine:
         live_market_feed_engine: BTCLiveMarketFeedEngine | None = None,
         paper_account_engine: BTCPaperAccountEngine | None = None,
         futures_read_only_feed_engine: BTCFuturesReadOnlyFeedEngine | None = None,
+        futures_risk_model_engine: BTCFuturesRiskModelEngine | None = None,
         gate_runner: Callable[..., int] | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
@@ -54,6 +56,7 @@ class BTCPaperReadinessEngine:
         self.live_market_feed_engine = live_market_feed_engine or BTCLiveMarketFeedEngine(repo_root=self.repo_root)
         self.paper_account_engine = paper_account_engine or BTCPaperAccountEngine(repo_root=self.repo_root)
         self.futures_read_only_feed_engine = futures_read_only_feed_engine or BTCFuturesReadOnlyFeedEngine(repo_root=self.repo_root)
+        self.futures_risk_model_engine = futures_risk_model_engine or BTCFuturesRiskModelEngine(repo_root=self.repo_root)
         self.gate_runner = gate_runner
         self.env = os.environ if env is None else env
 
@@ -128,6 +131,7 @@ class BTCPaperReadinessEngine:
         checks.append(self._live_market_feed_readiness_check())
         checks.append(self._paper_account_readiness_check())
         checks.append(self._futures_read_only_feed_readiness_check())
+        checks.append(self._futures_risk_model_readiness_check())
         checks.append(self._cache_diagnostics_check(snapshot))
         if run_gate:
             checks.append(self._gate_check(use_cache=use_cache, cache_dir=cache_dir))
@@ -655,6 +659,49 @@ class BTCPaperReadinessEngine:
             "FAIL",
             "REQUIRED",
             "BTC futures read-only market feed config failed safety validation.",
+            details,
+        )
+
+    def _futures_risk_model_readiness_check(self) -> BTCPaperReadinessCheck:
+        config_path = self.repo_root / "configs" / "btc_futures_risk_model.json"
+        if not config_path.exists():
+            return self._check(
+                "btc_futures_leverage_liquidation_risk_model",
+                "WARNING",
+                "INFO",
+                "BTC futures leverage/liquidation risk model config is not present yet.",
+                {"futures_risk_model_config": str(config_path)},
+            )
+        report = self.futures_risk_model_engine.validate(str(config_path))
+        details = {
+            "futures_risk_model_config": str(config_path),
+            "validation_status": report.status,
+            "issue_count": report.issue_count,
+            "warning_count": report.warning_count,
+            "fail_count": report.fail_count,
+            "issues": [issue.to_dict() for issue in report.issues],
+        }
+        if report.status == "PASS":
+            return self._check(
+                "btc_futures_leverage_liquidation_risk_model",
+                "PASS",
+                "INFO",
+                "BTC futures leverage/liquidation risk model config is present and safe.",
+                details,
+            )
+        if report.status == "WARNING":
+            return self._check(
+                "btc_futures_leverage_liquidation_risk_model",
+                "WARNING",
+                "INFO",
+                "BTC futures leverage/liquidation risk model config has warnings.",
+                details,
+            )
+        return self._check(
+            "btc_futures_leverage_liquidation_risk_model",
+            "FAIL",
+            "REQUIRED",
+            "BTC futures leverage/liquidation risk model config failed safety validation.",
             details,
         )
 

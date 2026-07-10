@@ -9,6 +9,7 @@ from models.btc_futures_read_only_feed import (
     BTCFuturesReadOnlyObservationDecision,
     BTCFuturesReadOnlyObservationResult,
 )
+from models.btc_futures_risk_model import BTCFuturesRiskResult
 from models.btc_paper_account import (
     BTCPaperAccountAction,
     BTCPaperAccountActionResult,
@@ -66,6 +67,24 @@ class _FakeFuturesReadOnlyFeedEngine:
                 "paper_futures_position_created": False,
                 "futures_trade_pipeline_invoked": False,
             },
+        )
+
+
+class _FakeFuturesRiskModelEngine:
+    def __init__(self, repo_root=None) -> None:
+        self.repo_root = repo_root
+
+    def analyze_live(self, expected_profile: str = "balanced_smc_decision_065", **kwargs) -> BTCFuturesRiskResult:
+        return BTCFuturesRiskResult(
+            status="PASS",
+            decision="SAFE_SIMULATION",
+            reason="Approximate conservative diagnostic only.",
+            exchange_exact_liquidation=False,
+            private_api_used=False,
+            order_submitted=False,
+            paper_futures_position_created=False,
+            exchange_leverage_changed=False,
+            runner_state_mutated=False,
         )
 
 
@@ -259,3 +278,23 @@ def test_observe_futures_read_only_dry_run_does_not_mutate_runner_state(tmp_path
     assert "BTC FUTURES READ-ONLY OBSERVATION DRY-RUN" in captured.out
     assert "Order Submitted     : false" in captured.out
     assert "Leverage Used       : false" in captured.out
+
+
+def test_analyze_futures_risk_dry_run_does_not_mutate_runner_state(tmp_path, capsys, monkeypatch) -> None:
+    _write_configs(tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "ROOT_DIR", tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "BTCFuturesRiskModelEngine", _FakeFuturesRiskModelEngine)
+    state_path = tmp_path / "reports" / "paper_runner" / "state.json"
+    run_btc_paper_runner.main(["--initialize", "--state-file", "reports/paper_runner/state.json"])
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+
+    code = run_btc_paper_runner.main(["--analyze-futures-risk-dry-run", "--state-file", "reports/paper_runner/state.json"])
+
+    captured = capsys.readouterr()
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert before == after
+    assert "BTC FUTURES LEVERAGE / LIQUIDATION RISK ANALYSIS" in captured.out
+    assert "Exchange Exact       : false" in captured.out
+    assert "Order Submitted      : false" in captured.out
+    assert "Paper Futures Pos    : false" in captured.out
