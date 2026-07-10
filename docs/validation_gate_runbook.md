@@ -449,3 +449,22 @@ py scripts/run_btc_paper_runner.py --simulate-and-journal-candidate-dry-run --st
 ```
 
 This is diagnostics only. Journal entries are local audit records, not paper trades, positions, executable signals, or order records. Rejected candidates are recorded too. The command does not open positions, submit orders, connect to an exchange, or mutate runner state. Generated journal files stay local under `reports/paper_candidate_journal`.
+
+# BTC Forward Test Loop Dry-Run
+
+Use these commands to validate or run the local finite BTC forward-test dry-run:
+
+```powershell
+py scripts/run_btc_forward_test_loop.py
+py scripts/run_btc_forward_test_loop.py --json
+py scripts/run_btc_forward_test_loop.py --strict
+py scripts/run_btc_forward_test_loop.py --run
+py scripts/run_btc_forward_test_loop.py --run --cycles 3
+py scripts/run_btc_forward_test_loop.py --run --cycles 3 --json
+py scripts/run_btc_forward_test_loop.py --run --cycles 3 --state-file reports/forward_test/btc_forward_test_state.json
+py scripts/run_btc_forward_test_loop.py --summary --state-file reports/forward_test/btc_forward_test_state.json
+py scripts/run_btc_forward_test_loop.py --reset-state --state-file reports/forward_test/btc_forward_test_state.json
+py scripts/run_btc_paper_runner.py --run-forward-test-dry-run
+```
+
+This is local finite forward-test dry-run only. It does not use live market data, connect to an exchange, execute trades, persist active paper trades, open positions, submit orders, or mutate runner state. It may write local diagnostic journal entries and forward-test state/report files when explicitly requested. Generated forward-test files stay local under `reports/forward_test`.

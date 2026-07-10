@@ -59,3 +59,8 @@ reports/paper_trade_candidates/*.md
 reports/paper_candidate_journal/*.jsonl
 reports/paper_candidate_journal/*.json
 reports/paper_candidate_journal/*.md
+
+# BTC forward test dry-run exports
+reports/forward_test/*.json
+reports/forward_test/*.md
+reports/forward_test/*.jsonl

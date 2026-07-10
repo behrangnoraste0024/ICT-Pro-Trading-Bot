@@ -171,3 +171,24 @@ py scripts/run_btc_paper_runner.py --simulate-and-journal-candidate-dry-run --st
 ```
 
 Generated journal files under `reports/paper_candidate_journal` are local and ignored by Git.
+
+# BTC Forward Test Loop Dry-Run
+
+Release 2.71 adds a local finite forward-test loop over BTC historical/sample candles. It is a cursor-based dry-run diagnostic only: it does not use live market data, connect to an exchange, execute trades, persist active paper trades, open positions, submit orders, or mutate runner state. It may write local diagnostic journal/state/report files when explicitly requested.
+
+Commands:
+
+```powershell
+py scripts/run_btc_forward_test_loop.py
+py scripts/run_btc_forward_test_loop.py --json
+py scripts/run_btc_forward_test_loop.py --strict
+py scripts/run_btc_forward_test_loop.py --run
+py scripts/run_btc_forward_test_loop.py --run --cycles 3
+py scripts/run_btc_forward_test_loop.py --run --cycles 3 --json
+py scripts/run_btc_forward_test_loop.py --run --cycles 3 --state-file reports/forward_test/btc_forward_test_state.json
+py scripts/run_btc_forward_test_loop.py --summary --state-file reports/forward_test/btc_forward_test_state.json
+py scripts/run_btc_forward_test_loop.py --reset-state --state-file reports/forward_test/btc_forward_test_state.json
+py scripts/run_btc_paper_runner.py --run-forward-test-dry-run
+```
+
+Rejected candidates are expected when the signal score is below threshold. Generated forward-test files under `reports/forward_test` are local and ignored by Git.
