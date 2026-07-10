@@ -98,6 +98,7 @@ def _ready_files(root: Path) -> None:
     _write_json(root / "configs" / "btc_paper_candidate_journal.json", _candidate_journal_config())
     _write_json(root / "configs" / "btc_forward_test_loop.json", _forward_test_config())
     _write_json(root / "configs" / "btc_live_market_feed.json", _live_market_feed_config())
+    _write_json(root / "configs" / "btc_paper_account.json", _paper_account_config())
     trade_plan = root / "engine" / "trade_plan" / "trade_plan_engine.py"
     trade_plan.parent.mkdir(parents=True, exist_ok=True)
     trade_plan.write_text("class TradePlanEngine: pass\n", encoding="utf-8")
@@ -394,6 +395,73 @@ def _live_market_feed_config(**overrides) -> dict:
     return values
 
 
+def _paper_account_config(**overrides) -> dict:
+    values = {
+        "schema_version": "1.0",
+        "project_scope": "BTC_ONLY",
+        "symbol": "BTC/USDT",
+        "quote_currency": "USDT",
+        "strategy_profile": "balanced_smc_decision_065",
+        "runtime_config_path": "configs/btc_paper_runtime.json",
+        "monitoring_config_path": "configs/btc_paper_monitoring.json",
+        "runner_config_path": "configs/btc_paper_runner.json",
+        "signal_evaluation_config_path": "configs/btc_paper_signal_evaluation.json",
+        "trade_candidate_config_path": "configs/btc_paper_trade_candidate.json",
+        "candidate_journal_config_path": "configs/btc_paper_candidate_journal.json",
+        "forward_test_config_path": "configs/btc_forward_test_loop.json",
+        "live_market_feed_config_path": "configs/btc_live_market_feed.json",
+        "paper_account_enabled": False,
+        "simulation_only": True,
+        "dry_run_only": True,
+        "initial_balance": 10000.0,
+        "risk_per_trade_pct": 0.5,
+        "max_risk_per_trade_pct": 1.0,
+        "max_daily_loss_pct": 2.0,
+        "max_drawdown_pct": 5.0,
+        "max_open_virtual_positions": 1,
+        "max_virtual_trades_per_day": 3,
+        "min_risk_reward": 1.5,
+        "require_stop_loss": True,
+        "require_take_profit": True,
+        "allow_local_paper_state_write": True,
+        "allow_local_paper_ledger_write": True,
+        "allow_virtual_order_creation": True,
+        "allow_virtual_position_creation": True,
+        "allow_virtual_pnl_calculation": True,
+        "allow_public_market_data_fetch": True,
+        "allow_private_api": False,
+        "allow_api_key_usage": False,
+        "allow_trading_api": False,
+        "allow_account_data": False,
+        "allow_balance_fetch": False,
+        "allow_position_fetch": False,
+        "allow_real_order_submission": False,
+        "allow_order_cancellation": False,
+        "allow_real_position_creation": False,
+        "allow_exchange_connection_for_trading": False,
+        "allow_executable_trade_creation": False,
+        "allow_runner_state_mutation": False,
+        "allow_execution_state_mutation": False,
+        "require_runtime_config_pass": True,
+        "require_monitoring_config_pass": True,
+        "require_runner_config_pass": True,
+        "require_signal_config_pass": True,
+        "require_trade_candidate_config_pass": True,
+        "require_candidate_journal_config_pass": True,
+        "require_forward_test_config_pass": True,
+        "require_live_market_feed_config_pass": True,
+        "require_kill_switch_enabled": True,
+        "fill_model": "virtual_next_close",
+        "slippage_rate": 0.0002,
+        "fee_rate": 0.0004,
+        "state_path": "reports/paper_account/btc_paper_account_state.json",
+        "ledger_path": "reports/paper_account/btc_paper_account_ledger.jsonl",
+        "report_export_dir": "reports/paper_account",
+    }
+    values.update(overrides)
+    return values
+
+
 def _report(root: Path, **kwargs):
     registry = kwargs.pop("registry", None)
     if registry is None:
@@ -429,6 +497,7 @@ def test_ready_when_btc_samples_baseline_and_placeholders_exist(tmp_path) -> Non
     assert _check(report, "btc_paper_candidate_journal_dry_run").status == "PASS"
     assert _check(report, "btc_forward_test_loop_dry_run").status == "PASS"
     assert _check(report, "btc_live_market_read_only_feed_dry_run").status == "PASS"
+    assert _check(report, "btc_local_paper_account_simulation").status == "PASS"
 
 
 def test_missing_btc_15m_required_sample_blocks(tmp_path) -> None:
@@ -610,6 +679,16 @@ def test_readiness_blocks_when_live_market_feed_config_is_dangerous(tmp_path) ->
 
     assert report.readiness_status == "BLOCKED"
     assert _check(report, "btc_live_market_read_only_feed_dry_run").status == "FAIL"
+
+
+def test_readiness_blocks_when_paper_account_config_is_dangerous(tmp_path) -> None:
+    _ready_files(tmp_path)
+    _write_json(tmp_path / "configs" / "btc_paper_account.json", _paper_account_config(allow_real_order_submission=True))
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "BLOCKED"
+    assert _check(report, "btc_local_paper_account_simulation").status == "FAIL"
 
 
 def test_readiness_blocks_when_forward_test_config_is_dangerous(tmp_path) -> None:

@@ -214,3 +214,25 @@ py scripts/run_btc_paper_runner.py --observe-live-market-read-only-dry-run
 This uses public read-only market data only. No API keys are used. No private endpoints are used. No account, balance, or position data is fetched. No orders are submitted or cancelled. No positions are opened. No executable trades are created. No active paper trades are persisted. No runner state is mutated.
 
 A rejected candidate is expected when the live-read-only signal score is below threshold. Generated live-feed reports and journals under `reports/live_market_feed` are local and ignored by Git. Network failures should fail safely and do not indicate trading risk.
+
+# BTC Local Paper Account Simulation
+
+Release 2.73 adds a local virtual paper account simulation. It may write local state and ledger files under `reports/paper_account`, but it does not submit orders, cancel orders, use API keys, call private exchange endpoints, fetch real account/balance/position data, create real positions, create executable trades, mutate runner state, or enable runtime paper execution.
+
+Commands:
+
+```powershell
+py scripts/run_btc_paper_account.py
+py scripts/run_btc_paper_account.py --json
+py scripts/run_btc_paper_account.py --strict
+py scripts/run_btc_paper_account.py --status
+py scripts/run_btc_paper_account.py --initialize
+py scripts/run_btc_paper_account.py --simulate-live-observation
+py scripts/run_btc_paper_account.py --simulate-live-observation --initialize-if-missing
+py scripts/run_btc_paper_account.py --mark-to-market
+py scripts/run_btc_paper_account.py --ledger-summary
+py scripts/run_btc_paper_account.py --reset --force
+py scripts/run_btc_paper_runner.py --simulate-local-paper-account
+```
+
+A no-action event is expected when the live signal score is below threshold. If a candidate is approved in the future, this layer may create local virtual orders and local virtual positions only. Generated paper-account state, ledger, and reports are local and ignored by Git.

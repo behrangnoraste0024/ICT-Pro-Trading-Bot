@@ -17,6 +17,7 @@ from engine.diagnostics.btc_paper_candidate_journal_engine import BTCPaperCandid
 from engine.diagnostics.btc_paper_trade_candidate_engine import BTCPaperTradeCandidateEngine
 from engine.diagnostics.btc_forward_test_loop_engine import BTCForwardTestLoopEngine
 from engine.diagnostics.btc_live_market_feed_engine import BTCLiveMarketFeedEngine
+from engine.diagnostics.btc_paper_account_engine import BTCPaperAccountEngine
 from models.btc_paper_readiness import BTCPaperReadinessCheck, BTCPaperReadinessReport
 
 
@@ -34,6 +35,7 @@ class BTCPaperReadinessEngine:
         candidate_journal_engine: BTCPaperCandidateJournalEngine | None = None,
         forward_test_engine: BTCForwardTestLoopEngine | None = None,
         live_market_feed_engine: BTCLiveMarketFeedEngine | None = None,
+        paper_account_engine: BTCPaperAccountEngine | None = None,
         gate_runner: Callable[..., int] | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
@@ -48,6 +50,7 @@ class BTCPaperReadinessEngine:
         self.candidate_journal_engine = candidate_journal_engine or BTCPaperCandidateJournalEngine(repo_root=self.repo_root)
         self.forward_test_engine = forward_test_engine or BTCForwardTestLoopEngine(repo_root=self.repo_root)
         self.live_market_feed_engine = live_market_feed_engine or BTCLiveMarketFeedEngine(repo_root=self.repo_root)
+        self.paper_account_engine = paper_account_engine or BTCPaperAccountEngine(repo_root=self.repo_root)
         self.gate_runner = gate_runner
         self.env = os.environ if env is None else env
 
@@ -120,6 +123,7 @@ class BTCPaperReadinessEngine:
         checks.append(self._candidate_journal_readiness_check())
         checks.append(self._forward_test_readiness_check())
         checks.append(self._live_market_feed_readiness_check())
+        checks.append(self._paper_account_readiness_check())
         checks.append(self._cache_diagnostics_check(snapshot))
         if run_gate:
             checks.append(self._gate_check(use_cache=use_cache, cache_dir=cache_dir))
@@ -560,6 +564,50 @@ class BTCPaperReadinessEngine:
             "FAIL",
             "REQUIRED",
             "BTC live market read-only feed dry-run config failed safety validation.",
+            details,
+        )
+
+    def _paper_account_readiness_check(self) -> BTCPaperReadinessCheck:
+        config_path = self.repo_root / "configs" / "btc_paper_account.json"
+        if not config_path.exists():
+            return self._check(
+                "btc_local_paper_account_simulation",
+                "WARNING",
+                "INFO",
+                "BTC local paper account simulation config is not present yet.",
+                {"paper_account_config": str(config_path)},
+            )
+        report = self.paper_account_engine.validate(str(config_path))
+        details = {
+            "paper_account_config": str(config_path),
+            "validation_status": report.status,
+            "issue_count": report.issue_count,
+            "warning_count": report.warning_count,
+            "fail_count": report.fail_count,
+            "issues": [issue.to_dict() for issue in report.issues],
+            "diagnostics": dict(report.diagnostics),
+        }
+        if report.status == "PASS":
+            return self._check(
+                "btc_local_paper_account_simulation",
+                "PASS",
+                "INFO",
+                "BTC local paper account simulation config is present and safe.",
+                details,
+            )
+        if report.status == "WARNING":
+            return self._check(
+                "btc_local_paper_account_simulation",
+                "WARNING",
+                "INFO",
+                "BTC local paper account simulation config has warnings.",
+                details,
+            )
+        return self._check(
+            "btc_local_paper_account_simulation",
+            "FAIL",
+            "REQUIRED",
+            "BTC local paper account simulation config failed safety validation.",
             details,
         )
 

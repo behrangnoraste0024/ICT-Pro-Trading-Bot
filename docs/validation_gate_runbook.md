@@ -488,3 +488,25 @@ py scripts/run_btc_paper_runner.py --observe-live-market-read-only-dry-run
 This uses public read-only market data only. It does not use API keys, private endpoints, account data, balance data, position data, order submission, order cancellation, paper persistence, executable trades, or runner state mutation. A rejected candidate is expected when the live-read-only signal score is below threshold. Generated live-feed reports stay local under `reports/live_market_feed`.
 
 If public network access is unavailable, fetch and observe commands fail safely with private API usage, API key usage, trading API usage, order submission, trading connection, and state mutation all reported as `false`.
+
+# BTC Local Paper Account Simulation
+
+Use these commands to validate or run the local virtual paper account simulation:
+
+```powershell
+py scripts/run_btc_paper_account.py
+py scripts/run_btc_paper_account.py --json
+py scripts/run_btc_paper_account.py --strict
+py scripts/run_btc_paper_account.py --status
+py scripts/run_btc_paper_account.py --initialize
+py scripts/run_btc_paper_account.py --simulate-live-observation
+py scripts/run_btc_paper_account.py --simulate-live-observation --initialize-if-missing
+py scripts/run_btc_paper_account.py --mark-to-market
+py scripts/run_btc_paper_account.py --ledger-summary
+py scripts/run_btc_paper_account.py --reset --force
+py scripts/run_btc_paper_runner.py --simulate-local-paper-account
+```
+
+This is local virtual paper account simulation only. It may write local state and ledger files under `reports/paper_account`. It does not submit or cancel orders, use API keys, call private endpoints, fetch real account/balance/position data, create real positions, create executable trades, mutate runner state, or enable runtime paper execution.
+
+A no-action event is expected when the live signal score is below threshold. If a candidate is approved in the future, any virtual order or virtual position remains a local diagnostic object only. Generated paper-account files stay local under `reports/paper_account`.
