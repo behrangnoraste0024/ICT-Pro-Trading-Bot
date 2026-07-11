@@ -9,6 +9,7 @@ from typing import Any
 
 from engine.diagnostics.historical_sample_registry_engine import HistoricalSampleRegistryEngine
 from engine.diagnostics.validation_baseline_engine import ValidationBaselineEngine
+from engine.diagnostics.binance_futures_testnet_adapter_engine import BinanceFuturesTestnetAdapterEngine
 from engine.diagnostics.btc_paper_runtime_config_engine import BTCPaperRuntimeConfigEngine
 from engine.diagnostics.btc_paper_monitoring_engine import BTCPaperMonitoringEngine
 from engine.diagnostics.btc_paper_runner_engine import BTCPaperRunnerEngine
@@ -42,6 +43,7 @@ class BTCPaperReadinessEngine:
         futures_read_only_feed_engine: BTCFuturesReadOnlyFeedEngine | None = None,
         futures_risk_model_engine: BTCFuturesRiskModelEngine | None = None,
         futures_paper_position_engine: BTCFuturesPaperPositionEngine | None = None,
+        binance_futures_testnet_adapter_engine: BinanceFuturesTestnetAdapterEngine | None = None,
         gate_runner: Callable[..., int] | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
@@ -60,6 +62,7 @@ class BTCPaperReadinessEngine:
         self.futures_read_only_feed_engine = futures_read_only_feed_engine or BTCFuturesReadOnlyFeedEngine(repo_root=self.repo_root)
         self.futures_risk_model_engine = futures_risk_model_engine or BTCFuturesRiskModelEngine(repo_root=self.repo_root)
         self.futures_paper_position_engine = futures_paper_position_engine or BTCFuturesPaperPositionEngine(repo_root=self.repo_root)
+        self.binance_futures_testnet_adapter_engine = binance_futures_testnet_adapter_engine or BinanceFuturesTestnetAdapterEngine(repo_root=self.repo_root, env={})
         self.gate_runner = gate_runner
         self.env = os.environ if env is None else env
 
@@ -136,6 +139,7 @@ class BTCPaperReadinessEngine:
         checks.append(self._futures_read_only_feed_readiness_check())
         checks.append(self._futures_risk_model_readiness_check())
         checks.append(self._futures_paper_position_readiness_check())
+        checks.append(self._binance_futures_testnet_adapter_readiness_check())
         checks.append(self._cache_diagnostics_check(snapshot))
         if run_gate:
             checks.append(self._gate_check(use_cache=use_cache, cache_dir=cache_dir))
@@ -749,6 +753,49 @@ class BTCPaperReadinessEngine:
             "FAIL",
             "REQUIRED",
             "BTC futures local paper position simulation config failed safety validation.",
+            details,
+        )
+
+    def _binance_futures_testnet_adapter_readiness_check(self) -> BTCPaperReadinessCheck:
+        config_path = self.repo_root / "configs" / "binance_futures_testnet_adapter.json"
+        if not config_path.exists():
+            return self._check(
+                "binance_futures_testnet_adapter_disabled",
+                "WARNING",
+                "INFO",
+                "Binance futures testnet adapter config is not present yet.",
+                {"binance_futures_testnet_adapter_config": str(config_path)},
+            )
+        report = self.binance_futures_testnet_adapter_engine.validate(str(config_path))
+        details = {
+            "binance_futures_testnet_adapter_config": str(config_path),
+            "validation_status": report.status,
+            "issue_count": report.issue_count,
+            "warning_count": report.warning_count,
+            "fail_count": report.fail_count,
+            "issues": [issue.to_dict() for issue in report.issues],
+        }
+        if report.status == "PASS":
+            return self._check(
+                "binance_futures_testnet_adapter_disabled",
+                "PASS",
+                "INFO",
+                "Binance futures testnet adapter config is present, disabled, and safe.",
+                details,
+            )
+        if report.status == "WARNING":
+            return self._check(
+                "binance_futures_testnet_adapter_disabled",
+                "WARNING",
+                "INFO",
+                "Binance futures testnet adapter config has warnings.",
+                details,
+            )
+        return self._check(
+            "binance_futures_testnet_adapter_disabled",
+            "FAIL",
+            "REQUIRED",
+            "Binance futures testnet adapter config failed safety validation.",
             details,
         )
 

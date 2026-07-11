@@ -14,12 +14,14 @@ from engine.diagnostics.btc_paper_signal_evaluation_engine import BTCPaperSignal
 from engine.diagnostics.btc_paper_candidate_journal_engine import BTCPaperCandidateJournalEngine
 from engine.diagnostics.btc_paper_trade_candidate_engine import BTCPaperTradeCandidateEngine
 from engine.diagnostics.btc_forward_test_loop_engine import BTCForwardTestLoopEngine
+from engine.diagnostics.binance_futures_testnet_adapter_engine import BinanceFuturesTestnetAdapterEngine
 from engine.diagnostics.btc_futures_read_only_feed_engine import BTCFuturesReadOnlyFeedEngine
 from engine.diagnostics.btc_futures_paper_position_engine import BTCFuturesPaperPositionEngine
 from engine.diagnostics.btc_futures_risk_model_engine import BTCFuturesRiskModelEngine
 from engine.diagnostics.btc_live_market_feed_engine import BTCLiveMarketFeedEngine
 from engine.diagnostics.btc_paper_account_engine import BTCPaperAccountEngine
 from models.btc_forward_test_loop import BTCForwardTestIssue
+from models.binance_futures_testnet_adapter import BinanceFuturesTestnetIssue
 from models.btc_futures_read_only_feed import BTCFuturesReadOnlyIssue
 from models.btc_futures_paper_position import BTCFuturesPaperIssue
 from models.btc_futures_risk_model import BTCFuturesRiskIssue
@@ -29,6 +31,7 @@ from models.btc_paper_candidate_journal import BTCPaperCandidateJournalIssue
 from models.btc_paper_signal_evaluation import BTCPaperSignalEvaluationIssue
 from models.btc_paper_trade_candidate import BTCPaperTradeCandidateIssue
 from reporting.btc_forward_test_loop_report import format_btc_forward_test_run_result
+from reporting.binance_futures_testnet_adapter_report import format_binance_futures_testnet_adapter_result
 from reporting.btc_futures_read_only_feed_report import format_btc_futures_read_only_observation_result
 from reporting.btc_futures_paper_position_report import format_btc_futures_paper_action_result
 from reporting.btc_futures_risk_model_report import format_btc_futures_risk_result
@@ -80,6 +83,32 @@ def main(argv: list[str] | None = None) -> int:
         payload = {"runner_status": status.to_dict(), "futures_risk_analysis": risk_result.to_dict()}
         rendered = format_btc_paper_runner_status_report(status, transition) + "\n\n" + format_btc_futures_risk_result(risk_result)
         accepted = risk_result.status in ("PASS", "WARNING")
+    elif args.validate_binance_futures_testnet_adapter_dry_run:
+        status = engine.build_status(config_path=args.config, expected_profile=args.expected_profile, state=state)
+        adapter_engine = BinanceFuturesTestnetAdapterEngine(repo_root=ROOT_DIR, env={})
+        adapter_result = adapter_engine.build_order_intent(
+            intent_id="runner-testnet-intent-dry-run",
+            side="BUY",
+            order_type="MARKET",
+            quantity=0.001,
+            config_path="configs/binance_futures_testnet_adapter.json",
+            expected_profile=args.expected_profile,
+        )
+        if status.state != "RUNNING":
+            adapter_result.issues.append(
+                BinanceFuturesTestnetIssue(
+                    name="runner_not_running",
+                    severity="WARNING",
+                    message="Runner is not running; Binance futures testnet adapter validation executed as standalone disabled dry-run diagnostic.",
+                    details={"runner_state": status.state},
+                )
+            )
+            if adapter_result.status == "PASS":
+                adapter_result.status = "WARNING"
+        transition = None
+        payload = {"runner_status": status.to_dict(), "binance_futures_testnet_adapter": adapter_result.to_dict()}
+        rendered = format_btc_paper_runner_status_report(status, transition) + "\n\n" + format_binance_futures_testnet_adapter_result(adapter_result)
+        accepted = adapter_result.status in ("PASS", "WARNING")
     elif args.simulate_futures_paper_position_lifecycle_dry_run:
         status = engine.build_status(config_path=args.config, expected_profile=args.expected_profile, state=state)
         futures_position_engine = BTCFuturesPaperPositionEngine(repo_root=ROOT_DIR)
@@ -265,6 +294,7 @@ def main(argv: list[str] | None = None) -> int:
         or args.simulate_local_paper_account
         or args.observe_futures_read_only_dry_run
         or args.analyze_futures_risk_dry_run
+        or args.validate_binance_futures_testnet_adapter_dry_run
         or args.simulate_futures_paper_position_lifecycle_dry_run
     ) and not accepted:
         return 1
@@ -300,6 +330,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--simulate-local-paper-account", action="store_true")
     parser.add_argument("--observe-futures-read-only-dry-run", action="store_true")
     parser.add_argument("--analyze-futures-risk-dry-run", action="store_true")
+    parser.add_argument("--validate-binance-futures-testnet-adapter-dry-run", action="store_true")
     parser.add_argument("--simulate-futures-paper-position-lifecycle-dry-run", action="store_true")
     for flag in ACTION_FLAGS:
         parser.add_argument(f"--{flag.replace('_', '-')}", dest=flag, action="store_true")
