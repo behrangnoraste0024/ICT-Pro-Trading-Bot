@@ -80,3 +80,8 @@ reports/futures_read_only_feed/*.jsonl
 reports/futures_risk_model/*.json
 reports/futures_risk_model/*.md
 reports/futures_risk_model/*.jsonl
+reports/futures_paper_position/*.json
+reports/futures_paper_position/*.jsonl
+reports/futures_paper_position/*.md
+reports/futures_paper_position/*.lock
+reports/futures_paper_position/*.tmp

@@ -15,11 +15,13 @@ from engine.diagnostics.btc_paper_candidate_journal_engine import BTCPaperCandid
 from engine.diagnostics.btc_paper_trade_candidate_engine import BTCPaperTradeCandidateEngine
 from engine.diagnostics.btc_forward_test_loop_engine import BTCForwardTestLoopEngine
 from engine.diagnostics.btc_futures_read_only_feed_engine import BTCFuturesReadOnlyFeedEngine
+from engine.diagnostics.btc_futures_paper_position_engine import BTCFuturesPaperPositionEngine
 from engine.diagnostics.btc_futures_risk_model_engine import BTCFuturesRiskModelEngine
 from engine.diagnostics.btc_live_market_feed_engine import BTCLiveMarketFeedEngine
 from engine.diagnostics.btc_paper_account_engine import BTCPaperAccountEngine
 from models.btc_forward_test_loop import BTCForwardTestIssue
 from models.btc_futures_read_only_feed import BTCFuturesReadOnlyIssue
+from models.btc_futures_paper_position import BTCFuturesPaperIssue
 from models.btc_futures_risk_model import BTCFuturesRiskIssue
 from models.btc_live_market_feed import BTCLiveMarketFeedIssue
 from models.btc_paper_account import BTCPaperAccountIssue
@@ -28,6 +30,7 @@ from models.btc_paper_signal_evaluation import BTCPaperSignalEvaluationIssue
 from models.btc_paper_trade_candidate import BTCPaperTradeCandidateIssue
 from reporting.btc_forward_test_loop_report import format_btc_forward_test_run_result
 from reporting.btc_futures_read_only_feed_report import format_btc_futures_read_only_observation_result
+from reporting.btc_futures_paper_position_report import format_btc_futures_paper_action_result
 from reporting.btc_futures_risk_model_report import format_btc_futures_risk_result
 from reporting.btc_live_market_feed_report import format_btc_live_market_observation_result
 from reporting.btc_paper_account_report import format_btc_paper_account_action_result
@@ -77,6 +80,25 @@ def main(argv: list[str] | None = None) -> int:
         payload = {"runner_status": status.to_dict(), "futures_risk_analysis": risk_result.to_dict()}
         rendered = format_btc_paper_runner_status_report(status, transition) + "\n\n" + format_btc_futures_risk_result(risk_result)
         accepted = risk_result.status in ("PASS", "WARNING")
+    elif args.simulate_futures_paper_position_lifecycle_dry_run:
+        status = engine.build_status(config_path=args.config, expected_profile=args.expected_profile, state=state)
+        futures_position_engine = BTCFuturesPaperPositionEngine(repo_root=ROOT_DIR)
+        lifecycle_result = futures_position_engine.simulate_lifecycle(expected_profile=args.expected_profile)
+        if status.state != "RUNNING":
+            lifecycle_result.issues.append(
+                BTCFuturesPaperIssue(
+                    name="runner_not_running",
+                    severity="WARNING",
+                    message="Runner is not running; futures paper position lifecycle executed as standalone local dry-run simulation.",
+                    details={"runner_state": status.state},
+                )
+            )
+            if lifecycle_result.status == "PASS":
+                lifecycle_result.status = "WARNING"
+        transition = None
+        payload = {"runner_status": status.to_dict(), "futures_paper_position_lifecycle": lifecycle_result.to_dict()}
+        rendered = format_btc_paper_runner_status_report(status, transition) + "\n\n" + format_btc_futures_paper_action_result(lifecycle_result)
+        accepted = lifecycle_result.status in ("PASS", "WARNING")
     elif args.observe_futures_read_only_dry_run:
         status = engine.build_status(config_path=args.config, expected_profile=args.expected_profile, state=state)
         futures_feed_engine = BTCFuturesReadOnlyFeedEngine(repo_root=ROOT_DIR)
@@ -243,6 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         or args.simulate_local_paper_account
         or args.observe_futures_read_only_dry_run
         or args.analyze_futures_risk_dry_run
+        or args.simulate_futures_paper_position_lifecycle_dry_run
     ) and not accepted:
         return 1
     if not accepted and action not in ("HEARTBEAT", "STATUS"):
@@ -277,6 +300,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--simulate-local-paper-account", action="store_true")
     parser.add_argument("--observe-futures-read-only-dry-run", action="store_true")
     parser.add_argument("--analyze-futures-risk-dry-run", action="store_true")
+    parser.add_argument("--simulate-futures-paper-position-lifecycle-dry-run", action="store_true")
     for flag in ACTION_FLAGS:
         parser.add_argument(f"--{flag.replace('_', '-')}", dest=flag, action="store_true")
     return parser

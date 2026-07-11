@@ -10,6 +10,7 @@ from models.btc_futures_read_only_feed import (
     BTCFuturesReadOnlyObservationResult,
 )
 from models.btc_futures_risk_model import BTCFuturesRiskResult
+from models.btc_futures_paper_position import BTCFuturesPaperActionResult
 from models.btc_paper_account import (
     BTCPaperAccountAction,
     BTCPaperAccountActionResult,
@@ -85,6 +86,29 @@ class _FakeFuturesRiskModelEngine:
             paper_futures_position_created=False,
             exchange_leverage_changed=False,
             runner_state_mutated=False,
+        )
+
+
+class _FakeFuturesPaperPositionEngine:
+    def __init__(self, repo_root=None) -> None:
+        self.repo_root = repo_root
+
+    def simulate_lifecycle(self, expected_profile: str = "balanced_smc_decision_065", **kwargs) -> BTCFuturesPaperActionResult:
+        return BTCFuturesPaperActionResult(
+            action="SIMULATE_LIFECYCLE",
+            status="PASS",
+            decision="POSITION_CLOSED_MANUAL",
+            reason="Fake lifecycle completed.",
+            state_written=False,
+            ledger_written=False,
+            private_api_used=False,
+            real_order_submitted=False,
+            real_position_created=False,
+            spot_paper_account_state_mutated=False,
+            runner_state_mutated=False,
+            execution_state_mutated=False,
+            exchange_state_mutated=False,
+            metadata={"persistent_state_used": False},
         )
 
 
@@ -298,3 +322,25 @@ def test_analyze_futures_risk_dry_run_does_not_mutate_runner_state(tmp_path, cap
     assert "Exchange Exact       : false" in captured.out
     assert "Order Submitted      : false" in captured.out
     assert "Paper Futures Pos    : false" in captured.out
+
+
+def test_simulate_futures_paper_position_lifecycle_dry_run_does_not_mutate_runner_state(tmp_path, capsys, monkeypatch) -> None:
+    _write_configs(tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "ROOT_DIR", tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "BTCFuturesPaperPositionEngine", _FakeFuturesPaperPositionEngine)
+    state_path = tmp_path / "reports" / "paper_runner" / "state.json"
+    run_btc_paper_runner.main(["--initialize", "--state-file", "reports/paper_runner/state.json"])
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+
+    code = run_btc_paper_runner.main(["--simulate-futures-paper-position-lifecycle-dry-run", "--state-file", "reports/paper_runner/state.json"])
+
+    captured = capsys.readouterr()
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert before == after
+    assert "BTC FUTURES LOCAL PAPER POSITION" in captured.out
+    assert "Runner is not running; futures paper position lifecycle executed as standalone local dry-run simulation." in captured.out
+    assert "State Written           : false" in captured.out
+    assert "Ledger Written          : false" in captured.out
+    assert "Real Order Submitted    : false" in captured.out
+    assert "Spot Account Mutated    : false" in captured.out
