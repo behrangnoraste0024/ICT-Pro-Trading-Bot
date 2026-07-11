@@ -386,3 +386,25 @@ py scripts/run_btc_paper_runner.py --validate-binance-futures-testnet-read-only-
 Readiness and runner validation do not inspect credentials and do not use network. Authenticated reads require the confirmation phrase `CONFIRM_TESTNET_READ_ONLY` and dedicated testnet variables `BINANCE_FUTURES_TESTNET_API_KEY` and `BINANCE_FUTURES_TESTNET_API_SECRET`. The API key is transmitted only as `X-MBX-APIKEY` during confirmed read-only GET actions. The API secret is used locally for HMAC SHA256 signing and is never transmitted.
 
 No API key, API secret, full signature, signed URL, authenticated headers, or raw authenticated responses are printed or persisted. No orders, test orders, cancellations, order/trade history, leverage changes, margin changes, position creation/closing, streams, WebSockets, production access, or local paper-state mutation are allowed. Future releases may add separately gated Testnet order simulation, but Release 2.78 does not.
+
+# Binance Futures Testnet Test Order Preflight
+
+Release 2.79 adds an explicitly confirmed Binance USD-M Futures Testnet Test Order preflight. This is still diagnostics only. The only authenticated trade-related endpoint allowed is `POST /fapi/v1/order/test`, which validates hypothetical parameters without creating a matching-engine order, exchange order ID, position, balance mutation, or local paper state mutation.
+
+Commands:
+
+```powershell
+py scripts/run_binance_futures_testnet_order_test.py
+py scripts/run_binance_futures_testnet_order_test.py --json
+py scripts/run_binance_futures_testnet_order_test.py --strict
+py scripts/run_binance_futures_testnet_order_test.py --check-credentials
+py scripts/run_binance_futures_testnet_order_test.py --build-preview --client-order-id smcbot-test-market-001 --side BUY --order-type MARKET --quantity 0.001
+py scripts/run_binance_futures_testnet_order_test.py --build-preview --client-order-id smcbot-test-limit-001 --side BUY --order-type LIMIT --quantity 0.001 --price 50000 --time-in-force GTC
+py scripts/run_binance_futures_testnet_order_test.py --submit-test-order --client-order-id smcbot-test-market-002 --side BUY --order-type MARKET --quantity 0.001
+py scripts/run_binance_futures_testnet_order_test.py --submit-test-order --client-order-id smcbot-test-market-003 --side BUY --order-type MARKET --quantity 0.001 --confirm-testnet-order-test CONFIRM_TESTNET_ORDER_TEST
+py scripts/run_btc_paper_runner.py --validate-binance-futures-testnet-order-test-dry-run
+```
+
+Readiness and runner validation build a local MARKET preview only. They do not inspect credentials, fetch server time, fetch exchange info, generate a signature, transmit a Test Order request, or mutate runner, paper, execution, or exchange state.
+
+An authenticated Test Order request requires the exact phrase `CONFIRM_TESTNET_ORDER_TEST` and the dedicated variables `BINANCE_FUTURES_TESTNET_API_KEY` and `BINANCE_FUTURES_TESTNET_API_SECRET`. The actual order endpoint `POST /fapi/v1/order`, cancellation, modification, order/trade queries, conditional/algo orders, leverage or margin changes, user streams, WebSockets, production endpoints, and raw request/response persistence remain forbidden.
