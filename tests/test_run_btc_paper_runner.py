@@ -5,6 +5,7 @@ from pathlib import Path
 
 from models.binance_futures_testnet_adapter import BinanceFuturesTestnetAdapterResult
 from models.binance_futures_testnet_read_only import BinanceFuturesTestnetReadOnlyResult
+from models.binance_futures_testnet_order_test import BinanceFuturesTestnetOrderTestPreview, BinanceFuturesTestnetOrderTestResult
 from models.btc_live_market_feed import BTCLiveMarketObservationResult
 from models.btc_futures_read_only_feed import (
     BTCFuturesReadOnlyFeedStatus,
@@ -159,6 +160,30 @@ class _FakeBinanceFuturesTestnetReadOnlyEngine:
             authenticated_transport_invoked=False,
             request_transmitted=False,
             order_submitted=False,
+            futures_paper_state_mutated=False,
+            runner_state_mutated=False,
+            execution_state_mutated=False,
+            exchange_state_mutated=False,
+        )
+
+
+class _FakeBinanceFuturesTestnetOrderTestEngine:
+    def __init__(self, repo_root=None, env=None) -> None:
+        self.repo_root = repo_root
+        self.env = env
+
+    def runner_validate(self, **kwargs) -> BinanceFuturesTestnetOrderTestResult:
+        return BinanceFuturesTestnetOrderTestResult(
+            action="RUNNER_VALIDATE",
+            status="PASS",
+            decision="CONFIG_VALID",
+            reason="Fake order-test validation completed.",
+            preview=BinanceFuturesTestnetOrderTestPreview(client_order_id="smcbot-test-runner-001", quantity=0.001),
+            credentials_inspected=False,
+            authenticated_transport_invoked=False,
+            test_order_request_transmitted=False,
+            actual_order_submitted=False,
+            actual_order_endpoint_used=False,
             futures_paper_state_mutated=False,
             runner_state_mutated=False,
             execution_state_mutated=False,
@@ -440,3 +465,26 @@ def test_validate_binance_futures_testnet_read_only_dry_run_does_not_mutate_runn
     assert "Authenticated Transport      : false" in captured.out
     assert "Order Submitted              : false" in captured.out
     assert "Futures Paper State Mutated  : false" in captured.out
+
+
+def test_validate_binance_futures_testnet_order_test_dry_run_does_not_mutate_runner_state(tmp_path, capsys, monkeypatch) -> None:
+    _write_configs(tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "ROOT_DIR", tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "BinanceFuturesTestnetOrderTestEngine", _FakeBinanceFuturesTestnetOrderTestEngine)
+    state_path = tmp_path / "reports" / "paper_runner" / "state.json"
+    run_btc_paper_runner.main(["--initialize", "--state-file", "reports/paper_runner/state.json"])
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+
+    code = run_btc_paper_runner.main(["--validate-binance-futures-testnet-order-test-dry-run", "--state-file", "reports/paper_runner/state.json"])
+
+    captured = capsys.readouterr()
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert before == after
+    assert "BINANCE FUTURES TESTNET TEST ORDER DIAGNOSTIC" in captured.out
+    assert "Runner is not running; Binance futures Test Order preflight validation executed as standalone local dry-run diagnostic." in captured.out
+    assert "Credentials Inspected     : false" in captured.out
+    assert "Authenticated Request     : false" in captured.out
+    assert "Test Request Transmitted  : false" in captured.out
+    assert "Actual Order Submitted    : false" in captured.out
+    assert "Futures Paper Mutated     : false" in captured.out

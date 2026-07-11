@@ -658,3 +658,21 @@ Operational rules:
 - raw authenticated responses, signed URLs, signatures, and authenticated headers are not printed or persisted
 - readiness and runner validation do not inspect credentials and do not use network
 - no orders, test orders, cancellation, order/trade history, leverage changes, margin changes, position changes, listen keys, user streams, WebSockets, production endpoints, or state mutation are permitted in Release 2.78.
+
+# Binance Futures Testnet Test Order Preflight
+
+Release 2.79 introduces an explicit Test Order preflight for Binance USD-M Futures Testnet. The only authenticated trade-related endpoint allowed is `POST /fapi/v1/order/test`; `POST /fapi/v1/order` and every cancellation, modification, order query, trade query, conditional/algo order, leverage, margin, stream, WebSocket, production, and state mutation path remains blocked.
+
+Useful commands:
+
+```powershell
+py scripts/run_binance_futures_testnet_order_test.py
+py scripts/run_binance_futures_testnet_order_test.py --json
+py scripts/run_binance_futures_testnet_order_test.py --strict
+py scripts/run_binance_futures_testnet_order_test.py --check-credentials
+py scripts/run_binance_futures_testnet_order_test.py --build-preview --client-order-id smcbot-test-market-001 --side BUY --order-type MARKET --quantity 0.001
+py scripts/run_binance_futures_testnet_order_test.py --submit-test-order --client-order-id smcbot-test-market-002 --side BUY --order-type MARKET --quantity 0.001
+py scripts/run_btc_paper_runner.py --validate-binance-futures-testnet-order-test-dry-run
+```
+
+Submitting a Test Order request requires `--confirm-testnet-order-test CONFIRM_TESTNET_ORDER_TEST` and dedicated Testnet credentials from `BINANCE_FUTURES_TESTNET_API_KEY` and `BINANCE_FUTURES_TESTNET_API_SECRET`. Validation, readiness, runner dry-run, and local preview do not inspect credentials or use network. Reports must say "Test Order request accepted" rather than "order submitted" or "position opened", and must show actual order, matching-engine submission, exchange order creation, position creation, and exchange state mutation as false.
