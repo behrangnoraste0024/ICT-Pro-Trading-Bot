@@ -55,6 +55,9 @@ def test_market_preview_cli_uses_no_credentials_or_network(capsys) -> None:
     assert code == 0
     assert "ORDER_TEST_PREVIEW_VALID" in captured.out
     assert "Credentials Inspected     : false" in captured.out
+    assert "Estimated Notional        : NOT_EVALUATED" in captured.out
+    assert "Exchange Filters Valid    : None" in captured.out
+    assert "Transmission Ready        : false" in captured.out
     assert "Test Request Transmitted  : false" in captured.out
 
 

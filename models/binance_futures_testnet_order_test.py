@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
@@ -30,11 +31,35 @@ class BinanceFuturesTestnetOrderTestDecision(StrEnum):
     ORDER_TEST_PREVIEW_REJECTED = "ORDER_TEST_PREVIEW_REJECTED"
     ORDER_TEST_ACCEPTED = "ORDER_TEST_ACCEPTED"
     ORDER_TEST_REJECTED = "ORDER_TEST_REJECTED"
+    ORDER_TEST_PUBLIC_VALIDATION_PASSED = "ORDER_TEST_PUBLIC_VALIDATION_PASSED"
+    MARKET_REFERENCE_PRICE_REQUIRED = "MARKET_REFERENCE_PRICE_REQUIRED"
+    MARKET_REFERENCE_PRICE_UNAVAILABLE = "MARKET_REFERENCE_PRICE_UNAVAILABLE"
+    MARKET_REFERENCE_PRICE_INVALID = "MARKET_REFERENCE_PRICE_INVALID"
+    MARKET_NOTIONAL_NOT_EVALUATED = "MARKET_NOTIONAL_NOT_EVALUATED"
+    MARKET_NOTIONAL_EXCEEDED = "MARKET_NOTIONAL_EXCEEDED"
+    EXCHANGE_MIN_NOTIONAL_FAILED = "EXCHANGE_MIN_NOTIONAL_FAILED"
+    EXCHANGE_FILTERS_NOT_EVALUATED = "EXCHANGE_FILTERS_NOT_EVALUATED"
     EXCHANGE_FILTER_VALIDATION_FAILED = "EXCHANGE_FILTER_VALIDATION_FAILED"
     CLOCK_SKEW_EXCEEDED = "CLOCK_SKEW_EXCEEDED"
     AUTHENTICATION_FAILED = "AUTHENTICATION_FAILED"
     NETWORK_FAILED = "NETWORK_FAILED"
     ACTUAL_ORDER_OPERATION_BLOCKED = "ACTUAL_ORDER_OPERATION_BLOCKED"
+
+
+class OrderTestNotionalValidationStatus(StrEnum):
+    NOT_EVALUATED = "NOT_EVALUATED"
+    PASS = "PASS"
+    FAIL = "FAIL"
+
+
+class OrderTestExchangeFilterValidationStatus(StrEnum):
+    NOT_EVALUATED = "NOT_EVALUATED"
+    PASS = "PASS"
+    FAIL = "FAIL"
+
+
+class OrderTestReferencePriceSource(StrEnum):
+    MARK_PRICE = "MARK_PRICE"
 
 
 @dataclass
@@ -66,6 +91,8 @@ class BinanceFuturesTestnetOrderTestConfig:
     api_secret_env_var: str = "BINANCE_FUTURES_TESTNET_API_SECRET"
     allowed_http_methods: list[str] = field(default_factory=lambda: ["POST"])
     test_order_path: str = "/fapi/v1/order/test"
+    mark_price_path: str = "/fapi/v1/premiumIndex"
+    market_reference_price_source: str = OrderTestReferencePriceSource.MARK_PRICE.value
     allowed_authenticated_paths: list[str] = field(default_factory=lambda: ["/fapi/v1/order/test"])
     require_explicit_network_confirmation: bool = True
     network_confirmation_phrase: str = "CONFIRM_TESTNET_ORDER_TEST"
@@ -78,6 +105,11 @@ class BinanceFuturesTestnetOrderTestConfig:
     allow_public_exchange_info_fetch: bool = True
     allow_local_order_test_preview: bool = True
     allow_explicit_test_order_request: bool = True
+    require_market_reference_price: bool = True
+    allow_zero_market_reference_price: bool = False
+    allow_unknown_market_notional: bool = False
+    allow_unvalidated_exchange_filters_for_transmission: bool = False
+    require_exchange_filters_before_transmission: bool = True
     allowed_order_types: list[str] = field(default_factory=lambda: ["MARKET", "LIMIT"])
     allowed_sides: list[str] = field(default_factory=lambda: ["BUY", "SELL"])
     default_time_in_force: str = "GTC"
@@ -168,21 +200,21 @@ class BinanceFuturesTestnetOrderTestCredentialMetadata:
 @dataclass
 class BinanceFuturesTestnetExchangeFilterSummary:
     symbol: str = "BTCUSDT"
-    price_tick_size: float | None = None
-    min_price: float | None = None
-    max_price: float | None = None
-    lot_step_size: float | None = None
-    min_qty: float | None = None
-    max_qty: float | None = None
-    market_lot_step_size: float | None = None
-    market_min_qty: float | None = None
-    market_max_qty: float | None = None
-    min_notional: float | None = None
+    price_tick_size: Decimal | None = None
+    min_price: Decimal | None = None
+    max_price: Decimal | None = None
+    lot_step_size: Decimal | None = None
+    min_qty: Decimal | None = None
+    max_qty: Decimal | None = None
+    market_lot_step_size: Decimal | None = None
+    market_min_qty: Decimal | None = None
+    market_max_qty: Decimal | None = None
+    min_notional: Decimal | None = None
     source: str = "PUBLIC_EXCHANGE_INFO"
     raw_response_included: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return _serialize(asdict(self))
 
 
 @dataclass
@@ -191,12 +223,20 @@ class BinanceFuturesTestnetOrderTestPreview:
     symbol: str = "BTCUSDT"
     side: str = "BUY"
     order_type: str = "MARKET"
-    quantity: float = 0.0
-    price: float | None = None
+    quantity: Decimal = Decimal("0")
+    price: Decimal | None = None
     time_in_force: str | None = None
     reduce_only: bool = False
-    estimated_notional: float = 0.0
-    exchange_filters_valid: bool = False
+    reference_price: Decimal | None = None
+    reference_price_source: str | None = None
+    estimated_notional: Decimal | None = None
+    configured_max_notional_valid: bool | None = None
+    exchange_min_notional_valid: bool | None = None
+    notional_validation_status: str = OrderTestNotionalValidationStatus.NOT_EVALUATED.value
+    exchange_filter_validation_status: str = OrderTestExchangeFilterValidationStatus.NOT_EVALUATED.value
+    exchange_filters_valid: bool | None = None
+    local_rules_valid: bool = True
+    transmission_ready: bool = False
     executable: bool = False
     actual_order_endpoint_used: bool = False
     matching_engine_submission: bool = False
@@ -206,7 +246,7 @@ class BinanceFuturesTestnetOrderTestPreview:
     parameter_names: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return _serialize(asdict(self))
 
 
 @dataclass
@@ -232,7 +272,7 @@ class BinanceFuturesTestnetOrderTestRequestMetadata:
     raw_response_included: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return _serialize(asdict(self))
 
 
 @dataclass
@@ -259,7 +299,7 @@ class BinanceFuturesTestnetOrderTestValidationReport:
             "fail_count": self.fail_count,
             "config": None if self.config is None else self.config.to_dict(),
             "issues": [issue.to_dict() for issue in self.issues],
-            "diagnostics": dict(self.diagnostics),
+            "diagnostics": _serialize(dict(self.diagnostics)),
         }
 
 
@@ -316,10 +356,22 @@ class BinanceFuturesTestnetOrderTestResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            **asdict(self),
+            **_serialize(asdict(self)),
             "credential_metadata": None if self.credential_metadata is None else self.credential_metadata.to_dict(),
             "exchange_filter_summary": None if self.exchange_filter_summary is None else self.exchange_filter_summary.to_dict(),
             "preview": None if self.preview is None else self.preview.to_dict(),
             "request_metadata": None if self.request_metadata is None else self.request_metadata.to_dict(),
             "issues": [issue.to_dict() for issue in self.issues],
         }
+
+
+def _serialize(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            return None
+        return format(value, "f")
+    if isinstance(value, dict):
+        return {key: _serialize(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_serialize(item) for item in value]
+    return value

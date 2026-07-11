@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from decimal import Decimal
 
 from engine.diagnostics.binance_futures_testnet_order_test_engine import BinanceFuturesTestnetOrderTestEngine
 from infrastructure.exchanges.binance_futures_testnet_order_test_client import BinanceOrderTestHTTPResponse
@@ -72,6 +73,8 @@ def _env() -> dict[str, str]:
 def _http_get(url, timeout):
     if url.endswith("/fapi/v1/time"):
         return BinanceOrderTestHTTPResponse(200, url, {"serverTime": 123}, 18)
+    if "/fapi/v1/premiumIndex" in url:
+        return BinanceOrderTestHTTPResponse(200, url, {"symbol": "BTCUSDT", "markPrice": "50000"}, 40)
     return BinanceOrderTestHTTPResponse(
         200,
         url,
@@ -114,6 +117,8 @@ def test_repo_safe_config_validates_pass() -> None:
         ("api_secret_env_var", "BINANCE_API_SECRET", "api_secret_env_var"),
         ("allowed_http_methods", ["POST", "DELETE"], "allowed_http_methods"),
         ("test_order_path", "/fapi/v1/order", "test_order_path"),
+        ("mark_price_path", "/fapi/v1/ticker/price", "mark_price_path"),
+        ("market_reference_price_source", "TICKER_PRICE", "market_reference_price_source"),
         ("allowed_authenticated_paths", ["/fapi/v1/order"], "allowed_authenticated_paths"),
         ("require_explicit_network_confirmation", False, "require_explicit_network_confirmation"),
         ("network_confirmation_phrase", "CONFIRM", "network_confirmation_phrase"),
@@ -137,6 +142,11 @@ def test_repo_safe_config_validates_pass() -> None:
         ("allow_authenticated_header_logging", True, "allow_authenticated_header_logging"),
         ("allow_signature_logging", True, "allow_signature_logging"),
         ("allow_exchange_state_mutation", True, "allow_exchange_state_mutation"),
+        ("require_market_reference_price", False, "require_market_reference_price"),
+        ("allow_zero_market_reference_price", True, "allow_zero_market_reference_price"),
+        ("allow_unknown_market_notional", True, "allow_unknown_market_notional"),
+        ("allow_unvalidated_exchange_filters_for_transmission", True, "allow_unvalidated_exchange_filters_for_transmission"),
+        ("require_exchange_filters_before_transmission", False, "require_exchange_filters_before_transmission"),
         ("report_export_dir", "../reports", "report_export_dir"),
     ],
 )
@@ -168,6 +178,11 @@ def test_preview_uses_no_credentials_or_network(tmp_path: Path) -> None:
     assert result.public_server_time_request_used is False
     assert result.test_order_request_transmitted is False
     assert result.actual_order_submitted is False
+    assert result.preview.estimated_notional is None
+    assert result.preview.exchange_filters_valid is None
+    assert result.preview.notional_validation_status == "NOT_EVALUATED"
+    assert result.preview.exchange_filter_validation_status == "NOT_EVALUATED"
+    assert result.preview.transmission_ready is False
 
 
 def test_submit_without_confirmation_blocks_before_credentials_or_network(tmp_path: Path) -> None:
@@ -221,8 +236,75 @@ def test_confirmed_mock_test_order_is_accepted_without_actual_order_flags(tmp_pa
     assert result.exchange_order_id is None
     assert result.position_created is False
     assert result.exchange_state_mutated is False
+    assert result.public_exchange_info_request_used is True
+    assert result.preview.reference_price == Decimal("50000")
+    assert result.preview.reference_price_source == "MARK_PRICE"
+    assert result.preview.estimated_notional == Decimal("50.000")
+    assert result.preview.notional_validation_status == "PASS"
+    assert result.preview.exchange_filter_validation_status == "PASS"
+    assert result.preview.exchange_filters_valid is True
+    assert result.preview.transmission_ready is True
     assert "/fapi/v1/order/test" in calls[0][0]
     assert "/fapi/v1/order?" not in calls[0][0]
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"symbol": "BTCUSDT", "markPrice": "0"}, "mark price"),
+        ({"symbol": "BTCUSDT", "markPrice": "-1"}, "mark price"),
+        ({"symbol": "BTCUSDT", "markPrice": "NaN"}, "markPrice"),
+        ({"symbol": "ETHUSDT", "markPrice": "50000"}, "symbol"),
+    ],
+)
+def test_market_mark_price_failures_block_before_authenticated_transport(tmp_path: Path, payload: dict, message: str) -> None:
+    path = _write_config(tmp_path)
+
+    def http_get(url, timeout):
+        if url.endswith("/fapi/v1/time"):
+            return BinanceOrderTestHTTPResponse(200, url, {"serverTime": 123}, 18)
+        if "/fapi/v1/premiumIndex" in url:
+            return BinanceOrderTestHTTPResponse(200, url, payload, 40)
+        return _http_get(url, timeout)
+
+    result = _engine(tmp_path, env=_env(), http_get=http_get, authenticated_post=lambda *args: (_ for _ in ()).throw(AssertionError("authenticated transport used")), now_ms_provider=lambda: 123).submit_test_order(
+        "smcbot-test-submit-004",
+        "BUY",
+        "MARKET",
+        0.001,
+        confirmation="CONFIRM_TESTNET_ORDER_TEST",
+        config_path=str(path),
+    )
+
+    assert result.status == "FAIL"
+    assert any(message in issue.message for issue in result.issues)
+    assert result.signature_generated is False
+    assert result.authenticated_test_request_used is False
+    assert result.test_order_request_transmitted is False
+    assert result.actual_order_submitted is False
+
+
+def test_oversized_market_notional_blocks_before_signing(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+
+    def http_get(url, timeout):
+        if "/fapi/v1/premiumIndex" in url:
+            return BinanceOrderTestHTTPResponse(200, url, {"symbol": "BTCUSDT", "markPrice": "200000"}, 40)
+        return _http_get(url, timeout)
+
+    result = _engine(tmp_path, env=_env(), http_get=http_get, authenticated_post=lambda *args: (_ for _ in ()).throw(AssertionError("authenticated transport used")), now_ms_provider=lambda: 123).submit_test_order(
+        "smcbot-test-submit-005",
+        "BUY",
+        "MARKET",
+        0.001,
+        confirmation="CONFIRM_TESTNET_ORDER_TEST",
+        config_path=str(path),
+    )
+
+    assert result.status == "FAIL"
+    assert result.signature_generated is False
+    assert result.test_order_request_transmitted is False
+    assert any("maximum" in issue.message for issue in result.issues)
 
 
 def test_hard_block_diagnostics_blocks_mutating_methods(tmp_path: Path) -> None:
