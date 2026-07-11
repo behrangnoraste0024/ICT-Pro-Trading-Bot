@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from models.binance_futures_testnet_adapter import BinanceFuturesTestnetAdapterResult
 from models.btc_live_market_feed import BTCLiveMarketObservationResult
 from models.btc_futures_read_only_feed import (
     BTCFuturesReadOnlyFeedStatus,
@@ -109,6 +110,36 @@ class _FakeFuturesPaperPositionEngine:
             execution_state_mutated=False,
             exchange_state_mutated=False,
             metadata={"persistent_state_used": False},
+        )
+
+
+class _FakeBinanceFuturesTestnetAdapterEngine:
+    def __init__(self, repo_root=None, env=None) -> None:
+        self.repo_root = repo_root
+        self.env = env
+
+    def build_order_intent(self, **kwargs) -> BinanceFuturesTestnetAdapterResult:
+        return BinanceFuturesTestnetAdapterResult(
+            action="BUILD_ORDER_INTENT",
+            status="PASS",
+            decision="ORDER_INTENT_VALID",
+            reason="Fake local non-executable intent built.",
+            payload={
+                "intent_id": kwargs["intent_id"],
+                "executable": False,
+                "request_signed": False,
+                "request_transmitted": False,
+                "testnet_order_submitted": False,
+                "futures_paper_state_mutated": False,
+            },
+            request_signed=False,
+            request_transmitted=False,
+            testnet_order_submitted=False,
+            futures_paper_state_mutated=False,
+            spot_paper_account_state_mutated=False,
+            runner_state_mutated=False,
+            execution_state_mutated=False,
+            exchange_state_mutated=False,
         )
 
 
@@ -344,3 +375,23 @@ def test_simulate_futures_paper_position_lifecycle_dry_run_does_not_mutate_runne
     assert "Ledger Written          : false" in captured.out
     assert "Real Order Submitted    : false" in captured.out
     assert "Spot Account Mutated    : false" in captured.out
+
+
+def test_validate_binance_futures_testnet_adapter_dry_run_does_not_mutate_runner_state(tmp_path, capsys, monkeypatch) -> None:
+    _write_configs(tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "ROOT_DIR", tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "BinanceFuturesTestnetAdapterEngine", _FakeBinanceFuturesTestnetAdapterEngine)
+    state_path = tmp_path / "reports" / "paper_runner" / "state.json"
+    run_btc_paper_runner.main(["--initialize", "--state-file", "reports/paper_runner/state.json"])
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+
+    code = run_btc_paper_runner.main(["--validate-binance-futures-testnet-adapter-dry-run", "--state-file", "reports/paper_runner/state.json"])
+
+    captured = capsys.readouterr()
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert before == after
+    assert "BINANCE FUTURES TESTNET ADAPTER DIAGNOSTIC" in captured.out
+    assert "Runner is not running; Binance futures testnet adapter validation executed as standalone disabled dry-run diagnostic." in captured.out
+    assert "Testnet Order Submitted      : false" in captured.out
+    assert "Futures Paper State Mutated  : false" in captured.out

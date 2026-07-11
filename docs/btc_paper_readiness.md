@@ -339,3 +339,26 @@ py scripts/run_btc_paper_runner.py --simulate-futures-paper-position-lifecycle-d
 ```
 
 The runner integration is in-memory only and does not persist futures state or ledger entries. A future release may introduce a disabled-by-default Binance Futures Testnet adapter, but Release 2.76 does not.
+
+# Binance Futures Testnet Adapter - Disabled by Default
+
+Release 2.77 adds a disabled-by-default Binance USD-M Futures Testnet adapter boundary. Only the exact public testnet host `https://demo-fapi.binance.com` is allowed. Production endpoints are blocked, and the adapter does not fall back to any alternate Binance host.
+
+Commands:
+
+```powershell
+py scripts/run_binance_futures_testnet_adapter.py
+py scripts/run_binance_futures_testnet_adapter.py --json
+py scripts/run_binance_futures_testnet_adapter.py --strict
+py scripts/run_binance_futures_testnet_adapter.py --ping-testnet
+py scripts/run_binance_futures_testnet_adapter.py --fetch-server-time
+py scripts/run_binance_futures_testnet_adapter.py --fetch-exchange-info
+py scripts/run_binance_futures_testnet_adapter.py --check-credentials
+py scripts/run_binance_futures_testnet_adapter.py --signed-request-preview --preview-path /fapi/v2/account
+py scripts/run_binance_futures_testnet_adapter.py --build-order-intent --intent-id testnet-intent-001 --side BUY --order-type MARKET --quantity 0.001
+py scripts/run_btc_paper_runner.py --validate-binance-futures-testnet-adapter-dry-run
+```
+
+Public diagnostics do not use credentials. Credential checks inspect only `BINANCE_FUTURES_TESTNET_API_KEY` and `BINANCE_FUTURES_TESTNET_API_SECRET`, returning presence and length metadata only. Signing previews are local-only, redacted, and never transmitted. Order intents are non-executable local data objects.
+
+Release 2.77 does not submit or cancel testnet orders, fetch account/balance/position data, change leverage, change margin mode, create exchange positions, open a user-data stream, start a WebSocket, mutate Release 2.76 futures paper state, mutate the spot paper account, mutate runner/execution state, or mutate exchange state. Credentials, signatures, request headers, signed URLs, generated reports, and `.env` files must never be committed. A later release may add separately gated authenticated testnet read-only access.

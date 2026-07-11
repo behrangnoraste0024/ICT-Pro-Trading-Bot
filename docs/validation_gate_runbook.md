@@ -602,3 +602,26 @@ py scripts/run_btc_paper_runner.py --simulate-futures-paper-position-lifecycle-d
 ```
 
 Approximate liquidation monitoring is conservative and uses the Release 2.75 model. Live mark/funding actions use public read-only futures data only; network failures fail safely without state mutation. The runner lifecycle action is in-memory only. A disabled-by-default Binance Futures Testnet adapter may come later, but it is not part of Release 2.76.
+
+# Binance Futures Testnet Adapter - Disabled by Default
+
+Release 2.77 introduces a Binance USD-M Futures Testnet adapter boundary while keeping the adapter disabled by default. The only allowed REST host is `demo-fapi.binance.com`; production Binance hosts, non-HTTPS URLs, user-info URLs, IP addresses, localhost, loopback/private-network hosts, and redirects outside the allowlist are rejected.
+
+Operator commands:
+
+```powershell
+py scripts/run_binance_futures_testnet_adapter.py
+py scripts/run_binance_futures_testnet_adapter.py --json
+py scripts/run_binance_futures_testnet_adapter.py --strict
+py scripts/run_binance_futures_testnet_adapter.py --ping-testnet
+py scripts/run_binance_futures_testnet_adapter.py --fetch-server-time
+py scripts/run_binance_futures_testnet_adapter.py --fetch-exchange-info
+py scripts/run_binance_futures_testnet_adapter.py --check-credentials
+py scripts/run_binance_futures_testnet_adapter.py --signed-request-preview --preview-path /fapi/v2/account
+py scripts/run_binance_futures_testnet_adapter.py --build-order-intent --intent-id testnet-intent-001 --side BUY --order-type MARKET --quantity 0.001
+py scripts/run_btc_paper_runner.py --validate-binance-futures-testnet-adapter-dry-run
+```
+
+Public ping, server-time, and exchange-info diagnostics are credential-free. Credential checks are explicit and inspect only the dedicated testnet environment variables, returning presence and length metadata without logging or persisting secrets. Signing previews are local-only and redacted; signed requests are not transmitted. Order intents are non-executable and do not sign, transmit, reserve margin, create local positions, or mutate Release 2.76 state.
+
+No testnet orders are submitted or cancelled. No authenticated account, balance, or position data is fetched. No leverage or margin mode is changed. No user-data stream or WebSocket is opened. Release 2.76 local futures paper state, the spot paper account, runner state, execution state, and exchange state remain untouched. A future release may add separately gated authenticated testnet read-only access.
