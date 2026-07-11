@@ -898,6 +898,8 @@ def _binance_futures_testnet_order_test_config(**overrides) -> dict:
         "api_secret_env_var": "BINANCE_FUTURES_TESTNET_API_SECRET",
         "allowed_http_methods": ["POST"],
         "test_order_path": "/fapi/v1/order/test",
+        "mark_price_path": "/fapi/v1/premiumIndex",
+        "market_reference_price_source": "MARK_PRICE",
         "allowed_authenticated_paths": ["/fapi/v1/order/test"],
         "require_explicit_network_confirmation": True,
         "network_confirmation_phrase": "CONFIRM_TESTNET_ORDER_TEST",
@@ -910,6 +912,11 @@ def _binance_futures_testnet_order_test_config(**overrides) -> dict:
         "allow_public_exchange_info_fetch": True,
         "allow_local_order_test_preview": True,
         "allow_explicit_test_order_request": True,
+        "require_market_reference_price": True,
+        "allow_zero_market_reference_price": False,
+        "allow_unknown_market_notional": False,
+        "allow_unvalidated_exchange_filters_for_transmission": False,
+        "require_exchange_filters_before_transmission": True,
         "allowed_order_types": ["MARKET", "LIMIT"],
         "allowed_sides": ["BUY", "SELL"],
         "default_time_in_force": "GTC",
@@ -1302,6 +1309,19 @@ def test_readiness_blocks_when_binance_futures_testnet_order_test_config_is_dang
     _write_json(
         tmp_path / "configs" / "binance_futures_testnet_order_test.json",
         _binance_futures_testnet_order_test_config(allow_actual_order_submission=True),
+    )
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "BLOCKED"
+    assert _check(report, "binance_futures_testnet_order_test_preflight").status == "FAIL"
+
+
+def test_readiness_blocks_when_order_test_market_public_validation_is_unsafe(tmp_path) -> None:
+    _ready_files(tmp_path)
+    _write_json(
+        tmp_path / "configs" / "binance_futures_testnet_order_test.json",
+        _binance_futures_testnet_order_test_config(allow_unknown_market_notional=True),
     )
 
     report = _report(tmp_path)

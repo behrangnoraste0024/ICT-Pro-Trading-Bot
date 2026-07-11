@@ -29,6 +29,7 @@ from models.binance_futures_testnet_order_test import (
     BinanceFuturesTestnetOrderTestRequestMetadata,
     BinanceFuturesTestnetOrderTestResult,
     BinanceFuturesTestnetOrderTestValidationReport,
+    OrderTestReferencePriceSource,
 )
 
 
@@ -155,13 +156,14 @@ class BinanceFuturesTestnetOrderTestEngine:
             decision = BinanceFuturesTestnetOrderTestDecision.CREDENTIALS_INCOMPLETE.value if metadata.api_key_present or metadata.api_secret_present else BinanceFuturesTestnetOrderTestDecision.CREDENTIALS_NOT_CONFIGURED.value
             return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "WARNING", decision, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, credentials_inspected=True)
         try:
-            server = self._server_time_or_issue(client, config, issues)
             filters = client.fetch_exchange_filters()
-            preview = client.build_order_test_preview(client_order_id, side, order_type, quantity, price, time_in_force, reduce_only, exchange_filters=filters)
+            mark_price = client.fetch_mark_price(config.exchange_symbol) if str(order_type).upper() == "MARKET" else None
+            preview = client.build_order_test_preview(client_order_id, side, order_type, quantity, price, time_in_force, reduce_only, exchange_filters=filters, mark_price=mark_price)
+            server = self._server_time_or_issue(client, config, issues)
             request_metadata = client.submit_test_order(preview, server)
         except Exception as exc:
             issues.append(self._issue("order_test_request_failed", "FAIL", self._sanitize(str(exc))))
-            return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", BinanceFuturesTestnetOrderTestDecision.ORDER_TEST_REJECTED.value, "Test Order request failed safely.", credential_metadata=metadata, issues=issues, credentials_inspected=True, public_server_time_request_used=True)
+            return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", BinanceFuturesTestnetOrderTestDecision.ORDER_TEST_REJECTED.value, "Test Order request failed safely.", credential_metadata=metadata, issues=issues, credentials_inspected=True, public_exchange_info_request_used=True)
         return self._result(
             config,
             BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value,
@@ -247,6 +249,8 @@ class BinanceFuturesTestnetOrderTestEngine:
         self._expect(config.api_secret_env_var == "BINANCE_FUTURES_TESTNET_API_SECRET", issues, "api_secret_env_var", "Only BINANCE_FUTURES_TESTNET_API_SECRET may be used.")
         self._expect(config.allowed_http_methods == ["POST"], issues, "allowed_http_methods", "Only POST may be allowlisted.")
         self._expect(config.test_order_path == "/fapi/v1/order/test", issues, "test_order_path", "test_order_path must be /fapi/v1/order/test.")
+        self._expect(config.mark_price_path == "/fapi/v1/premiumIndex", issues, "mark_price_path", "mark_price_path must be /fapi/v1/premiumIndex.")
+        self._expect(config.market_reference_price_source == OrderTestReferencePriceSource.MARK_PRICE.value, issues, "market_reference_price_source", "MARKET reference price source must be MARK_PRICE.")
         self._expect(config.allowed_authenticated_paths == ["/fapi/v1/order/test"], issues, "allowed_authenticated_paths", "Only /fapi/v1/order/test may be authenticated.")
         forbidden_paths = {"/fapi/v1/order", "/fapi/v1/algoOrder", "/fapi/v1/openOrders", "/fapi/v1/allOrders", "/fapi/v1/userTrades"}
         self._expect(not any(path in forbidden_paths for path in config.allowed_authenticated_paths), issues, "forbidden_authenticated_paths", "Actual order, algo, query and trade paths are forbidden.")
@@ -260,6 +264,11 @@ class BinanceFuturesTestnetOrderTestEngine:
         self._expect(config.allow_public_exchange_info_fetch, issues, "allow_public_exchange_info_fetch", "public exchangeInfo fetch must be available for filter validation.")
         self._expect(config.allow_local_order_test_preview, issues, "allow_local_order_test_preview", "local order-test preview must be allowed.")
         self._expect(config.allow_explicit_test_order_request, issues, "allow_explicit_test_order_request", "explicit test-order request must be allowed.")
+        self._expect(config.require_market_reference_price, issues, "require_market_reference_price", "MARKET orders must require Mark Price reference.")
+        self._expect(not config.allow_zero_market_reference_price, issues, "allow_zero_market_reference_price", "zero Mark Price must not be allowed.")
+        self._expect(not config.allow_unknown_market_notional, issues, "allow_unknown_market_notional", "unknown MARKET notional must not be allowed.")
+        self._expect(not config.allow_unvalidated_exchange_filters_for_transmission, issues, "allow_unvalidated_exchange_filters_for_transmission", "unvalidated filters must not be allowed for transmission.")
+        self._expect(config.require_exchange_filters_before_transmission, issues, "require_exchange_filters_before_transmission", "exchange filters must be required before transmission.")
         self._expect(config.allowed_order_types == ["MARKET", "LIMIT"], issues, "allowed_order_types", "Only MARKET and LIMIT order types may be used.")
         self._expect(config.allowed_sides == ["BUY", "SELL"], issues, "allowed_sides", "Only BUY and SELL sides may be used.")
         self._expect(config.default_time_in_force == "GTC", issues, "default_time_in_force", "default time-in-force must remain GTC.")

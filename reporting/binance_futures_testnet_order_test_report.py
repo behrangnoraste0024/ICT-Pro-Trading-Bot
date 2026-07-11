@@ -90,8 +90,16 @@ def format_binance_futures_testnet_order_test_result(result: BinanceFuturesTestn
                 f"Price                     : {result.preview.price}",
                 f"Time In Force             : {result.preview.time_in_force}",
                 f"Reduce Only               : {_fmt_bool(result.preview.reduce_only)}",
-                f"Estimated Notional        : {result.preview.estimated_notional}",
+                f"Reference Price           : {result.preview.reference_price}",
+                f"Reference Price Source    : {result.preview.reference_price_source}",
+                f"Estimated Notional        : {_fmt_notional(result.preview.estimated_notional)}",
+                f"Configured Max Notional   : {_fmt_bool(result.preview.configured_max_notional_valid)}",
+                f"Exchange Min Notional     : {_fmt_bool(result.preview.exchange_min_notional_valid)}",
+                f"Notional Validation       : {result.preview.notional_validation_status}",
+                f"Exchange Filter Validation: {result.preview.exchange_filter_validation_status}",
                 f"Exchange Filters Valid    : {_fmt_bool(result.preview.exchange_filters_valid)}",
+                f"Local Rules Valid         : {_fmt_bool(result.preview.local_rules_valid)}",
+                f"Transmission Ready        : {_fmt_bool(result.preview.transmission_ready)}",
                 f"Executable                : {_fmt_bool(result.preview.executable)}",
                 f"Actual Order Endpoint     : {_fmt_bool(result.preview.actual_order_endpoint_used)}",
                 f"Matching Engine Submission: {_fmt_bool(result.preview.matching_engine_submission)}",
@@ -177,3 +185,9 @@ def _fmt_bool(value) -> str:
     if value is None:
         return "None"
     return str(bool(value)).lower()
+
+
+def _fmt_notional(value) -> str:
+    if value is None:
+        return "NOT_EVALUATED"
+    return str(value)
