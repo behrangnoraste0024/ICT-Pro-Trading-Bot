@@ -101,6 +101,7 @@ def _ready_files(root: Path) -> None:
     _write_json(root / "configs" / "btc_paper_account.json", _paper_account_config())
     _write_json(root / "configs" / "btc_futures_read_only_feed.json", _futures_read_only_feed_config())
     _write_json(root / "configs" / "btc_futures_risk_model.json", _futures_risk_model_config())
+    _write_json(root / "configs" / "btc_futures_paper_position.json", _futures_paper_position_config())
     trade_plan = root / "engine" / "trade_plan" / "trade_plan_engine.py"
     trade_plan.parent.mkdir(parents=True, exist_ok=True)
     trade_plan.write_text("class TradePlanEngine: pass\n", encoding="utf-8")
@@ -598,6 +599,98 @@ def _futures_risk_model_config(**overrides) -> dict:
     return values
 
 
+def _futures_paper_position_config(**overrides) -> dict:
+    values = {
+        "schema_version": "1.0",
+        "project_scope": "BTC_ONLY",
+        "symbol": "BTC/USDT",
+        "exchange_symbol": "BTCUSDT",
+        "exchange": "binance",
+        "market_type": "futures",
+        "futures_contract_type": "USDT_PERPETUAL",
+        "strategy_profile": "balanced_smc_decision_065",
+        "runtime_config_path": "configs/btc_paper_runtime.json",
+        "monitoring_config_path": "configs/btc_paper_monitoring.json",
+        "runner_config_path": "configs/btc_paper_runner.json",
+        "futures_read_only_feed_config_path": "configs/btc_futures_read_only_feed.json",
+        "futures_risk_model_config_path": "configs/btc_futures_risk_model.json",
+        "spot_paper_account_config_path": "configs/btc_paper_account.json",
+        "position_simulation_enabled": False,
+        "simulation_only": True,
+        "dry_run_only": True,
+        "margin_mode": "isolated",
+        "position_mode": "one_way",
+        "max_open_positions": 1,
+        "allowed_leverage": [1, 2, 3, 5],
+        "default_leverage": 2,
+        "max_leverage": 5,
+        "initial_account_balance": 10000.0,
+        "account_currency": "USDT",
+        "default_notional": 1000.0,
+        "min_notional": 10.0,
+        "max_notional_pct_of_equity": 100.0,
+        "max_initial_margin_pct_of_equity": 20.0,
+        "minimum_risk_reward": 1.5,
+        "max_daily_realized_loss_pct": 2.0,
+        "max_account_drawdown_pct": 5.0,
+        "max_trades_per_day": 3,
+        "taker_fee_rate": 0.0004,
+        "liquidation_fee_rate": 0.002,
+        "default_funding_periods": 1,
+        "require_risk_model_pass": True,
+        "require_stop_before_liquidation": True,
+        "require_stop_loss": True,
+        "require_take_profit": True,
+        "auto_close_on_stop_loss": True,
+        "auto_close_on_take_profit": True,
+        "auto_close_on_simulated_liquidation": True,
+        "liquidation_trigger_precedence": True,
+        "closed_position_retention_in_state": 0,
+        "allow_public_mark_price_fetch": True,
+        "allow_public_funding_fetch": True,
+        "allow_local_futures_state_write": True,
+        "allow_local_futures_ledger_write": True,
+        "allow_local_virtual_order_creation": True,
+        "allow_local_paper_futures_position_creation": True,
+        "allow_local_mark_to_market": True,
+        "allow_local_funding_application": True,
+        "allow_local_position_close": True,
+        "allow_local_simulated_liquidation": True,
+        "allow_local_futures_state_reset": True,
+        "allow_private_api": False,
+        "allow_api_key_usage": False,
+        "allow_trading_api": False,
+        "allow_account_data": False,
+        "allow_balance_fetch": False,
+        "allow_position_fetch": False,
+        "allow_real_order_submission": False,
+        "allow_order_cancellation": False,
+        "allow_real_position_creation": False,
+        "allow_exchange_paper_position_creation": False,
+        "allow_testnet_order_submission": False,
+        "allow_exchange_leverage_change": False,
+        "allow_exchange_margin_mode_change": False,
+        "allow_spot_paper_account_state_mutation": False,
+        "allow_runner_state_mutation": False,
+        "allow_execution_state_mutation": False,
+        "allow_exchange_state_mutation": False,
+        "require_runtime_config_pass": True,
+        "require_monitoring_config_pass": True,
+        "require_runner_config_pass": True,
+        "require_futures_feed_config_pass": True,
+        "require_futures_risk_model_config_pass": True,
+        "require_spot_paper_account_config_pass": True,
+        "require_kill_switch_enabled": True,
+        "state_path": "reports/futures_paper_position/state.json",
+        "ledger_path": "reports/futures_paper_position/ledger.jsonl",
+        "report_export_dir": "reports/futures_paper_position",
+        "lock_path": "reports/futures_paper_position/state.lock",
+        "state_lock_timeout_seconds": 1,
+    }
+    values.update(overrides)
+    return values
+
+
 def _report(root: Path, **kwargs):
     registry = kwargs.pop("registry", None)
     if registry is None:
@@ -847,6 +940,25 @@ def test_readiness_blocks_when_futures_risk_model_config_is_dangerous(tmp_path) 
 
     assert report.readiness_status == "BLOCKED"
     assert _check(report, "btc_futures_leverage_liquidation_risk_model").status == "FAIL"
+
+
+def test_readiness_reports_futures_paper_position_config_pass(tmp_path) -> None:
+    _ready_files(tmp_path)
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "READY"
+    assert _check(report, "btc_futures_local_paper_position_simulation").status == "PASS"
+
+
+def test_readiness_blocks_when_futures_paper_position_config_is_dangerous(tmp_path) -> None:
+    _ready_files(tmp_path)
+    _write_json(tmp_path / "configs" / "btc_futures_paper_position.json", _futures_paper_position_config(allow_private_api=True))
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "BLOCKED"
+    assert _check(report, "btc_futures_local_paper_position_simulation").status == "FAIL"
 
 
 def test_readiness_blocks_when_forward_test_config_is_dangerous(tmp_path) -> None:

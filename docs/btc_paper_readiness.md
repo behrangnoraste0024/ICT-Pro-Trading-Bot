@@ -301,4 +301,41 @@ py scripts/run_btc_futures_risk_model.py `
 py scripts/run_btc_paper_runner.py --analyze-futures-risk-dry-run
 ```
 
-This is a calculation layer only. It does not create real or paper futures positions, change exchange leverage, change margin mode, submit or cancel orders, use private APIs, fetch account data, mutate the paper account, or mutate runner/execution state. Funding is an estimate. Local paper futures position simulation is intentionally deferred to a later release.
+This is a calculation layer only. It does not create real or paper futures positions, change exchange leverage, change margin mode, submit or cancel orders, use private APIs, fetch account data, mutate the paper account, or mutate runner/execution state. Funding is an estimate.
+
+# BTC Futures Local Paper Position Simulation
+
+Release 2.76 adds a local-only BTCUSDT futures paper position simulator. A paper futures position is a local JSON state file, a local virtual position object, and an append-only local JSONL ledger. It is separate from the Release 2.73 spot paper account and does not mutate the spot paper account.
+
+The simulator does not use API keys, private APIs, exchange account data, exchange balances, exchange positions, exchange leverage changes, exchange margin-mode changes, real orders, testnet orders, external paper positions, runner state mutation, or execution state mutation. Local state and ledger writes happen only through explicit CLI actions. Liquidation remains approximate and conservative through the Release 2.75 model. Live mark/funding updates use public read-only futures data only and fail safely without local mutation on fetch failure.
+
+Commands:
+
+```powershell
+py scripts/run_btc_futures_paper_position.py
+py scripts/run_btc_futures_paper_position.py --json
+py scripts/run_btc_futures_paper_position.py --strict
+py scripts/run_btc_futures_paper_position.py --status
+py scripts/run_btc_futures_paper_position.py --initialize
+
+py scripts/run_btc_futures_paper_position.py `
+  --open-position `
+  --side LONG `
+  --entry-price 64000 `
+  --mark-price 64000 `
+  --stop-loss 62000 `
+  --take-profit 67000 `
+  --notional 1000 `
+  --leverage 3 `
+  --action-id open-001
+
+py scripts/run_btc_futures_paper_position.py --mark-to-market --mark-price 65000 --action-id mark-001
+py scripts/run_btc_futures_paper_position.py --apply-funding --funding-rate 0.0001 --funding-periods 1 --action-id funding-001
+py scripts/run_btc_futures_paper_position.py --close-position --close-price 66000 --close-reason MANUAL --action-id close-001
+py scripts/run_btc_futures_paper_position.py --ledger-summary
+py scripts/run_btc_futures_paper_position.py --reset --force
+py scripts/run_btc_futures_paper_position.py --simulate-lifecycle
+py scripts/run_btc_paper_runner.py --simulate-futures-paper-position-lifecycle-dry-run
+```
+
+The runner integration is in-memory only and does not persist futures state or ledger entries. A future release may introduce a disabled-by-default Binance Futures Testnet adapter, but Release 2.76 does not.

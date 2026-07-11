@@ -575,4 +575,30 @@ py scripts/run_btc_paper_runner.py --analyze-futures-risk-dry-run
 
 Results are `APPROXIMATE_CONSERVATIVE` estimates only, not exact Binance liquidation prices. The model does not include exchange maintenance margin tiers, cross-margin collateral, private leverage bracket data, ADL, liquidation fee schedules, or portfolio margin.
 
-This release does not create real or paper futures positions, change exchange leverage, change margin mode, submit orders, cancel orders, use private APIs, fetch account/balance/position data, mutate the local paper account, or mutate runner/execution state. Funding is diagnostic only. Local paper futures position simulation is deferred to a later release.
+This release does not create real or paper futures positions, change exchange leverage, change margin mode, submit orders, cancel orders, use private APIs, fetch account/balance/position data, mutate the local paper account, or mutate runner/execution state. Funding is diagnostic only.
+
+# BTC Futures Local Paper Position Simulation
+
+Release 2.76 adds a local-only BTCUSDT futures paper position simulator for explicit operator dry-run actions. It stores only local JSON state and append-only JSONL ledger entries under `reports/futures_paper_position`, and those generated files are ignored by Git.
+
+It is separate from the spot local paper account. It does not mutate the spot paper account, runner state, execution state, or any exchange state. It does not use API keys, private APIs, account endpoints, balance endpoints, position endpoints, order endpoints, leverage-setting endpoints, margin-mode endpoints, real orders, testnet orders, or external paper positions.
+
+Useful commands:
+
+```powershell
+py scripts/run_btc_futures_paper_position.py
+py scripts/run_btc_futures_paper_position.py --json
+py scripts/run_btc_futures_paper_position.py --strict
+py scripts/run_btc_futures_paper_position.py --status
+py scripts/run_btc_futures_paper_position.py --initialize
+py scripts/run_btc_futures_paper_position.py --open-position --side LONG --entry-price 64000 --mark-price 64000 --stop-loss 62000 --take-profit 67000 --notional 1000 --leverage 3 --action-id open-001
+py scripts/run_btc_futures_paper_position.py --mark-to-market --mark-price 65000 --action-id mark-001
+py scripts/run_btc_futures_paper_position.py --apply-funding --funding-rate 0.0001 --funding-periods 1 --action-id funding-001
+py scripts/run_btc_futures_paper_position.py --close-position --close-price 66000 --close-reason MANUAL --action-id close-001
+py scripts/run_btc_futures_paper_position.py --ledger-summary
+py scripts/run_btc_futures_paper_position.py --reset --force
+py scripts/run_btc_futures_paper_position.py --simulate-lifecycle
+py scripts/run_btc_paper_runner.py --simulate-futures-paper-position-lifecycle-dry-run
+```
+
+Approximate liquidation monitoring is conservative and uses the Release 2.75 model. Live mark/funding actions use public read-only futures data only; network failures fail safely without state mutation. The runner lifecycle action is in-memory only. A disabled-by-default Binance Futures Testnet adapter may come later, but it is not part of Release 2.76.

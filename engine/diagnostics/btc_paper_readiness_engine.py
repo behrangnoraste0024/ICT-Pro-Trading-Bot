@@ -17,6 +17,7 @@ from engine.diagnostics.btc_paper_candidate_journal_engine import BTCPaperCandid
 from engine.diagnostics.btc_paper_trade_candidate_engine import BTCPaperTradeCandidateEngine
 from engine.diagnostics.btc_forward_test_loop_engine import BTCForwardTestLoopEngine
 from engine.diagnostics.btc_futures_read_only_feed_engine import BTCFuturesReadOnlyFeedEngine
+from engine.diagnostics.btc_futures_paper_position_engine import BTCFuturesPaperPositionEngine
 from engine.diagnostics.btc_futures_risk_model_engine import BTCFuturesRiskModelEngine
 from engine.diagnostics.btc_live_market_feed_engine import BTCLiveMarketFeedEngine
 from engine.diagnostics.btc_paper_account_engine import BTCPaperAccountEngine
@@ -40,6 +41,7 @@ class BTCPaperReadinessEngine:
         paper_account_engine: BTCPaperAccountEngine | None = None,
         futures_read_only_feed_engine: BTCFuturesReadOnlyFeedEngine | None = None,
         futures_risk_model_engine: BTCFuturesRiskModelEngine | None = None,
+        futures_paper_position_engine: BTCFuturesPaperPositionEngine | None = None,
         gate_runner: Callable[..., int] | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
@@ -57,6 +59,7 @@ class BTCPaperReadinessEngine:
         self.paper_account_engine = paper_account_engine or BTCPaperAccountEngine(repo_root=self.repo_root)
         self.futures_read_only_feed_engine = futures_read_only_feed_engine or BTCFuturesReadOnlyFeedEngine(repo_root=self.repo_root)
         self.futures_risk_model_engine = futures_risk_model_engine or BTCFuturesRiskModelEngine(repo_root=self.repo_root)
+        self.futures_paper_position_engine = futures_paper_position_engine or BTCFuturesPaperPositionEngine(repo_root=self.repo_root)
         self.gate_runner = gate_runner
         self.env = os.environ if env is None else env
 
@@ -132,6 +135,7 @@ class BTCPaperReadinessEngine:
         checks.append(self._paper_account_readiness_check())
         checks.append(self._futures_read_only_feed_readiness_check())
         checks.append(self._futures_risk_model_readiness_check())
+        checks.append(self._futures_paper_position_readiness_check())
         checks.append(self._cache_diagnostics_check(snapshot))
         if run_gate:
             checks.append(self._gate_check(use_cache=use_cache, cache_dir=cache_dir))
@@ -702,6 +706,49 @@ class BTCPaperReadinessEngine:
             "FAIL",
             "REQUIRED",
             "BTC futures leverage/liquidation risk model config failed safety validation.",
+            details,
+        )
+
+    def _futures_paper_position_readiness_check(self) -> BTCPaperReadinessCheck:
+        config_path = self.repo_root / "configs" / "btc_futures_paper_position.json"
+        if not config_path.exists():
+            return self._check(
+                "btc_futures_local_paper_position_simulation",
+                "WARNING",
+                "INFO",
+                "BTC futures local paper position simulation config is not present yet.",
+                {"futures_paper_position_config": str(config_path)},
+            )
+        report = self.futures_paper_position_engine.validate(str(config_path))
+        details = {
+            "futures_paper_position_config": str(config_path),
+            "validation_status": report.status,
+            "issue_count": report.issue_count,
+            "warning_count": report.warning_count,
+            "fail_count": report.fail_count,
+            "issues": [issue.to_dict() for issue in report.issues],
+        }
+        if report.status == "PASS":
+            return self._check(
+                "btc_futures_local_paper_position_simulation",
+                "PASS",
+                "INFO",
+                "BTC futures local paper position simulation config is present and safe.",
+                details,
+            )
+        if report.status == "WARNING":
+            return self._check(
+                "btc_futures_local_paper_position_simulation",
+                "WARNING",
+                "INFO",
+                "BTC futures local paper position simulation config has warnings.",
+                details,
+            )
+        return self._check(
+            "btc_futures_local_paper_position_simulation",
+            "FAIL",
+            "REQUIRED",
+            "BTC futures local paper position simulation config failed safety validation.",
             details,
         )
 
