@@ -625,3 +625,36 @@ py scripts/run_btc_paper_runner.py --validate-binance-futures-testnet-adapter-dr
 Public ping, server-time, and exchange-info diagnostics are credential-free. Credential checks are explicit and inspect only the dedicated testnet environment variables, returning presence and length metadata without logging or persisting secrets. Signing previews are local-only and redacted; signed requests are not transmitted. Order intents are non-executable and do not sign, transmit, reserve margin, create local positions, or mutate Release 2.76 state.
 
 No testnet orders are submitted or cancelled. No authenticated account, balance, or position data is fetched. No leverage or margin mode is changed. No user-data stream or WebSocket is opened. Release 2.76 local futures paper state, the spot paper account, runner state, execution state, and exchange state remain untouched. A future release may add separately gated authenticated testnet read-only access.
+
+# Binance Futures Testnet Authenticated Read-Only Account Snapshot
+
+Release 2.78 adds explicitly confirmed authenticated read-only Binance USD-M Futures Testnet account diagnostics. This is a diagnostics layer only and does not activate paper execution, live trading, order submission, runner activity, monitoring polling, or exchange mutation.
+
+Commands:
+
+```powershell
+py scripts/run_binance_futures_testnet_read_only.py
+py scripts/run_binance_futures_testnet_read_only.py --json
+py scripts/run_binance_futures_testnet_read_only.py --strict
+py scripts/run_binance_futures_testnet_read_only.py --check-credentials
+
+py scripts/run_binance_futures_testnet_read_only.py --fetch-account --confirm-testnet-read-only CONFIRM_TESTNET_READ_ONLY
+py scripts/run_binance_futures_testnet_read_only.py --fetch-balance --asset USDT --confirm-testnet-read-only CONFIRM_TESTNET_READ_ONLY
+py scripts/run_binance_futures_testnet_read_only.py --fetch-position-risk --symbol BTCUSDT --confirm-testnet-read-only CONFIRM_TESTNET_READ_ONLY
+py scripts/run_binance_futures_testnet_read_only.py --fetch-account-snapshot --confirm-testnet-read-only CONFIRM_TESTNET_READ_ONLY
+
+py scripts/run_btc_paper_runner.py --validate-binance-futures-testnet-read-only-dry-run
+```
+
+Operational rules:
+
+- authenticated transport is GET only
+- the only host is `https://demo-fapi.binance.com`
+- the only authenticated paths are `/fapi/v3/account`, `/fapi/v3/balance`, and `/fapi/v3/positionRisk`
+- BTCUSDT is the only position-risk symbol
+- the confirmation phrase `CONFIRM_TESTNET_READ_ONLY` is required for authenticated reads
+- credentials must come from `BINANCE_FUTURES_TESTNET_API_KEY` and `BINANCE_FUTURES_TESTNET_API_SECRET`
+- the API secret is never transmitted
+- raw authenticated responses, signed URLs, signatures, and authenticated headers are not printed or persisted
+- readiness and runner validation do not inspect credentials and do not use network
+- no orders, test orders, cancellation, order/trade history, leverage changes, margin changes, position changes, listen keys, user streams, WebSockets, production endpoints, or state mutation are permitted in Release 2.78.

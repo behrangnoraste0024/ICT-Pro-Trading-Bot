@@ -91,3 +91,7 @@ reports/binance_futures_testnet_adapter/*.json
 reports/binance_futures_testnet_adapter/*.jsonl
 reports/binance_futures_testnet_adapter/*.md
 reports/binance_futures_testnet_adapter/*.tmp
+reports/binance_futures_testnet_read_only/*.json
+reports/binance_futures_testnet_read_only/*.jsonl
+reports/binance_futures_testnet_read_only/*.md
+reports/binance_futures_testnet_read_only/*.tmp
