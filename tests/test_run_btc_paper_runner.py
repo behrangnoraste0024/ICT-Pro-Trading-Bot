@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from models.binance_futures_testnet_adapter import BinanceFuturesTestnetAdapterResult
+from models.binance_futures_testnet_read_only import BinanceFuturesTestnetReadOnlyResult
 from models.btc_live_market_feed import BTCLiveMarketObservationResult
 from models.btc_futures_read_only_feed import (
     BTCFuturesReadOnlyFeedStatus,
@@ -137,6 +138,28 @@ class _FakeBinanceFuturesTestnetAdapterEngine:
             testnet_order_submitted=False,
             futures_paper_state_mutated=False,
             spot_paper_account_state_mutated=False,
+            runner_state_mutated=False,
+            execution_state_mutated=False,
+            exchange_state_mutated=False,
+        )
+
+
+class _FakeBinanceFuturesTestnetReadOnlyEngine:
+    def __init__(self, repo_root=None, env=None) -> None:
+        self.repo_root = repo_root
+        self.env = env
+
+    def runner_validate(self, **kwargs) -> BinanceFuturesTestnetReadOnlyResult:
+        return BinanceFuturesTestnetReadOnlyResult(
+            action="RUNNER_VALIDATE",
+            status="PASS",
+            decision="CONFIG_VALID",
+            reason="Fake read-only validation completed.",
+            credentials_inspected=False,
+            authenticated_transport_invoked=False,
+            request_transmitted=False,
+            order_submitted=False,
+            futures_paper_state_mutated=False,
             runner_state_mutated=False,
             execution_state_mutated=False,
             exchange_state_mutated=False,
@@ -394,4 +417,26 @@ def test_validate_binance_futures_testnet_adapter_dry_run_does_not_mutate_runner
     assert "BINANCE FUTURES TESTNET ADAPTER DIAGNOSTIC" in captured.out
     assert "Runner is not running; Binance futures testnet adapter validation executed as standalone disabled dry-run diagnostic." in captured.out
     assert "Testnet Order Submitted      : false" in captured.out
+    assert "Futures Paper State Mutated  : false" in captured.out
+
+
+def test_validate_binance_futures_testnet_read_only_dry_run_does_not_mutate_runner_state(tmp_path, capsys, monkeypatch) -> None:
+    _write_configs(tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "ROOT_DIR", tmp_path)
+    monkeypatch.setattr(run_btc_paper_runner, "BinanceFuturesTestnetReadOnlyEngine", _FakeBinanceFuturesTestnetReadOnlyEngine)
+    state_path = tmp_path / "reports" / "paper_runner" / "state.json"
+    run_btc_paper_runner.main(["--initialize", "--state-file", "reports/paper_runner/state.json"])
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+
+    code = run_btc_paper_runner.main(["--validate-binance-futures-testnet-read-only-dry-run", "--state-file", "reports/paper_runner/state.json"])
+
+    captured = capsys.readouterr()
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert before == after
+    assert "BINANCE FUTURES TESTNET READ-ONLY DIAGNOSTIC" in captured.out
+    assert "Runner is not running; Binance futures testnet read-only validation executed as standalone explicit-only dry-run diagnostic." in captured.out
+    assert "Credentials Inspected        : false" in captured.out
+    assert "Authenticated Transport      : false" in captured.out
+    assert "Order Submitted              : false" in captured.out
     assert "Futures Paper State Mutated  : false" in captured.out

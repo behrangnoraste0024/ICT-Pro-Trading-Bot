@@ -103,6 +103,7 @@ def _ready_files(root: Path) -> None:
     _write_json(root / "configs" / "btc_futures_risk_model.json", _futures_risk_model_config())
     _write_json(root / "configs" / "btc_futures_paper_position.json", _futures_paper_position_config())
     _write_json(root / "configs" / "binance_futures_testnet_adapter.json", _binance_futures_testnet_adapter_config())
+    _write_json(root / "configs" / "binance_futures_testnet_read_only.json", _binance_futures_testnet_read_only_config())
     trade_plan = root / "engine" / "trade_plan" / "trade_plan_engine.py"
     trade_plan.parent.mkdir(parents=True, exist_ok=True)
     trade_plan.write_text("class TradePlanEngine: pass\n", encoding="utf-8")
@@ -768,6 +769,105 @@ def _binance_futures_testnet_adapter_config(**overrides) -> dict:
     return values
 
 
+def _binance_futures_testnet_read_only_config(**overrides) -> dict:
+    values = {
+        "schema_version": "1.0",
+        "project_scope": "BTC_ONLY",
+        "symbol": "BTC/USDT",
+        "exchange_symbol": "BTCUSDT",
+        "exchange": "binance",
+        "market_type": "futures",
+        "futures_contract_type": "USDT_PERPETUAL",
+        "strategy_profile": "balanced_smc_decision_065",
+        "runtime_config_path": "configs/btc_paper_runtime.json",
+        "monitoring_config_path": "configs/btc_paper_monitoring.json",
+        "runner_config_path": "configs/btc_paper_runner.json",
+        "testnet_adapter_config_path": "configs/binance_futures_testnet_adapter.json",
+        "futures_read_only_feed_config_path": "configs/btc_futures_read_only_feed.json",
+        "futures_risk_model_config_path": "configs/btc_futures_risk_model.json",
+        "futures_paper_position_config_path": "configs/btc_futures_paper_position.json",
+        "feature_enabled": False,
+        "automatic_execution_enabled": False,
+        "explicit_cli_only": True,
+        "authenticated_read_only_available": True,
+        "dry_run_trading_only": True,
+        "testnet_only": True,
+        "rest_base_url": "https://demo-fapi.binance.com",
+        "allowed_hosts": ["demo-fapi.binance.com"],
+        "api_key_env_var": "BINANCE_FUTURES_TESTNET_API_KEY",
+        "api_secret_env_var": "BINANCE_FUTURES_TESTNET_API_SECRET",
+        "credential_source": "environment",
+        "allowed_http_methods": ["GET"],
+        "allowed_authenticated_paths": ["/fapi/v3/account", "/fapi/v3/balance", "/fapi/v3/positionRisk"],
+        "account_path": "/fapi/v3/account",
+        "balance_path": "/fapi/v3/balance",
+        "position_risk_path": "/fapi/v3/positionRisk",
+        "server_time_path": "/fapi/v1/time",
+        "require_explicit_network_confirmation": True,
+        "network_confirmation_phrase": "CONFIRM_TESTNET_READ_ONLY",
+        "request_timeout_seconds": 10,
+        "max_authenticated_fetch_retries": 0,
+        "recv_window_ms": 5000,
+        "maximum_recv_window_ms": 10000,
+        "maximum_clock_skew_ms": 5000,
+        "allow_public_server_time_fetch": True,
+        "allow_explicit_authenticated_account_read": True,
+        "allow_explicit_authenticated_balance_read": True,
+        "allow_explicit_authenticated_position_read": True,
+        "allow_explicit_combined_account_snapshot": True,
+        "allow_automatic_authenticated_requests": False,
+        "allow_background_authenticated_polling": False,
+        "allow_runner_authenticated_requests": False,
+        "allow_monitoring_authenticated_requests": False,
+        "allow_order_query": False,
+        "allow_trade_query": False,
+        "allow_income_query": False,
+        "allow_open_order_query": False,
+        "allow_testnet_order_submission": False,
+        "allow_testnet_order_test_submission": False,
+        "allow_testnet_order_cancellation": False,
+        "allow_testnet_order_modification": False,
+        "allow_testnet_position_creation": False,
+        "allow_testnet_position_close": False,
+        "allow_testnet_leverage_change": False,
+        "allow_testnet_margin_mode_change": False,
+        "allow_testnet_position_mode_change": False,
+        "allow_testnet_multi_assets_mode_change": False,
+        "allow_testnet_position_margin_change": False,
+        "allow_user_data_stream": False,
+        "allow_listen_key": False,
+        "allow_websocket_connection": False,
+        "allow_production_endpoint": False,
+        "allow_production_credentials": False,
+        "allow_real_funds": False,
+        "allow_raw_authenticated_response_print": False,
+        "allow_raw_authenticated_response_persistence": False,
+        "allow_authenticated_header_logging": False,
+        "allow_signature_logging": False,
+        "allow_signed_url_logging": False,
+        "allow_futures_paper_state_mutation": False,
+        "allow_spot_paper_account_state_mutation": False,
+        "allow_runner_state_mutation": False,
+        "allow_execution_state_mutation": False,
+        "allow_exchange_state_mutation": False,
+        "require_runtime_config_pass": True,
+        "require_monitoring_config_pass": True,
+        "require_runner_config_pass": True,
+        "require_testnet_adapter_config_pass": True,
+        "require_futures_feed_config_pass": True,
+        "require_futures_risk_model_config_pass": True,
+        "require_futures_paper_position_config_pass": True,
+        "require_kill_switch_enabled": True,
+        "balance_asset_filter": "USDT",
+        "position_symbol_filter": "BTCUSDT",
+        "include_zero_balance_asset": True,
+        "include_zero_position": True,
+        "report_export_dir": "reports/binance_futures_testnet_read_only",
+    }
+    values.update(overrides)
+    return values
+
+
 def _report(root: Path, **kwargs):
     registry = kwargs.pop("registry", None)
     if registry is None:
@@ -806,6 +906,7 @@ def test_ready_when_btc_samples_baseline_and_placeholders_exist(tmp_path) -> Non
     assert _check(report, "btc_local_paper_account_simulation").status == "PASS"
     assert _check(report, "btc_futures_read_only_market_feed").status == "PASS"
     assert _check(report, "btc_futures_leverage_liquidation_risk_model").status == "PASS"
+    assert _check(report, "binance_futures_testnet_authenticated_read_only").status == "PASS"
 
 
 def test_missing_btc_15m_required_sample_blocks(tmp_path) -> None:
@@ -1048,6 +1149,37 @@ def test_readiness_blocks_when_binance_futures_testnet_adapter_config_is_dangero
 
     assert report.readiness_status == "BLOCKED"
     assert _check(report, "binance_futures_testnet_adapter_disabled").status == "FAIL"
+
+
+def test_readiness_reports_binance_futures_testnet_read_only_config_pass(tmp_path) -> None:
+    _ready_files(tmp_path)
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "READY"
+    assert _check(report, "binance_futures_testnet_authenticated_read_only").status == "PASS"
+
+
+def test_readiness_blocks_when_binance_futures_testnet_read_only_config_is_dangerous(tmp_path) -> None:
+    _ready_files(tmp_path)
+    _write_json(
+        tmp_path / "configs" / "binance_futures_testnet_read_only.json",
+        _binance_futures_testnet_read_only_config(allow_testnet_order_submission=True),
+    )
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "BLOCKED"
+    assert _check(report, "binance_futures_testnet_authenticated_read_only").status == "FAIL"
+
+
+def test_missing_credentials_do_not_block_readiness(tmp_path) -> None:
+    _ready_files(tmp_path)
+
+    report = _report(tmp_path, env={})
+
+    assert report.readiness_status == "READY"
+    assert _check(report, "binance_futures_testnet_authenticated_read_only").status == "PASS"
 
 
 def test_readiness_blocks_when_futures_paper_position_config_is_dangerous(tmp_path) -> None:
