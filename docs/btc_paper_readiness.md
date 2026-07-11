@@ -255,3 +255,50 @@ py scripts/run_btc_paper_runner.py --observe-futures-read-only-dry-run
 ```
 
 This uses public futures market data only. Network failures should fail safely and do not indicate trading risk. Futures leverage and liquidation modeling are intentionally not modeled yet and remain later-release work. Generated futures-feed reports stay local under `reports/futures_read_only_feed` and are ignored by Git.
+
+# BTC Futures Leverage + Liquidation Risk Model
+
+Release 2.75 adds approximate conservative BTCUSDT USDT-margined perpetual futures risk diagnostics. It calculates hypothetical isolated-margin leverage, margin, liquidation distance, stop-loss safety, and funding estimates locally. It is not an exact Binance liquidation price and does not model exchange maintenance margin tiers, cross margin, leverage brackets, ADL, liquidation fees, or portfolio margin.
+
+Commands:
+
+```powershell
+py scripts/run_btc_futures_risk_model.py
+py scripts/run_btc_futures_risk_model.py --json
+py scripts/run_btc_futures_risk_model.py --strict
+
+py scripts/run_btc_futures_risk_model.py `
+  --analyze-scenario `
+  --side LONG `
+  --entry-price 64000 `
+  --mark-price 63800 `
+  --stop-loss 62000 `
+  --take-profit 67000 `
+  --notional 1000 `
+  --account-equity 10000 `
+  --leverage 3 `
+  --funding-rate 0.0001
+
+py scripts/run_btc_futures_risk_model.py `
+  --analyze-live `
+  --side LONG `
+  --stop-loss 62000 `
+  --take-profit 67000 `
+  --notional 1000 `
+  --account-equity 10000 `
+  --leverage 3
+
+py scripts/run_btc_futures_risk_model.py `
+  --compare-leverage `
+  --side LONG `
+  --entry-price 64000 `
+  --mark-price 63800 `
+  --stop-loss 62000 `
+  --take-profit 67000 `
+  --notional 1000 `
+  --account-equity 10000
+
+py scripts/run_btc_paper_runner.py --analyze-futures-risk-dry-run
+```
+
+This is a calculation layer only. It does not create real or paper futures positions, change exchange leverage, change margin mode, submit or cancel orders, use private APIs, fetch account data, mutate the paper account, or mutate runner/execution state. Funding is an estimate. Local paper futures position simulation is intentionally deferred to a later release.

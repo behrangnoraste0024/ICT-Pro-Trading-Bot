@@ -529,3 +529,50 @@ py scripts/run_btc_paper_runner.py --observe-futures-read-only-dry-run
 This uses public futures market data only. It does not use API keys, private futures endpoints, account/balance/position data, order submission, order cancellation, real futures positions, paper futures positions, leverage, leverage simulation, liquidation modeling, executable trades, or runner state mutation.
 
 If public network access is unavailable, fetch and observe commands fail safely with private API usage, API key usage, trading API usage, account data, balance fetch, position fetch, order submission, real position creation, paper position creation, leverage, liquidation modeling, trading connection, runner mutation, and execution mutation all reported as `false`. Generated futures-feed reports stay local under `reports/futures_read_only_feed`.
+
+# BTC Futures Leverage + Liquidation Risk Model
+
+Use these commands to validate or run local hypothetical BTCUSDT futures risk diagnostics:
+
+```powershell
+py scripts/run_btc_futures_risk_model.py
+py scripts/run_btc_futures_risk_model.py --json
+py scripts/run_btc_futures_risk_model.py --strict
+
+py scripts/run_btc_futures_risk_model.py `
+  --analyze-scenario `
+  --side LONG `
+  --entry-price 64000 `
+  --mark-price 63800 `
+  --stop-loss 62000 `
+  --take-profit 67000 `
+  --notional 1000 `
+  --account-equity 10000 `
+  --leverage 3 `
+  --funding-rate 0.0001
+
+py scripts/run_btc_futures_risk_model.py `
+  --analyze-live `
+  --side LONG `
+  --stop-loss 62000 `
+  --take-profit 67000 `
+  --notional 1000 `
+  --account-equity 10000 `
+  --leverage 3
+
+py scripts/run_btc_futures_risk_model.py `
+  --compare-leverage `
+  --side LONG `
+  --entry-price 64000 `
+  --mark-price 63800 `
+  --stop-loss 62000 `
+  --take-profit 67000 `
+  --notional 1000 `
+  --account-equity 10000
+
+py scripts/run_btc_paper_runner.py --analyze-futures-risk-dry-run
+```
+
+Results are `APPROXIMATE_CONSERVATIVE` estimates only, not exact Binance liquidation prices. The model does not include exchange maintenance margin tiers, cross-margin collateral, private leverage bracket data, ADL, liquidation fee schedules, or portfolio margin.
+
+This release does not create real or paper futures positions, change exchange leverage, change margin mode, submit orders, cancel orders, use private APIs, fetch account/balance/position data, mutate the local paper account, or mutate runner/execution state. Funding is diagnostic only. Local paper futures position simulation is deferred to a later release.

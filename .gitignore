@@ -77,3 +77,6 @@ reports/paper_account/*.jsonl
 reports/futures_read_only_feed/*.json
 reports/futures_read_only_feed/*.md
 reports/futures_read_only_feed/*.jsonl
+reports/futures_risk_model/*.json
+reports/futures_risk_model/*.md
+reports/futures_risk_model/*.jsonl
