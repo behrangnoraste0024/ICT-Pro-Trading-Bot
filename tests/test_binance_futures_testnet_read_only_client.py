@@ -95,7 +95,7 @@ def test_server_time_uses_public_get_without_credentials() -> None:
 
     assert result["server_time"] == 1000
     assert result["clock_skew_ms"] == 1
-    assert calls == [("https://demo-fapi.binance.com/fapi/v1/time", 10)]
+    assert calls == [("https://demo-fapi.binance.com/fapi/v1/time", 30)]
 
 
 def test_authenticated_account_get_is_signed_get_and_sanitized() -> None:

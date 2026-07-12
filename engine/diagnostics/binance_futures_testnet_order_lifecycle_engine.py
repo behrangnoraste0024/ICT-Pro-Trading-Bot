@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -146,12 +147,11 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             decision = LifecycleDecision.CREDENTIALS_INCOMPLETE.value if metadata.api_key_present or metadata.api_secret_present else LifecycleDecision.CREDENTIALS_NOT_CONFIGURED.value
             return self._result(config, LifecycleAction.RUN_LIFECYCLE.value, "WARNING", decision, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, lifecycle_id=lifecycle_id, client_order_id=client_order_id, credentials_inspected=True)
         lock_path = self._resolve(config.lifecycle_lock_path)
-        if lock_path.exists():
+        lock_token = self._lock_token("run_lifecycle", lifecycle_id, client_order_id)
+        lock_acquired = self._acquire_owned_lock(lock_path, lock_token)
+        if not lock_acquired:
             issues.append(self._issue("lifecycle_lock_exists", "FAIL", "An active lifecycle lock already exists."))
             return self._result(config, LifecycleAction.RUN_LIFECYCLE.value, "FAIL", LifecycleDecision.RECOVERY_REQUIRED.value, "Existing lifecycle lock blocks a new lifecycle.", credential_metadata=metadata, issues=issues, lifecycle_id=lifecycle_id, client_order_id=client_order_id, recovery_required=True)
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path.write_text(lifecycle_id, encoding="utf-8")
-        journal = BinanceFuturesTestnetLifecycleJournal(lifecycle_id=lifecycle_id, client_order_id=client_order_id)
         filters = None
         ticker = None
         preview = None
@@ -159,12 +159,16 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         create_meta = query_meta = cancel_meta = None
         create_started = False
         cancel_started = False
+        authenticated_precheck_started = False
+        journal = BinanceFuturesTestnetLifecycleJournal(lifecycle_id=lifecycle_id, client_order_id=client_order_id)
         try:
             self._ensure_no_unfinished_lifecycle(config, client_order_id)
+            self._write_journal(config, journal, LifecyclePhase.PRECHECK_STARTED.value, {"client_order_id": client_order_id})
             filters = client.fetch_exchange_filters()
             ticker = client.fetch_book_ticker()
             preview = client.build_lifecycle_preview(lifecycle_id, client_order_id, side, quantity, price_offset_bps, filters, ticker)
             self._server_time_or_issue(client, config, issues)
+            authenticated_precheck_started = True
             hedge_mode = client.fetch_position_mode()
             preview.position_mode_valid = not hedge_mode
             if hedge_mode:
@@ -201,19 +205,23 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             if exc.recovery:
                 journal.recovery_required = True
                 self._write_journal(config, journal, LifecyclePhase.RECOVERY_REQUIRED.value, {"reason": exc.reason})
+            else:
+                self._write_journal(config, journal, LifecyclePhase.FAILED.value, {"reason": exc.reason})
             return self._result(config, LifecycleAction.RUN_LIFECYCLE.value, "CRITICAL" if severity == "CRITICAL" else "FAIL", exc.decision, exc.reason, credential_metadata=metadata, book_ticker=ticker, exchange_filters=filters, preview=preview, create_request=create_meta, query_request=query_meta, cancel_request=cancel_meta, created_order=created, queried_order=queried, cancel_order=cancelled, final_order=final, journal=journal, issues=issues, lifecycle_id=lifecycle_id, client_order_id=client_order_id, phase=LifecyclePhase.RECOVERY_REQUIRED.value if exc.recovery else LifecyclePhase.FAILED.value, **self._lifecycle_flags(create_meta, query_meta, cancel_meta, recovery_required=exc.recovery, unexpected_fill_detected=severity == "CRITICAL"))
         except Exception as exc:
             message = self._sanitize(str(exc))
             unknown_transport = any(token in message.lower() for token in ("timeout", "timed out", "connection reset", "connection aborted"))
             recovery = (unknown_transport and (create_started or cancel_started)) or (create_meta is not None and final is None)
+            decision = LifecycleDecision.RECOVERY_REQUIRED.value if recovery else LifecycleDecision.ORDER_CREATE_REJECTED.value if create_started else LifecycleDecision.AUTHENTICATED_PRECHECK_FAILED.value if authenticated_precheck_started else LifecycleDecision.PUBLIC_PREFLIGHT_FAILED.value
             issues.append(self._issue("lifecycle_failed", "FAIL", message))
             if recovery:
                 journal.recovery_required = True
                 self._write_journal(config, journal, LifecyclePhase.RECOVERY_REQUIRED.value, {"reason": message})
-            return self._result(config, LifecycleAction.RUN_LIFECYCLE.value, "FAIL", LifecycleDecision.RECOVERY_REQUIRED.value if recovery else LifecycleDecision.ORDER_CREATE_REJECTED.value, "Lifecycle failed safely.", credential_metadata=metadata, book_ticker=ticker, exchange_filters=filters, preview=preview, create_request=create_meta, query_request=query_meta, cancel_request=cancel_meta, created_order=created, queried_order=queried, cancel_order=cancelled, final_order=final, journal=journal, issues=issues, lifecycle_id=lifecycle_id, client_order_id=client_order_id, phase=LifecyclePhase.RECOVERY_REQUIRED.value if recovery else LifecyclePhase.FAILED.value, **self._lifecycle_flags(create_meta, query_meta, cancel_meta, recovery_required=recovery))
+            else:
+                self._write_journal(config, journal, LifecyclePhase.FAILED.value, {"reason": message})
+            return self._result(config, LifecycleAction.RUN_LIFECYCLE.value, "FAIL", decision, "Lifecycle failed safely.", credential_metadata=metadata, book_ticker=ticker, exchange_filters=filters, preview=preview, create_request=create_meta, query_request=query_meta, cancel_request=cancel_meta, created_order=created, queried_order=queried, cancel_order=cancelled, final_order=final, journal=journal, issues=issues, lifecycle_id=lifecycle_id, client_order_id=client_order_id, phase=LifecyclePhase.RECOVERY_REQUIRED.value if recovery else LifecyclePhase.FAILED.value, **self._lifecycle_flags(create_meta, query_meta, cancel_meta, recovery_required=recovery))
         finally:
-            if lock_path.exists():
-                lock_path.unlink()
+            self._release_owned_lock(lock_path, lock_token, lock_acquired)
         return self._result(config, LifecycleAction.RUN_LIFECYCLE.value, "PASS", LifecycleDecision.LIFECYCLE_COMPLETE.value, "Lifecycle completed: one LIMIT GTX order was created, queried, cancelled or expired, final status verified, and zero position confirmed.", credential_metadata=metadata, book_ticker=ticker, exchange_filters=filters, preview=preview, create_request=create_meta, query_request=query_meta, cancel_request=cancel_meta, created_order=created, queried_order=queried, cancel_order=cancelled, final_order=final, journal=journal, issues=issues, lifecycle_id=lifecycle_id, client_order_id=client_order_id, phase=LifecyclePhase.COMPLETE.value, **self._lifecycle_flags(create_meta, query_meta, cancel_meta, lifecycle_complete=True))
 
     def query_order(self, client_order_id: str, confirmation: str | None = None, config_path: str = "configs/binance_futures_testnet_order_lifecycle.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetLifecycleResult:
@@ -230,7 +238,7 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             return self._result(config, LifecycleAction.QUERY_ORDER.value, "WARNING", LifecycleDecision.CREDENTIALS_NOT_CONFIGURED.value, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, client_order_id=client_order_id, credentials_inspected=True)
         self._server_time_or_issue(client, config, issues)
         order, meta = client.query_order(client_order_id)
-        return self._result(config, LifecycleAction.QUERY_ORDER.value, "PASS", LifecycleDecision.ORDER_QUERY_SUCCESS.value, "Exact lifecycle order query succeeded.", credential_metadata=metadata, final_order=order, query_request=meta, issues=issues, client_order_id=client_order_id, credentials_inspected=True, public_server_time_request_used=True, authenticated_transport_invoked=True, query_request_transmitted=True, signature_generated=True)
+        return self._result(config, LifecycleAction.QUERY_ORDER.value, "PASS", LifecycleDecision.ORDER_QUERY_SUCCESS.value, "Exact lifecycle order query succeeded.", credential_metadata=metadata, final_order=order, query_request=meta, issues=issues, client_order_id=client_order_id, phase=LifecyclePhase.QUERY_COMPLETE.value, credentials_inspected=True, public_server_time_request_used=True, authenticated_transport_invoked=True, query_request_transmitted=True, signature_generated=True)
 
     def recovery_cancel(self, client_order_id: str, confirmation: str | None = None, config_path: str = "configs/binance_futures_testnet_order_lifecycle.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetLifecycleResult:
         report = self.validate(config_path, expected_profile)
@@ -246,7 +254,62 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             return self._result(config, LifecycleAction.RECOVERY_CANCEL.value, "WARNING", LifecycleDecision.CREDENTIALS_NOT_CONFIGURED.value, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, client_order_id=client_order_id, credentials_inspected=True)
         self._server_time_or_issue(client, config, issues)
         order, meta = client.cancel_order_exact(client_order_id)
-        return self._result(config, LifecycleAction.RECOVERY_CANCEL.value, "PASS", LifecycleDecision.ORDER_CANCEL_SUCCESS.value, "Exact lifecycle order recovery cancellation succeeded.", credential_metadata=metadata, cancel_order=order, cancel_request=meta, issues=issues, client_order_id=client_order_id, credentials_inspected=True, public_server_time_request_used=True, authenticated_transport_invoked=True, cancel_request_transmitted=True, signature_generated=True, order_cancelled=True)
+        return self._result(config, LifecycleAction.RECOVERY_CANCEL.value, "PASS", LifecycleDecision.ORDER_CANCEL_SUCCESS.value, "Exact lifecycle order recovery cancellation succeeded.", credential_metadata=metadata, cancel_order=order, cancel_request=meta, issues=issues, client_order_id=client_order_id, phase=LifecyclePhase.RECOVERY_CANCEL_COMPLETE.value, credentials_inspected=True, public_server_time_request_used=True, authenticated_transport_invoked=True, cancel_request_transmitted=True, signature_generated=True, order_cancelled=True)
+
+    def recover_lifecycle(self, client_order_id: str, confirmation: str | None = None, config_path: str = "configs/binance_futures_testnet_order_lifecycle.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetLifecycleResult:
+        report = self.validate(config_path, expected_profile)
+        config = report.config or BinanceFuturesTestnetOrderLifecycleConfig()
+        issues = list(report.issues)
+        if report.status == "FAIL":
+            return self._result(config, LifecycleAction.RECOVER_LIFECYCLE.value, "FAIL", LifecycleDecision.OPERATION_BLOCKED.value, "Lifecycle config failed validation.", issues=issues, client_order_id=client_order_id)
+        if confirmation != config.recovery_confirmation_phrase:
+            return self._result(config, LifecycleAction.RECOVER_LIFECYCLE.value, "WARNING", LifecycleDecision.CONFIRMATION_REQUIRED.value, "Explicit exact recovery confirmation is required.", issues=issues, client_order_id=client_order_id)
+        client = self._client(config)
+        metadata = client.inspect_credentials()
+        if not metadata.credentials_complete:
+            return self._result(config, LifecycleAction.RECOVER_LIFECYCLE.value, "WARNING", LifecycleDecision.CREDENTIALS_NOT_CONFIGURED.value, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, client_order_id=client_order_id, credentials_inspected=True)
+        lock_path = self._resolve(config.lifecycle_lock_path)
+        lock_token = self._lock_token("recover_lifecycle", "", client_order_id)
+        lock_acquired = self._acquire_owned_lock(lock_path, lock_token)
+        if not lock_acquired:
+            issues.append(self._issue("lifecycle_lock_exists", "FAIL", "An active lifecycle lock already exists."))
+            return self._result(config, LifecycleAction.RECOVER_LIFECYCLE.value, "FAIL", LifecycleDecision.RECOVERY_REQUIRED.value, "Existing lifecycle lock blocks exact recovery.", credential_metadata=metadata, issues=issues, client_order_id=client_order_id, recovery_required=True)
+        journal = self._load_or_new_journal(config, client_order_id)
+        query_meta = cancel_meta = None
+        queried = cancelled = final = None
+        try:
+            self._write_journal(config, journal, LifecyclePhase.RECOVERY_REQUIRED.value, {"client_order_id": client_order_id, "recovery_started": True})
+            self._server_time_or_issue(client, config, issues)
+            queried, query_meta = client.query_order(client_order_id)
+            self._check_unexpected_fill(queried)
+            if queried.status == "NEW":
+                cancelled, cancel_meta = client.cancel_order_exact(client_order_id)
+                self._check_unexpected_fill(cancelled)
+            elif queried.status not in ("CANCELED", "EXPIRED", "REJECTED"):
+                raise LifecycleAbort(LifecycleDecision.ORDER_STATE_UNKNOWN.value, f"Unexpected recovery order status: {queried.status}", recovery=True)
+            final, query_meta = client.query_order(client_order_id)
+            self._check_unexpected_fill(final)
+            if final.status not in ("CANCELED", "EXPIRED", "REJECTED"):
+                raise LifecycleAbort(LifecycleDecision.ORDER_STATE_UNKNOWN.value, f"Unexpected final recovery status: {final.status}", recovery=True)
+            rows = client.fetch_position_risk()
+            client.require_zero_position(rows)
+            journal.recovery_required = False
+            self._write_journal(config, journal, LifecyclePhase.RECOVERY_COMPLETE.value, {"final_status": final.status})
+            return self._result(config, LifecycleAction.RECOVER_LIFECYCLE.value, "PASS", LifecycleDecision.RECOVERY_COMPLETE.value, "Exact lifecycle recovery completed.", credential_metadata=metadata, queried_order=queried, cancel_order=cancelled, final_order=final, query_request=query_meta, cancel_request=cancel_meta, journal=journal, issues=issues, client_order_id=client_order_id, phase=LifecyclePhase.RECOVERY_COMPLETE.value, **self._lifecycle_flags(None, query_meta, cancel_meta, lifecycle_complete=True))
+        except LifecycleAbort as exc:
+            severity = "CRITICAL" if exc.decision == LifecycleDecision.UNEXPECTED_FILL_DETECTED.value else "FAIL"
+            issues.append(self._issue(exc.decision.lower(), severity, exc.reason))
+            journal.recovery_required = True
+            self._write_journal(config, journal, LifecyclePhase.RECOVERY_REQUIRED.value, {"reason": exc.reason})
+            return self._result(config, LifecycleAction.RECOVER_LIFECYCLE.value, "CRITICAL" if severity == "CRITICAL" else "FAIL", exc.decision, exc.reason, credential_metadata=metadata, queried_order=queried, cancel_order=cancelled, final_order=final, query_request=query_meta, cancel_request=cancel_meta, journal=journal, issues=issues, client_order_id=client_order_id, phase=LifecyclePhase.RECOVERY_REQUIRED.value, **self._lifecycle_flags(None, query_meta, cancel_meta, recovery_required=True, unexpected_fill_detected=severity == "CRITICAL"))
+        except Exception as exc:
+            message = self._sanitize(str(exc))
+            issues.append(self._issue("recovery_failed", "FAIL", message))
+            journal.recovery_required = True
+            self._write_journal(config, journal, LifecyclePhase.RECOVERY_REQUIRED.value, {"reason": message})
+            return self._result(config, LifecycleAction.RECOVER_LIFECYCLE.value, "FAIL", LifecycleDecision.RECOVERY_REQUIRED.value, "Exact lifecycle recovery failed safely.", credential_metadata=metadata, queried_order=queried, cancel_order=cancelled, final_order=final, query_request=query_meta, cancel_request=cancel_meta, journal=journal, issues=issues, client_order_id=client_order_id, phase=LifecyclePhase.RECOVERY_REQUIRED.value, **self._lifecycle_flags(None, query_meta, cancel_meta, recovery_required=True))
+        finally:
+            self._release_owned_lock(lock_path, lock_token, lock_acquired)
 
     def runner_validate(self, config_path: str = "configs/binance_futures_testnet_order_lifecycle.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetLifecycleResult:
         report = self.validate(config_path, expected_profile)
@@ -307,6 +370,7 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         self._expect(config.lifecycle_confirmation_phrase == "CONFIRM_TESTNET_POST_ONLY_LIFECYCLE", issues, "lifecycle_confirmation_phrase", "lifecycle confirmation phrase is fixed.")
         self._expect(config.cancel_confirmation_phrase == "CONFIRM_TESTNET_CANCEL_ORDER", issues, "cancel_confirmation_phrase", "cancel confirmation phrase is fixed.")
         self._expect(config.query_confirmation_phrase == "CONFIRM_TESTNET_READ_ONLY", issues, "query_confirmation_phrase", "query confirmation phrase is fixed.")
+        self._expect(config.recovery_confirmation_phrase == "CONFIRM_TESTNET_EXACT_RECOVERY", issues, "recovery_confirmation_phrase", "recovery confirmation phrase is fixed.")
         self._expect(1 <= int(config.request_timeout_seconds) <= 30, issues, "request_timeout_seconds", "timeout must be between 1 and 30.")
         self._expect(int(config.max_create_retries) == 0, issues, "max_create_retries", "create retries must remain zero.")
         self._expect(int(config.max_cancel_retries) == 0, issues, "max_cancel_retries", "cancel retries must remain zero.")
@@ -416,6 +480,48 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         temp = path.with_suffix(path.suffix + ".tmp")
         temp.write_text(json.dumps(journal.to_dict(), indent=2), encoding="utf-8")
         temp.replace(path)
+
+    def _lock_token(self, operation: str, lifecycle_id: str, client_order_id: str) -> str:
+        return f"{self._lock_token_part(operation)}|lifecycle_id={self._lock_token_part(lifecycle_id)}|client_order_id={self._lock_token_part(client_order_id)}|token={uuid.uuid4().hex}"
+
+    def _lock_token_part(self, value: str) -> str:
+        cleaned = "".join(char if char.isalnum() or char in ("-", "_", ".") else "_" for char in str(value))
+        return cleaned[:120]
+
+    def _acquire_owned_lock(self, path: Path, token: str) -> bool:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("x", encoding="utf-8") as handle:
+                handle.write(token)
+            return True
+        except FileExistsError:
+            return False
+
+    def _release_owned_lock(self, path: Path, token: str, lock_acquired: bool) -> None:
+        if not lock_acquired or not path.exists():
+            return
+        try:
+            if path.read_text(encoding="utf-8") == token:
+                path.unlink()
+        except OSError:
+            return
+
+    def _load_or_new_journal(self, config: BinanceFuturesTestnetOrderLifecycleConfig, client_order_id: str) -> BinanceFuturesTestnetLifecycleJournal:
+        path = self._resolve(config.lifecycle_journal_path)
+        if path.exists():
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if payload.get("client_order_id") == client_order_id:
+                    return BinanceFuturesTestnetLifecycleJournal(
+                        lifecycle_id=str(payload.get("lifecycle_id") or ""),
+                        client_order_id=client_order_id,
+                        phase=str(payload.get("phase") or LifecyclePhase.RECOVERY_REQUIRED.value),
+                        recovery_required=bool(payload.get("recovery_required", True)),
+                        entries=[entry for entry in payload.get("entries", []) if isinstance(entry, dict)],
+                    )
+            except Exception:
+                pass
+        return BinanceFuturesTestnetLifecycleJournal(client_order_id=client_order_id, phase=LifecyclePhase.RECOVERY_REQUIRED.value, recovery_required=True)
 
     def _client(self, config: BinanceFuturesTestnetOrderLifecycleConfig) -> BinanceFuturesTestnetOrderLifecycleClient:
         return BinanceFuturesTestnetOrderLifecycleClient(config, http_get=self.http_get, authenticated_request=self.authenticated_request, env=self.env, now_ms_provider=self.now_ms_provider)

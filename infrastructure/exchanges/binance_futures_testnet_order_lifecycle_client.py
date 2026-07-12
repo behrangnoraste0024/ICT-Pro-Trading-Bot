@@ -265,8 +265,17 @@ class BinanceFuturesTestnetOrderLifecycleClient:
 
     def query_order(self, client_order_id: str, server_time: int | None = None) -> tuple[BinanceFuturesTestnetOrderSummary, BinanceFuturesTestnetLifecycleRequestMetadata]:
         self._validate_client_order_id(client_order_id)
-        payload, metadata = self._signed_request_with_metadata("GET", self.config.order_path, {"symbol": self.config.exchange_symbol, "origClientOrderId": client_order_id})
-        return self.sanitize_order_summary(payload, client_order_id), metadata
+        last_error: Exception | None = None
+        for retry in range(int(self.config.max_query_retries) + 1):
+            try:
+                payload, metadata = self._signed_request_with_metadata("GET", self.config.order_path, {"symbol": self.config.exchange_symbol, "origClientOrderId": client_order_id})
+                metadata.retry_count = retry
+                return self.sanitize_order_summary(payload, client_order_id), metadata
+            except Exception as exc:
+                last_error = exc
+                if retry >= int(self.config.max_query_retries):
+                    raise
+        raise last_error or RuntimeError("query failed")
 
     def cancel_order_exact(self, client_order_id: str, server_time: int | None = None) -> tuple[BinanceFuturesTestnetOrderSummary, BinanceFuturesTestnetLifecycleRequestMetadata]:
         self._validate_client_order_id(client_order_id)
