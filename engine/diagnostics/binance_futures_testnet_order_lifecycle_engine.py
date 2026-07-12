@@ -164,6 +164,7 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             filters = client.fetch_exchange_filters()
             ticker = client.fetch_book_ticker()
             preview = client.build_lifecycle_preview(lifecycle_id, client_order_id, side, quantity, price_offset_bps, filters, ticker)
+            self._server_time_or_issue(client, config, issues)
             hedge_mode = client.fetch_position_mode()
             preview.position_mode_valid = not hedge_mode
             if hedge_mode:
@@ -171,24 +172,23 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             before_rows = client.fetch_position_risk()
             client.require_zero_position(before_rows)
             preview.zero_position_precheck_valid = True
-            server = self._server_time_or_issue(client, config, issues)
             self._write_journal(config, journal, LifecyclePhase.CREATE_REQUEST_STARTED.value, {"client_order_id": client_order_id})
             create_started = True
-            created, create_meta = client.create_order(preview, server)
+            created, create_meta = client.create_order(preview)
             self._check_unexpected_fill(created)
             self._write_journal(config, journal, LifecyclePhase.ORDER_CREATED.value, created.to_dict())
-            queried, query_meta = client.query_order(client_order_id, server)
+            queried, query_meta = client.query_order(client_order_id)
             self._check_unexpected_fill(queried)
             self._write_journal(config, journal, LifecyclePhase.ORDER_QUERIED.value, queried.to_dict())
             if queried.status == "NEW":
                 self._write_journal(config, journal, LifecyclePhase.CANCEL_REQUEST_STARTED.value, {"client_order_id": client_order_id})
                 cancel_started = True
-                cancelled, cancel_meta = client.cancel_order_exact(client_order_id, server)
+                cancelled, cancel_meta = client.cancel_order_exact(client_order_id)
                 self._write_journal(config, journal, LifecyclePhase.ORDER_CANCELLED.value, cancelled.to_dict())
             elif queried.status not in ("EXPIRED", "REJECTED"):
                 self._check_unexpected_fill(queried)
                 raise LifecycleAbort(LifecycleDecision.ORDER_STATE_UNKNOWN.value, f"Unexpected initial order status: {queried.status}", recovery=True)
-            final, query_meta = client.query_order(client_order_id, server)
+            final, query_meta = client.query_order(client_order_id)
             self._check_unexpected_fill(final)
             if final.status not in ("CANCELED", "EXPIRED", "REJECTED"):
                 raise LifecycleAbort(LifecycleDecision.ORDER_STATE_UNKNOWN.value, f"Unexpected final order status: {final.status}", recovery=True)
@@ -228,8 +228,8 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         metadata = client.inspect_credentials()
         if not metadata.credentials_complete:
             return self._result(config, LifecycleAction.QUERY_ORDER.value, "WARNING", LifecycleDecision.CREDENTIALS_NOT_CONFIGURED.value, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, client_order_id=client_order_id, credentials_inspected=True)
-        server = self._server_time_or_issue(client, config, issues)
-        order, meta = client.query_order(client_order_id, server)
+        self._server_time_or_issue(client, config, issues)
+        order, meta = client.query_order(client_order_id)
         return self._result(config, LifecycleAction.QUERY_ORDER.value, "PASS", LifecycleDecision.ORDER_QUERY_SUCCESS.value, "Exact lifecycle order query succeeded.", credential_metadata=metadata, final_order=order, query_request=meta, issues=issues, client_order_id=client_order_id, credentials_inspected=True, public_server_time_request_used=True, authenticated_transport_invoked=True, query_request_transmitted=True, signature_generated=True)
 
     def recovery_cancel(self, client_order_id: str, confirmation: str | None = None, config_path: str = "configs/binance_futures_testnet_order_lifecycle.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetLifecycleResult:
@@ -244,8 +244,8 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         metadata = client.inspect_credentials()
         if not metadata.credentials_complete:
             return self._result(config, LifecycleAction.RECOVERY_CANCEL.value, "WARNING", LifecycleDecision.CREDENTIALS_NOT_CONFIGURED.value, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, client_order_id=client_order_id, credentials_inspected=True)
-        server = self._server_time_or_issue(client, config, issues)
-        order, meta = client.cancel_order_exact(client_order_id, server)
+        self._server_time_or_issue(client, config, issues)
+        order, meta = client.cancel_order_exact(client_order_id)
         return self._result(config, LifecycleAction.RECOVERY_CANCEL.value, "PASS", LifecycleDecision.ORDER_CANCEL_SUCCESS.value, "Exact lifecycle order recovery cancellation succeeded.", credential_metadata=metadata, cancel_order=order, cancel_request=meta, issues=issues, client_order_id=client_order_id, credentials_inspected=True, public_server_time_request_used=True, authenticated_transport_invoked=True, cancel_request_transmitted=True, signature_generated=True, order_cancelled=True)
 
     def runner_validate(self, config_path: str = "configs/binance_futures_testnet_order_lifecycle.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetLifecycleResult:
@@ -387,6 +387,7 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         if skew > int(config.maximum_clock_skew_ms):
             issues.append(self._issue("clock_skew_exceeded", "FAIL", "Testnet server-time skew exceeded safe maximum.", {"clock_skew_ms": skew}))
             raise RuntimeError("clock skew exceeded")
+        client.set_server_time_offset(int(payload["server_time"]), int(payload["local_time"]))
         return int(payload["server_time"])
 
     def _check_unexpected_fill(self, order: BinanceFuturesTestnetOrderSummary | None) -> None:

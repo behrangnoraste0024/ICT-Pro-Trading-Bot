@@ -60,6 +60,7 @@ class BinanceFuturesTestnetOrderLifecycleClient:
         self.authenticated_request = authenticated_request or self._default_authenticated_request
         self.env = {} if env is None else env
         self.now_ms_provider = now_ms_provider
+        self.server_time_offset_ms: int | None = None
         self.validate_base_url(config.rest_base_url)
 
     def inspect_credentials(self) -> BinanceFuturesTestnetLifecycleCredentialMetadata:
@@ -81,6 +82,11 @@ class BinanceFuturesTestnetOrderLifecycleClient:
         server_time = int(response.payload["serverTime"])
         local_time = self._now_ms()
         return {"server_time": server_time, "local_time": local_time, "clock_skew_ms": abs(local_time - server_time), "http_status": response.status_code}
+
+    def set_server_time_offset(self, server_time: int, local_time: int | None = None) -> int:
+        local = self._now_ms() if local_time is None else int(local_time)
+        self.server_time_offset_ms = int(server_time) - local
+        return self.server_time_offset_ms
 
     def fetch_exchange_filters(self) -> BinanceFuturesTestnetLifecycleExchangeFilters:
         response = self._public_get(self.config.exchange_info_path)
@@ -252,20 +258,19 @@ class BinanceFuturesTestnetOrderLifecycleClient:
 
     def create_order(self, preview: BinanceFuturesTestnetLifecyclePreview, server_time: int | None = None) -> tuple[BinanceFuturesTestnetOrderSummary, BinanceFuturesTestnetLifecycleRequestMetadata]:
         self._require_transmission_ready(preview)
-        params = self._canonical_order_parameters(preview, timestamp=int(server_time if server_time is not None else self._now_ms()), include_timestamp=True)
-        params["recvWindow"] = int(self.config.recv_window_ms)
+        params = self._canonical_order_parameters(preview)
         params["newOrderRespType"] = self.config.new_order_response_type
         payload, metadata = self._signed_request_with_metadata("POST", self.config.order_path, params)
         return self.sanitize_order_summary(payload, preview.client_order_id), metadata
 
     def query_order(self, client_order_id: str, server_time: int | None = None) -> tuple[BinanceFuturesTestnetOrderSummary, BinanceFuturesTestnetLifecycleRequestMetadata]:
         self._validate_client_order_id(client_order_id)
-        payload, metadata = self._signed_request_with_metadata("GET", self.config.order_path, {"symbol": self.config.exchange_symbol, "origClientOrderId": client_order_id, "timestamp": int(server_time if server_time is not None else self._now_ms()), "recvWindow": int(self.config.recv_window_ms)})
+        payload, metadata = self._signed_request_with_metadata("GET", self.config.order_path, {"symbol": self.config.exchange_symbol, "origClientOrderId": client_order_id})
         return self.sanitize_order_summary(payload, client_order_id), metadata
 
     def cancel_order_exact(self, client_order_id: str, server_time: int | None = None) -> tuple[BinanceFuturesTestnetOrderSummary, BinanceFuturesTestnetLifecycleRequestMetadata]:
         self._validate_client_order_id(client_order_id)
-        payload, metadata = self._signed_request_with_metadata("DELETE", self.config.order_path, {"symbol": self.config.exchange_symbol, "origClientOrderId": client_order_id, "timestamp": int(server_time if server_time is not None else self._now_ms()), "recvWindow": int(self.config.recv_window_ms)})
+        payload, metadata = self._signed_request_with_metadata("DELETE", self.config.order_path, {"symbol": self.config.exchange_symbol, "origClientOrderId": client_order_id})
         return self.sanitize_order_summary(payload, client_order_id), metadata
 
     def sanitize_order_summary(self, payload: Any, client_order_id: str) -> BinanceFuturesTestnetOrderSummary:
@@ -362,13 +367,20 @@ class BinanceFuturesTestnetOrderLifecycleClient:
         return response
 
     def _signed_request(self, method: str, path: str, parameters: dict[str, Any]) -> Any:
-        payload, _ = self._signed_request_with_metadata(method, path, {**parameters, "timestamp": int(parameters.get("timestamp") or self._now_ms()), "recvWindow": int(parameters.get("recvWindow") or self.config.recv_window_ms)})
+        payload, _ = self._signed_request_with_metadata(method, path, parameters)
         return payload
 
     def _signed_request_with_metadata(self, method: str, path: str, parameters: dict[str, Any]) -> tuple[Any, BinanceFuturesTestnetLifecycleRequestMetadata]:
         self._require_credentials()
         self._require_allowed_authenticated_transport(method, path)
-        canonical_parameters = {key: _format_decimal(value) if isinstance(value, Decimal) else value for key, value in parameters.items() if value is not None}
+        fresh_parameters = {
+            key: value
+            for key, value in parameters.items()
+            if value is not None and key not in ("timestamp", "recvWindow", "signature")
+        }
+        fresh_parameters["timestamp"] = self._fresh_signed_timestamp_ms()
+        fresh_parameters["recvWindow"] = int(self.config.recv_window_ms)
+        canonical_parameters = {key: _format_decimal(value) if isinstance(value, Decimal) else value for key, value in fresh_parameters.items() if value is not None}
         canonical = urlencode(sorted(canonical_parameters.items()))
         signature = self._signature(canonical)
         request_parameters = {**canonical_parameters, "signature": signature}
@@ -417,10 +429,10 @@ class BinanceFuturesTestnetOrderLifecycleClient:
             payload = json.loads(raw.decode("utf-8")) if raw else {"code": exc.code}
             raise RuntimeError(_sanitize_error(payload.get("msg") or payload.get("code") or "Binance lifecycle request rejected")) from exc
 
-    def _canonical_order_parameters(self, preview: BinanceFuturesTestnetLifecyclePreview, timestamp: int, include_timestamp: bool) -> dict[str, Any]:
+    def _canonical_order_parameters(self, preview: BinanceFuturesTestnetLifecyclePreview) -> dict[str, Any]:
         if preview.derived_price is None:
             raise ValueError("derived price is required")
-        parameters: dict[str, Any] = {
+        return {
             "symbol": self.config.exchange_symbol,
             "side": preview.side,
             "type": "LIMIT",
@@ -431,9 +443,6 @@ class BinanceFuturesTestnetOrderLifecycleClient:
             "newOrderRespType": self.config.new_order_response_type,
             "positionSide": "BOTH",
         }
-        if include_timestamp:
-            parameters["timestamp"] = timestamp
-        return parameters
 
     def _require_allowed_authenticated_transport(self, method: str, path: str) -> None:
         if path in (self.config.position_mode_path, self.config.position_risk_path):
@@ -464,6 +473,10 @@ class BinanceFuturesTestnetOrderLifecycleClient:
         if not secret:
             raise ValueError("dedicated testnet API secret is missing")
         return hmac.new(secret.encode("utf-8"), canonical_query.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def _fresh_signed_timestamp_ms(self) -> int:
+        offset = 0 if self.server_time_offset_ms is None else int(self.server_time_offset_ms)
+        return int(self._now_ms()) + offset
 
     def _validate_lifecycle_id(self, lifecycle_id: str) -> None:
         if not lifecycle_id or any(char.isspace() for char in lifecycle_id) or len(lifecycle_id) > 64:
