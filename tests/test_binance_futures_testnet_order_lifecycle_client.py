@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from urllib.parse import parse_qs
 
 import pytest
 
@@ -107,6 +108,49 @@ def test_create_order_transmits_limit_gtx_both_ack_only() -> None:
     assert "positionSide=BOTH" in body
     assert "newOrderRespType=ACK" in body
     assert "signature=" in body
+
+
+def test_signed_request_uses_fresh_now_provider_timestamp_and_ignores_stale_input() -> None:
+    calls = []
+    timestamps = iter([1000, 7000])
+
+    def transport(method, url, body, timeout, headers):
+        calls.append(body.decode("utf-8"))
+        return BinanceLifecycleHTTPResponse(200, url, {"symbol": "BTCUSDT", "clientOrderId": "smcbot-lifecycle-005", "orderId": 123, "side": "BUY", "type": "LIMIT", "timeInForce": "GTX", "price": "49500.00", "origQty": "0.001", "executedQty": "0", "status": "NEW"}, 2)
+
+    client = _client()
+    filters = client.parse_exchange_filters(_exchange_info())
+    preview = client.build_lifecycle_preview("lifecycle-005", "smcbot-lifecycle-005", "BUY", "0.001", 100, filters, client.parse_book_ticker(_ticker()))
+    lifecycle_client = BinanceFuturesTestnetOrderLifecycleClient(client.config, authenticated_request=transport, env=client.env, now_ms_provider=lambda: next(timestamps))
+
+    _, first = lifecycle_client.create_order(preview, server_time=123)
+    _, second = lifecycle_client.query_order("smcbot-lifecycle-005", server_time=123)
+
+    assert first.timestamp == 1000
+    assert second.timestamp == 7000
+    assert "timestamp=123" not in "&".join(calls)
+    assert parse_qs(calls[0])["timestamp"] == ["1000"]
+    assert parse_qs(calls[1])["timestamp"] == ["7000"]
+
+
+def test_signed_request_applies_validated_server_offset_to_fresh_local_time() -> None:
+    calls = []
+    timestamps = iter([5000])
+
+    def transport(method, url, body, timeout, headers):
+        calls.append(body.decode("utf-8"))
+        return BinanceLifecycleHTTPResponse(200, url, {"symbol": "BTCUSDT", "clientOrderId": "smcbot-lifecycle-006", "orderId": 123, "side": "BUY", "type": "LIMIT", "timeInForce": "GTX", "price": "49500.00", "origQty": "0.001", "executedQty": "0", "status": "NEW"}, 2)
+
+    client = _client()
+    filters = client.parse_exchange_filters(_exchange_info())
+    preview = client.build_lifecycle_preview("lifecycle-006", "smcbot-lifecycle-006", "BUY", "0.001", 100, filters, client.parse_book_ticker(_ticker()))
+    lifecycle_client = BinanceFuturesTestnetOrderLifecycleClient(client.config, authenticated_request=transport, env=client.env, now_ms_provider=lambda: next(timestamps))
+
+    lifecycle_client.set_server_time_offset(server_time=1100, local_time=1000)
+    _, metadata = lifecycle_client.create_order(preview)
+
+    assert metadata.timestamp == 5100
+    assert parse_qs(calls[0])["timestamp"] == ["5100"]
 
 
 def test_hard_blocked_operations_fail_before_transport() -> None:

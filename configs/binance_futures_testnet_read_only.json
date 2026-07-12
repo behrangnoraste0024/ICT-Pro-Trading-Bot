@@ -33,7 +33,7 @@
   "server_time_path": "/fapi/v1/time",
   "require_explicit_network_confirmation": true,
   "network_confirmation_phrase": "CONFIRM_TESTNET_READ_ONLY",
-  "request_timeout_seconds": 10,
+  "request_timeout_seconds": 25,
   "max_authenticated_fetch_retries": 0,
   "recv_window_ms": 5000,
   "maximum_recv_window_ms": 10000,

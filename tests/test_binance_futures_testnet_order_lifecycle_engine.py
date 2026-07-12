@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import parse_qs
 
 import pytest
 
@@ -69,6 +70,15 @@ def _http_get(url, timeout):
     raise AssertionError(f"unexpected GET {url}")
 
 
+def _http_get_with_server_time(server_time: int):
+    def http_get(url, timeout):
+        if url.endswith("/fapi/v1/time"):
+            return BinanceLifecycleHTTPResponse(200, url, {"serverTime": server_time}, 10)
+        return _http_get(url, timeout)
+
+    return http_get
+
+
 def _transport(statuses: list[str] | None = None, executed_qty: str = "0"):
     calls = []
     statuses = list(statuses or ["NEW", "NEW", "CANCELED", "CANCELED"])
@@ -88,7 +98,7 @@ def _transport(statuses: list[str] | None = None, executed_qty: str = "0"):
     return authenticated
 
 
-@pytest.mark.parametrize(("field", "value"), [("feature_enabled", True), ("manual_lifecycle_only", False), ("single_order_only", False), ("rest_base_url", "https://fapi.binance.com"), ("allowed_order_types", ["LIMIT", "MARKET"]), ("allowed_time_in_force", ["GTX", "GTC"]), ("allow_standalone_create", True), ("allow_cancel_all", True), ("allow_leverage_change", True), ("maximum_lifecycle_notional_usdt", 101), ("minimum_price_offset_bps", 1), ("lifecycle_journal_path", "../bad.json")])
+@pytest.mark.parametrize(("field", "value"), [("feature_enabled", True), ("manual_lifecycle_only", False), ("single_order_only", False), ("rest_base_url", "https://fapi.binance.com"), ("allowed_order_types", ["LIMIT", "MARKET"]), ("allowed_time_in_force", ["GTX", "GTC"]), ("allow_standalone_create", True), ("allow_cancel_all", True), ("allow_leverage_change", True), ("maximum_lifecycle_notional_usdt", 101), ("minimum_price_offset_bps", 1), ("request_timeout_seconds", 31), ("lifecycle_journal_path", "../bad.json")])
 def test_dangerous_config_values_fail(tmp_path: Path, field: str, value) -> None:
     path = _write_config(tmp_path, **{field: value})
 
@@ -96,6 +106,14 @@ def test_dangerous_config_values_fail(tmp_path: Path, field: str, value) -> None
 
     assert report.status == "FAIL"
     assert any(issue.name == field or field in issue.name for issue in report.issues)
+
+
+def test_timeout_25_seconds_is_valid_but_maximum_remains_30(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, request_timeout_seconds=25)
+
+    report = _engine(tmp_path).validate(str(path))
+
+    assert report.status == "PASS"
 
 
 def test_missing_confirmation_blocks_before_credentials_or_network(tmp_path: Path) -> None:
@@ -134,6 +152,26 @@ def test_mocked_new_order_is_queried_cancelled_and_completed(tmp_path: Path) -> 
     assert "signature=" not in (tmp_path / "data" / "runtime" / "binance_futures_testnet_order_lifecycle" / "lifecycle.json").read_text(encoding="utf-8")
 
 
+def test_lifecycle_signed_requests_use_fresh_monotonic_timestamps(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    transport = _transport(["NEW", "NEW", "CANCELED", "CANCELED"])
+    now_values = iter([100000, 101000, 102000, 108000, 114000, 120000, 126000, 132000])
+
+    result = _engine(tmp_path, env=_env(), http_get=_http_get_with_server_time(102050), authenticated_request=transport, now_ms_provider=lambda: next(now_values)).run_lifecycle("lifecycle-001", "smcbot-lifecycle-001", "BUY", 0.001, confirmation="CONFIRM_TESTNET_POST_ONLY_LIFECYCLE", config_path=str(path))
+
+    timestamps = [int(parse_qs(call[2])["timestamp"][0]) for call in transport.calls]
+    paths = [call[1] for call in transport.calls]
+
+    assert result.status == "PASS"
+    assert ["/fapi/v1/positionSide/dual" in path for path in paths].count(True) == 1
+    assert ["/fapi/v3/positionRisk" in path for path in paths].count(True) == 2
+    assert ["/fapi/v1/order" in path for path in paths].count(True) == 4
+    assert timestamps == sorted(timestamps)
+    assert len(set(timestamps)) == len(timestamps)
+    assert timestamps == [103050, 104050, 110050, 116050, 122050, 128050, 134050]
+    assert max(timestamps) - min(timestamps) > BinanceFuturesTestnetOrderLifecycleConfig().recv_window_ms
+
+
 def test_expired_order_completes_without_delete(tmp_path: Path) -> None:
     path = _write_config(tmp_path)
     transport = _transport(["EXPIRED", "EXPIRED", "EXPIRED"])
@@ -142,6 +180,27 @@ def test_expired_order_completes_without_delete(tmp_path: Path) -> None:
 
     assert result.status == "PASS"
     assert [call[0] for call in transport.calls].count("DELETE") == 0
+
+
+def test_clock_skew_still_fails_closed_before_create(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+    now_values = iter([100000, 101000, 500000])
+
+    def transport(method, url, body, timeout, headers):
+        calls.append(method)
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, [{"symbol": "BTCUSDT", "positionAmt": "0"}], 10)
+        raise AssertionError("order create should not run after clock skew failure")
+
+    result = _engine(tmp_path, env=_env(), http_get=_http_get_with_server_time(1000), authenticated_request=transport, now_ms_provider=lambda: next(now_values)).run_lifecycle("lifecycle-001", "smcbot-lifecycle-001", "BUY", 0.001, confirmation="CONFIRM_TESTNET_POST_ONLY_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "ORDER_CREATE_REJECTED"
+    assert result.order_created is False
+    assert calls == []
 
 
 def test_unexpected_fill_returns_critical(tmp_path: Path) -> None:
@@ -175,6 +234,27 @@ def test_create_timeout_returns_unknown_state_recovery(tmp_path: Path) -> None:
     assert result.recovery_required is True
     assert calls.count("POST") == 1
     assert calls.count("DELETE") == 0
+
+
+def test_timeout_before_create_start_does_not_report_created_or_recovery(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        calls.append(method)
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            raise TimeoutError("timeout before create start")
+        raise AssertionError("POST should not be used")
+
+    result = _engine(tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 123).run_lifecycle("lifecycle-001", "smcbot-lifecycle-001", "BUY", 0.001, confirmation="CONFIRM_TESTNET_POST_ONLY_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "ORDER_CREATE_REJECTED"
+    assert result.order_created is False
+    assert result.recovery_required is False
+    assert calls.count("POST") == 0
 
 
 def test_cancel_timeout_returns_unknown_state_recovery(tmp_path: Path) -> None:
@@ -226,6 +306,35 @@ def test_recovery_query_and_cancel_require_confirmation(tmp_path: Path) -> None:
 
     assert engine.query_order("smcbot-lifecycle-001", config_path=str(path)).decision == "CONFIRMATION_REQUIRED"
     assert engine.recovery_cancel("smcbot-lifecycle-001", config_path=str(path)).decision == "CONFIRMATION_REQUIRED"
+
+
+def test_exact_query_and_recovery_cancel_use_fresh_timestamp_after_preflight(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+    server_times = iter([1100, 12100])
+    now_values = iter([1000, 7000, 12000, 18000])
+
+    def http_get(url, timeout):
+        if url.endswith("/fapi/v1/time"):
+            return BinanceLifecycleHTTPResponse(200, url, {"serverTime": next(server_times)}, 10)
+        return _http_get(url, timeout)
+
+    def transport(method, url, body, timeout, headers):
+        calls.append((method, body.decode("utf-8")))
+        if method == "GET":
+            return BinanceLifecycleHTTPResponse(200, url, {"symbol": "BTCUSDT", "clientOrderId": "smcbot-lifecycle-001", "orderId": 1, "side": "BUY", "type": "LIMIT", "timeInForce": "GTX", "price": "49500", "origQty": "0.001", "executedQty": "0", "status": "NEW"}, 10)
+        if method == "DELETE":
+            return BinanceLifecycleHTTPResponse(200, url, {"symbol": "BTCUSDT", "clientOrderId": "smcbot-lifecycle-001", "orderId": 1, "side": "BUY", "type": "LIMIT", "timeInForce": "GTX", "price": "49500", "origQty": "0.001", "executedQty": "0", "status": "CANCELED"}, 10)
+        raise AssertionError(f"unexpected method {method}")
+
+    engine = _engine(tmp_path, env=_env(), http_get=http_get, authenticated_request=transport, now_ms_provider=lambda: next(now_values))
+
+    query = engine.query_order("smcbot-lifecycle-001", confirmation="CONFIRM_TESTNET_READ_ONLY", config_path=str(path))
+    cancel = engine.recovery_cancel("smcbot-lifecycle-001", confirmation="CONFIRM_TESTNET_CANCEL_ORDER", config_path=str(path))
+
+    assert query.decision == "ORDER_QUERY_SUCCESS"
+    assert cancel.decision == "ORDER_CANCEL_SUCCESS"
+    assert [int(parse_qs(call[1])["timestamp"][0]) for call in calls] == [7100, 18100]
 
 
 def test_hard_block_diagnostics_pass(tmp_path: Path) -> None:

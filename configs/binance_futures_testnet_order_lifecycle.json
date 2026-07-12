@@ -46,7 +46,7 @@
   "cancel_confirmation_phrase": "CONFIRM_TESTNET_CANCEL_ORDER",
   "require_explicit_query_confirmation": true,
   "query_confirmation_phrase": "CONFIRM_TESTNET_READ_ONLY",
-  "request_timeout_seconds": 10,
+  "request_timeout_seconds": 25,
   "max_create_retries": 0,
   "max_cancel_retries": 0,
   "max_query_retries": 1,
