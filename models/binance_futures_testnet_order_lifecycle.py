@@ -20,6 +20,7 @@ class LifecycleAction(StrEnum):
     RUN_LIFECYCLE = "RUN_LIFECYCLE"
     QUERY_ORDER = "QUERY_ORDER"
     RECOVERY_CANCEL = "RECOVERY_CANCEL"
+    RECOVER_LIFECYCLE = "RECOVER_LIFECYCLE"
     RUNNER_VALIDATE = "RUNNER_VALIDATE"
     HARD_BLOCK = "HARD_BLOCK"
 
@@ -38,6 +39,8 @@ class LifecycleDecision(StrEnum):
     LIFECYCLE_PREVIEW_VALID = "LIFECYCLE_PREVIEW_VALID"
     ORDER_CREATE_ACCEPTED = "ORDER_CREATE_ACCEPTED"
     ORDER_CREATE_REJECTED = "ORDER_CREATE_REJECTED"
+    PUBLIC_PREFLIGHT_FAILED = "PUBLIC_PREFLIGHT_FAILED"
+    AUTHENTICATED_PRECHECK_FAILED = "AUTHENTICATED_PRECHECK_FAILED"
     ORDER_QUERY_SUCCESS = "ORDER_QUERY_SUCCESS"
     ORDER_CANCEL_SUCCESS = "ORDER_CANCEL_SUCCESS"
     ORDER_CANCEL_FAILED = "ORDER_CANCEL_FAILED"
@@ -46,6 +49,7 @@ class LifecycleDecision(StrEnum):
     UNEXPECTED_FILL_DETECTED = "UNEXPECTED_FILL_DETECTED"
     UNEXPECTED_POSITION_DETECTED = "UNEXPECTED_POSITION_DETECTED"
     LIFECYCLE_COMPLETE = "LIFECYCLE_COMPLETE"
+    RECOVERY_COMPLETE = "RECOVERY_COMPLETE"
     RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
     OPERATION_BLOCKED = "OPERATION_BLOCKED"
 
@@ -53,6 +57,7 @@ class LifecycleDecision(StrEnum):
 class LifecyclePhase(StrEnum):
     CREATED_LOCALLY = "CREATED_LOCALLY"
     PRECHECKED = "PRECHECKED"
+    PRECHECK_STARTED = "PRECHECK_STARTED"
     CREATE_REQUEST_STARTED = "CREATE_REQUEST_STARTED"
     ORDER_CREATED = "ORDER_CREATED"
     ORDER_QUERIED = "ORDER_QUERIED"
@@ -61,6 +66,9 @@ class LifecyclePhase(StrEnum):
     FINAL_QUERY_COMPLETE = "FINAL_QUERY_COMPLETE"
     POSITION_VERIFIED = "POSITION_VERIFIED"
     COMPLETE = "COMPLETE"
+    QUERY_COMPLETE = "QUERY_COMPLETE"
+    RECOVERY_CANCEL_COMPLETE = "RECOVERY_CANCEL_COMPLETE"
+    RECOVERY_COMPLETE = "RECOVERY_COMPLETE"
     RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
     FAILED = "FAILED"
 
@@ -114,11 +122,12 @@ class BinanceFuturesTestnetOrderLifecycleConfig:
     cancel_confirmation_phrase: str = "CONFIRM_TESTNET_CANCEL_ORDER"
     require_explicit_query_confirmation: bool = True
     query_confirmation_phrase: str = "CONFIRM_TESTNET_READ_ONLY"
-    request_timeout_seconds: int = 10
+    recovery_confirmation_phrase: str = "CONFIRM_TESTNET_EXACT_RECOVERY"
+    request_timeout_seconds: int = 30
     max_create_retries: int = 0
     max_cancel_retries: int = 0
     max_query_retries: int = 1
-    recv_window_ms: int = 5000
+    recv_window_ms: int = 10000
     maximum_recv_window_ms: int = 10000
     maximum_clock_skew_ms: int = 5000
     minimum_price_offset_bps: int = 50

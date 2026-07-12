@@ -79,9 +79,9 @@ class BinanceFuturesTestnetReadOnlyConfig:
     server_time_path: str = "/fapi/v1/time"
     require_explicit_network_confirmation: bool = True
     network_confirmation_phrase: str = "CONFIRM_TESTNET_READ_ONLY"
-    request_timeout_seconds: int = 10
+    request_timeout_seconds: int = 30
     max_authenticated_fetch_retries: int = 0
-    recv_window_ms: int = 5000
+    recv_window_ms: int = 10000
     maximum_recv_window_ms: int = 10000
     maximum_clock_skew_ms: int = 5000
     allow_public_server_time_fetch: bool = True

@@ -153,6 +153,29 @@ def test_signed_request_applies_validated_server_offset_to_fresh_local_time() ->
     assert parse_qs(calls[0])["timestamp"] == ["5100"]
 
 
+def test_exact_get_retry_uses_fresh_timestamp_and_signature() -> None:
+    calls = []
+    timestamps = iter([1000, 7000])
+
+    def transport(method, url, body, timeout, headers):
+        calls.append(body.decode("utf-8"))
+        if len(calls) == 1:
+            raise TimeoutError("read timeout")
+        return BinanceLifecycleHTTPResponse(200, url, {"symbol": "BTCUSDT", "clientOrderId": "smcbot-lifecycle-007", "orderId": 123, "side": "BUY", "type": "LIMIT", "timeInForce": "GTX", "price": "49500.00", "origQty": "0.001", "executedQty": "0", "status": "NEW"}, 2)
+
+    client = _client(max_query_retries=1)
+    lifecycle_client = BinanceFuturesTestnetOrderLifecycleClient(client.config, authenticated_request=transport, env=client.env, now_ms_provider=lambda: next(timestamps))
+
+    _, metadata = lifecycle_client.query_order("smcbot-lifecycle-007")
+
+    first = parse_qs(calls[0])
+    second = parse_qs(calls[1])
+    assert metadata.retry_count == 1
+    assert first["timestamp"] == ["1000"]
+    assert second["timestamp"] == ["7000"]
+    assert first["signature"] != second["signature"]
+
+
 def test_hard_blocked_operations_fail_before_transport() -> None:
     client = _client()
     for method in ("submit_market_order", "submit_conditional_order", "submit_algo_order", "submit_batch_orders", "modify_order", "cancel_all_orders", "fetch_open_orders", "fetch_all_orders", "fetch_trades", "change_leverage", "change_margin_mode", "change_position_mode", "change_multi_assets_mode", "change_position_margin", "close_position", "create_listen_key", "open_user_stream", "open_websocket"):

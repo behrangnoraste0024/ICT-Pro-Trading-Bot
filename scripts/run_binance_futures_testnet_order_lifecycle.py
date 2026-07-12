@@ -47,6 +47,8 @@ def main(argv: list[str] | None = None) -> int:
             return _emit_result(engine.query_order(args.client_order_id, args.confirm_testnet_query, args.config, args.expected_profile), args)
         if action == "recovery_cancel":
             return _emit_result(engine.recovery_cancel(args.client_order_id, args.confirm_testnet_cancel, args.config, args.expected_profile), args)
+        if action == "recover_lifecycle":
+            return _emit_result(engine.recover_lifecycle(args.client_order_id, args.confirm_testnet_recovery, args.config, args.expected_profile), args)
     except Exception as exc:
         return _emit_result(_invalid_result(f"Operation failed safely: {_sanitize_cli_error(str(exc))}"), args)
     return _emit_result(_invalid_result("Unsupported action."), args)
@@ -83,7 +85,7 @@ def _invalid_result(message: str) -> BinanceFuturesTestnetLifecycleResult:
 
 
 def _selected_actions(args: argparse.Namespace) -> list[str]:
-    names = ["check_credentials", "build_preview", "run_lifecycle", "query_order", "recovery_cancel"]
+    names = ["check_credentials", "build_preview", "run_lifecycle", "query_order", "recovery_cancel", "recover_lifecycle"]
     return [name for name in names if getattr(args, name)]
 
 
@@ -101,6 +103,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-lifecycle", action="store_true")
     parser.add_argument("--query-order", action="store_true")
     parser.add_argument("--recovery-cancel", action="store_true")
+    parser.add_argument("--recover-lifecycle", action="store_true")
     parser.add_argument("--lifecycle-id", default="lifecycle-local-001")
     parser.add_argument("--client-order-id", default="smcbot-lifecycle-001")
     parser.add_argument("--side", choices=["BUY", "SELL"], default="BUY")
@@ -109,6 +112,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--confirm-testnet-lifecycle", default=None)
     parser.add_argument("--confirm-testnet-query", default=None)
     parser.add_argument("--confirm-testnet-cancel", default=None)
+    parser.add_argument("--confirm-testnet-recovery", default=None)
     return parser
 
 

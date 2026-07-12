@@ -52,3 +52,14 @@ def test_run_lifecycle_without_confirmation_does_not_use_credentials(capsys, mon
     assert code == 0
     assert "CONFIRMATION_REQUIRED" in captured.out
     assert "Credentials Complete" not in captured.out
+
+
+def test_recover_lifecycle_requires_exact_confirmation(capsys, monkeypatch) -> None:
+    monkeypatch.setenv("BINANCE_FUTURES_TESTNET_API_KEY", "unit-test-key")
+    monkeypatch.setenv("BINANCE_FUTURES_TESTNET_API_SECRET", "unit-test-secret")
+
+    code = run_binance_futures_testnet_order_lifecycle.main(["--recover-lifecycle", "--client-order-id", "smcbot-lifecycle-001"])
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "CONFIRMATION_REQUIRED" in captured.out
