@@ -4,6 +4,14 @@ This diagnostic answers whether the current BTC-focused research, backtest, and 
 
 It does not execute trades, place orders, enable live trading, or activate paper execution. It only reads local registry, baseline, snapshot, and safety signals.
 
+## Binance Futures Testnet Manual Lifecycle
+
+Release 2.80 adds a manual Binance USD-M Futures Testnet post-only LIMIT lifecycle readiness check. This is the first release that can create an actual Testnet exchange order, but only through the standalone lifecycle CLI with explicit confirmation. It is Testnet-only, BTCUSDT-only, LIMIT-only, GTX post-only, one order per lifecycle, and disabled by default.
+
+The lifecycle has no standalone create-only action. A confirmed lifecycle derives a deliberately non-marketable price from the BTCUSDT book ticker, requires One-way Mode, verifies zero BTCUSDT position before creation, creates exactly one LIMIT GTX order, queries it, immediately cancels it if still `NEW`, queries final status, verifies zero position again, and writes only a sanitized local journal.
+
+MARKET orders, stop loss, take profit, algo orders, leverage changes, margin changes, position-mode changes, production endpoints, strategy execution, runner order submission, and paper-state mutation remain forbidden. If network state is uncertain after create or cancel, use the exact-order query and exact-order recovery-cancel commands with the known client order ID. Do not run the real authenticated lifecycle from Codex; use dedicated Testnet credentials only in an operator-controlled shell.
+
 ## Commands
 
 Official BTC validation gate:
