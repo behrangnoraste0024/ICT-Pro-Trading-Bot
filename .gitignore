@@ -99,3 +99,9 @@ reports/binance_futures_testnet_order_test/*.json
 reports/binance_futures_testnet_order_test/*.jsonl
 reports/binance_futures_testnet_order_test/*.md
 reports/binance_futures_testnet_order_test/*.tmp
+data/runtime/binance_futures_testnet_order_lifecycle/*
+!data/runtime/binance_futures_testnet_order_lifecycle/.gitkeep
+reports/binance_futures_testnet_order_lifecycle/*.json
+reports/binance_futures_testnet_order_lifecycle/*.jsonl
+reports/binance_futures_testnet_order_lifecycle/*.md
+reports/binance_futures_testnet_order_lifecycle/*.tmp

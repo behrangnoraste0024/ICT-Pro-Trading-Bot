@@ -4,6 +4,12 @@
 
 The validation gate is research, audit, and CI tooling. It is not live trading approval, and it does not activate decision thresholds in live or paper trading. Use it to produce repeatable validation artifacts, compare a candidate snapshot against the pinned baseline, and decide whether a research change is safe to merge or promote.
 
+## Binance Futures Testnet Manual Lifecycle
+
+Release 2.80 introduces a manual BTCUSDT Binance USD-M Futures Testnet post-only LIMIT lifecycle. It is an operator-only diagnostic and is not part of live trading, paper trading, strategy execution, or the runner loop. The command is disabled by default and requires the exact confirmation phrase before any authenticated request.
+
+The lifecycle is intentionally narrow: one LIMIT GTX order, derived away from the best bid/ask by a configured offset, query exact order, cancel exact order, final query, and zero-position verification. It must not use MARKET, stop-loss, take-profit, conditional, algo, batch, leverage, margin, position-mode, production, or broad order-list endpoints. Unknown network state requires manual exact-order query/cancel recovery. Never run the real authenticated lifecycle from Codex; use dedicated Testnet credentials only.
+
 ## Current Official Profile
 
 - Recommended profile: `balanced_smc_decision_065`

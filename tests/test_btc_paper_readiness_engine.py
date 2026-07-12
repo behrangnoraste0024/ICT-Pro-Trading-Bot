@@ -11,6 +11,25 @@ def _write_json(path: Path, data: dict | list) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
+class _FakeLifecycleReport:
+    def __init__(self, status: str = "PASS") -> None:
+        self.status = status
+        self.issue_count = 0 if status == "PASS" else 1
+        self.warning_count = 0
+        self.fail_count = 0 if status == "PASS" else 1
+        self.issues = []
+        self.diagnostics = {}
+
+
+class _FakeOrderLifecycleEngine:
+    def __init__(self, repo_root: Path) -> None:
+        self.repo_root = repo_root
+
+    def validate(self, config_path: str, *args, **kwargs) -> _FakeLifecycleReport:
+        payload = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        return _FakeLifecycleReport("FAIL" if payload.get("allow_market_order") else "PASS")
+
+
 def _candles(count: int = 1000) -> list[dict]:
     return [{"open": 1, "high": 1, "low": 1, "close": 1, "volume": 1} for _ in range(count)]
 
@@ -105,6 +124,7 @@ def _ready_files(root: Path) -> None:
     _write_json(root / "configs" / "binance_futures_testnet_adapter.json", _binance_futures_testnet_adapter_config())
     _write_json(root / "configs" / "binance_futures_testnet_read_only.json", _binance_futures_testnet_read_only_config())
     _write_json(root / "configs" / "binance_futures_testnet_order_test.json", _binance_futures_testnet_order_test_config())
+    _write_json(root / "configs" / "binance_futures_testnet_order_lifecycle.json", _binance_futures_testnet_order_lifecycle_config())
     trade_plan = root / "engine" / "trade_plan" / "trade_plan_engine.py"
     trade_plan.parent.mkdir(parents=True, exist_ok=True)
     trade_plan.write_text("class TradePlanEngine: pass\n", encoding="utf-8")
@@ -979,6 +999,134 @@ def _binance_futures_testnet_order_test_config(**overrides) -> dict:
     return values
 
 
+def _binance_futures_testnet_order_lifecycle_config(**overrides) -> dict:
+    values = {
+        "schema_version": "1.0",
+        "project_scope": "BTC_ONLY",
+        "symbol": "BTC/USDT",
+        "exchange_symbol": "BTCUSDT",
+        "exchange": "binance",
+        "market_type": "futures",
+        "futures_contract_type": "USDT_PERPETUAL",
+        "strategy_profile": "balanced_smc_decision_065",
+        "runtime_config_path": "configs/btc_paper_runtime.json",
+        "monitoring_config_path": "configs/btc_paper_monitoring.json",
+        "runner_config_path": "configs/btc_paper_runner.json",
+        "testnet_adapter_config_path": "configs/binance_futures_testnet_adapter.json",
+        "testnet_read_only_config_path": "configs/binance_futures_testnet_read_only.json",
+        "testnet_order_test_config_path": "configs/binance_futures_testnet_order_test.json",
+        "futures_feed_config_path": "configs/btc_futures_read_only_feed.json",
+        "futures_risk_model_config_path": "configs/btc_futures_risk_model.json",
+        "futures_paper_position_config_path": "configs/btc_futures_paper_position.json",
+        "feature_enabled": False,
+        "automatic_execution_enabled": False,
+        "explicit_cli_only": True,
+        "manual_lifecycle_only": True,
+        "testnet_only": True,
+        "single_order_only": True,
+        "rest_base_url": "https://demo-fapi.binance.com",
+        "allowed_hosts": ["demo-fapi.binance.com"],
+        "api_key_env_var": "BINANCE_FUTURES_TESTNET_API_KEY",
+        "api_secret_env_var": "BINANCE_FUTURES_TESTNET_API_SECRET",
+        "server_time_path": "/fapi/v1/time",
+        "exchange_info_path": "/fapi/v1/exchangeInfo",
+        "book_ticker_path": "/fapi/v1/ticker/bookTicker",
+        "position_mode_path": "/fapi/v1/positionSide/dual",
+        "position_risk_path": "/fapi/v3/positionRisk",
+        "order_path": "/fapi/v1/order",
+        "allowed_order_methods": ["POST", "GET", "DELETE"],
+        "allowed_order_types": ["LIMIT"],
+        "allowed_time_in_force": ["GTX"],
+        "allowed_sides": ["BUY", "SELL"],
+        "required_position_mode": "ONE_WAY",
+        "required_position_side": "BOTH",
+        "require_zero_position_before_create": True,
+        "require_zero_position_after_cancel": True,
+        "require_explicit_lifecycle_confirmation": True,
+        "lifecycle_confirmation_phrase": "CONFIRM_TESTNET_POST_ONLY_LIFECYCLE",
+        "require_explicit_cancel_confirmation": True,
+        "cancel_confirmation_phrase": "CONFIRM_TESTNET_CANCEL_ORDER",
+        "require_explicit_query_confirmation": True,
+        "query_confirmation_phrase": "CONFIRM_TESTNET_READ_ONLY",
+        "request_timeout_seconds": 10,
+        "max_create_retries": 0,
+        "max_cancel_retries": 0,
+        "max_query_retries": 1,
+        "recv_window_ms": 5000,
+        "maximum_recv_window_ms": 10000,
+        "maximum_clock_skew_ms": 5000,
+        "minimum_price_offset_bps": 50,
+        "default_price_offset_bps": 100,
+        "maximum_price_offset_bps": 5000,
+        "maximum_quantity": 0.01,
+        "maximum_lifecycle_notional_usdt": 100.0,
+        "new_order_response_type": "ACK",
+        "client_order_id_prefix": "smcbot-lifecycle-",
+        "maximum_client_order_id_length": 36,
+        "require_exchange_filter_validation": True,
+        "require_book_ticker_validation": True,
+        "require_non_marketable_price": True,
+        "require_gtx_post_only": True,
+        "allow_standalone_create": False,
+        "allow_lifecycle_create_query_cancel": True,
+        "allow_exact_order_query": True,
+        "allow_exact_order_recovery_cancel": True,
+        "allow_market_order": False,
+        "allow_conditional_order": False,
+        "allow_algo_order": False,
+        "allow_batch_order": False,
+        "allow_order_modification": False,
+        "allow_cancel_all": False,
+        "allow_open_order_list_query": False,
+        "allow_all_order_history_query": False,
+        "allow_trade_history_query": False,
+        "allow_position_creation": False,
+        "allow_position_close": False,
+        "allow_leverage_change": False,
+        "allow_margin_mode_change": False,
+        "allow_position_mode_change": False,
+        "allow_multi_assets_mode_change": False,
+        "allow_position_margin_change": False,
+        "allow_user_data_stream": False,
+        "allow_listen_key": False,
+        "allow_websocket_connection": False,
+        "allow_production_endpoint": False,
+        "allow_production_credentials": False,
+        "allow_real_funds": False,
+        "allow_runner_order_creation": False,
+        "allow_monitoring_order_creation": False,
+        "allow_strategy_order_creation": False,
+        "allow_background_order_creation": False,
+        "allow_futures_paper_state_mutation": False,
+        "allow_spot_paper_account_state_mutation": False,
+        "allow_runner_state_mutation": False,
+        "allow_execution_state_mutation": False,
+        "allow_raw_request_print": False,
+        "allow_raw_response_print": False,
+        "allow_raw_request_persistence": False,
+        "allow_raw_response_persistence": False,
+        "allow_authenticated_header_logging": False,
+        "allow_signature_logging": False,
+        "allow_signed_url_logging": False,
+        "allow_sanitized_local_lifecycle_journal": True,
+        "lifecycle_journal_path": "data/runtime/binance_futures_testnet_order_lifecycle/lifecycle.json",
+        "lifecycle_lock_path": "data/runtime/binance_futures_testnet_order_lifecycle/lifecycle.lock",
+        "require_runtime_config_pass": True,
+        "require_monitoring_config_pass": True,
+        "require_runner_config_pass": True,
+        "require_testnet_adapter_config_pass": True,
+        "require_testnet_read_only_config_pass": True,
+        "require_testnet_order_test_config_pass": True,
+        "require_futures_feed_config_pass": True,
+        "require_futures_risk_model_config_pass": True,
+        "require_futures_paper_position_config_pass": True,
+        "require_kill_switch_enabled": True,
+        "report_export_dir": "reports/binance_futures_testnet_order_lifecycle",
+    }
+    values.update(overrides)
+    return values
+
+
 def _report(root: Path, **kwargs):
     registry = kwargs.pop("registry", None)
     if registry is None:
@@ -986,7 +1134,12 @@ def _report(root: Path, **kwargs):
     baseline = kwargs.pop("baseline", None)
     if baseline is None:
         baseline = _baseline(root)
-    return BTCPaperReadinessEngine(repo_root=root, env=kwargs.pop("env", {}), gate_runner=kwargs.pop("gate_runner", None)).build_report(
+    return BTCPaperReadinessEngine(
+        repo_root=root,
+        env=kwargs.pop("env", {}),
+        gate_runner=kwargs.pop("gate_runner", None),
+        binance_futures_testnet_order_lifecycle_engine=kwargs.pop("binance_futures_testnet_order_lifecycle_engine", _FakeOrderLifecycleEngine(root)),
+    ).build_report(
         registry_path=str(registry),
         baseline_config=str(baseline),
         **kwargs,
@@ -1019,6 +1172,7 @@ def test_ready_when_btc_samples_baseline_and_placeholders_exist(tmp_path) -> Non
     assert _check(report, "btc_futures_leverage_liquidation_risk_model").status == "PASS"
     assert _check(report, "binance_futures_testnet_authenticated_read_only").status == "PASS"
     assert _check(report, "binance_futures_testnet_order_test_preflight").status == "PASS"
+    assert _check(report, "binance_futures_testnet_manual_post_only_lifecycle").status == "PASS"
 
 
 def test_missing_btc_15m_required_sample_blocks(tmp_path) -> None:
@@ -1328,6 +1482,19 @@ def test_readiness_blocks_when_order_test_market_public_validation_is_unsafe(tmp
 
     assert report.readiness_status == "BLOCKED"
     assert _check(report, "binance_futures_testnet_order_test_preflight").status == "FAIL"
+
+
+def test_readiness_blocks_when_order_lifecycle_config_is_dangerous(tmp_path) -> None:
+    _ready_files(tmp_path)
+    _write_json(
+        tmp_path / "configs" / "binance_futures_testnet_order_lifecycle.json",
+        _binance_futures_testnet_order_lifecycle_config(allow_market_order=True),
+    )
+
+    report = _report(tmp_path)
+
+    assert report.readiness_status == "BLOCKED"
+    assert _check(report, "binance_futures_testnet_manual_post_only_lifecycle").status == "FAIL"
 
 
 def test_readiness_blocks_when_futures_paper_position_config_is_dangerous(tmp_path) -> None:
