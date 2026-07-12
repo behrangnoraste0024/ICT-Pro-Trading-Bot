@@ -13,6 +13,7 @@ from engine.diagnostics.binance_futures_testnet_adapter_engine import BinanceFut
 from engine.diagnostics.binance_futures_testnet_read_only_engine import BinanceFuturesTestnetReadOnlyEngine
 from engine.diagnostics.binance_futures_testnet_order_test_engine import BinanceFuturesTestnetOrderTestEngine
 from engine.diagnostics.binance_futures_testnet_order_lifecycle_engine import BinanceFuturesTestnetOrderLifecycleEngine
+from engine.diagnostics.binance_futures_testnet_protective_orders_engine import BinanceFuturesTestnetProtectiveOrdersEngine
 from engine.diagnostics.btc_paper_runtime_config_engine import BTCPaperRuntimeConfigEngine
 from engine.diagnostics.btc_paper_monitoring_engine import BTCPaperMonitoringEngine
 from engine.diagnostics.btc_paper_runner_engine import BTCPaperRunnerEngine
@@ -50,6 +51,7 @@ class BTCPaperReadinessEngine:
         binance_futures_testnet_read_only_engine: BinanceFuturesTestnetReadOnlyEngine | None = None,
         binance_futures_testnet_order_test_engine: BinanceFuturesTestnetOrderTestEngine | None = None,
         binance_futures_testnet_order_lifecycle_engine: BinanceFuturesTestnetOrderLifecycleEngine | None = None,
+        binance_futures_testnet_protective_orders_engine: BinanceFuturesTestnetProtectiveOrdersEngine | None = None,
         gate_runner: Callable[..., int] | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
@@ -72,6 +74,7 @@ class BTCPaperReadinessEngine:
         self.binance_futures_testnet_read_only_engine = binance_futures_testnet_read_only_engine or BinanceFuturesTestnetReadOnlyEngine(repo_root=self.repo_root, env={})
         self.binance_futures_testnet_order_test_engine = binance_futures_testnet_order_test_engine or BinanceFuturesTestnetOrderTestEngine(repo_root=self.repo_root, env={})
         self.binance_futures_testnet_order_lifecycle_engine = binance_futures_testnet_order_lifecycle_engine or BinanceFuturesTestnetOrderLifecycleEngine(repo_root=self.repo_root, env={})
+        self.binance_futures_testnet_protective_orders_engine = binance_futures_testnet_protective_orders_engine or BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=self.repo_root, env={})
         self.gate_runner = gate_runner
         self.env = os.environ if env is None else env
 
@@ -152,6 +155,7 @@ class BTCPaperReadinessEngine:
         checks.append(self._binance_futures_testnet_read_only_readiness_check())
         checks.append(self._binance_futures_testnet_order_test_readiness_check())
         checks.append(self._binance_futures_testnet_order_lifecycle_readiness_check())
+        checks.append(self._binance_futures_testnet_protective_orders_readiness_check())
         checks.append(self._cache_diagnostics_check(snapshot))
         if run_gate:
             checks.append(self._gate_check(use_cache=use_cache, cache_dir=cache_dir))
@@ -939,6 +943,53 @@ class BTCPaperReadinessEngine:
             "FAIL",
             "REQUIRED",
             "Binance futures testnet manual post-only lifecycle config failed safety validation.",
+            details,
+        )
+
+    def _binance_futures_testnet_protective_orders_readiness_check(self) -> BTCPaperReadinessCheck:
+        config_path = self.repo_root / "configs" / "binance_futures_testnet_protective_orders.json"
+        if not config_path.exists():
+            return self._check(
+                "binance_futures_testnet_protective_sl_tp",
+                "WARNING",
+                "INFO",
+                "Binance futures testnet protective SL/TP config is not present yet.",
+                {"binance_futures_testnet_protective_orders_config": str(config_path)},
+            )
+        report = self.binance_futures_testnet_protective_orders_engine.validate(str(config_path))
+        config = report.config
+        safe_flags = bool(
+            config
+            and config.feature_enabled is False
+            and config.explicit_cli_only
+            and config.testnet_only
+            and not config.allow_position_entry
+            and not config.allow_position_close
+            and not config.allow_production_endpoint
+        )
+        details = {
+            "binance_futures_testnet_protective_orders_config": str(config_path),
+            "validation_status": report.status,
+            "issue_count": report.issue_count,
+            "warning_count": report.warning_count,
+            "fail_count": report.fail_count,
+            "safe_flags": safe_flags,
+            "issues": [issue.to_dict() for issue in report.issues],
+            "diagnostics": dict(report.diagnostics),
+        }
+        if report.status == "PASS" and safe_flags:
+            return self._check(
+                "binance_futures_testnet_protective_sl_tp",
+                "PASS",
+                "INFO",
+                "Binance futures testnet protective SL/TP config is present, disabled by default, explicit-only, testnet-only, and non-position-mutating.",
+                details,
+            )
+        return self._check(
+            "binance_futures_testnet_protective_sl_tp",
+            "FAIL",
+            "REQUIRED",
+            "Binance futures testnet protective SL/TP config failed safety validation.",
             details,
         )
 
