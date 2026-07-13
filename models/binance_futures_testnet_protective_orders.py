@@ -42,8 +42,8 @@ class BinanceFuturesTestnetProtectiveOrdersConfig:
     close_position: bool = True
     price_protect: bool = True
     new_order_response_type: str = "ACK"
-    maximum_position_abs_quantity: float = 0.001
-    maximum_position_notional_usdt: float = 100.0
+    maximum_position_abs_quantity: float = 0.002
+    maximum_position_notional_usdt: float = 150.0
     minimum_stop_offset_bps: int = 500
     maximum_stop_offset_bps: int = 3000
     default_stop_offset_bps: int = 1000
