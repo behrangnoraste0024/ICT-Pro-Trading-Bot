@@ -84,6 +84,8 @@ class BinanceFuturesTestnetProtectiveOrdersClient:
         self.env = {} if env is None else env
         self.now_ms_provider = now_ms_provider
         self.server_time_offset_ms: int | None = None
+        self.server_time_synced_at_ms: int | None = None
+        self.server_time_resync_count: int = 0
         self.validate_base_url(config.rest_base_url)
 
     def inspect_credentials(self) -> BinanceFuturesTestnetProtectiveCredentialMetadata:
@@ -109,7 +111,18 @@ class BinanceFuturesTestnetProtectiveOrdersClient:
     def set_server_time_offset(self, server_time: int, local_time: int | None = None) -> int:
         local = self._now_ms() if local_time is None else int(local_time)
         self.server_time_offset_ms = int(server_time) - local
+        self.server_time_synced_at_ms = local
         return self.server_time_offset_ms
+
+    def synchronize_server_time(self, force: bool = False) -> bool:
+        if not force and not self._server_time_sync_is_stale():
+            return False
+        server = self.fetch_server_time()
+        if int(server["clock_skew_ms"]) > int(self.config.maximum_clock_skew_ms):
+            raise ValueError("clock skew exceeds protective maximum")
+        self.set_server_time_offset(int(server["server_time"]), int(server["local_time"]))
+        self.server_time_resync_count += 1
+        return True
 
     def fetch_exchange_filters(self) -> BinanceFuturesTestnetProtectiveExchangeFilters:
         return self.parse_exchange_filters(self._public_get(self.config.exchange_info_path).payload)
@@ -243,12 +256,19 @@ class BinanceFuturesTestnetProtectiveOrdersClient:
     def query_algo_order(self, client_algo_id: str) -> tuple[BinanceFuturesTestnetProtectiveAlgoSummary, BinanceFuturesTestnetProtectiveRequestMetadata]:
         self._validate_client_algo_id(client_algo_id)
         last_error: Exception | None = None
+        timestamp_retry_count = 0
         for retry in range(int(self.config.max_query_retries) + 1):
             try:
                 payload, metadata = self._signed_request_with_metadata("GET", self.config.algo_order_path, {"clientAlgoId": client_algo_id})
                 metadata.retry_count = retry
+                metadata.timestamp_retry_count = timestamp_retry_count
+                metadata.timestamp_error_detected = timestamp_retry_count > 0
                 return self.sanitize_algo_summary(payload, client_algo_id), metadata
-            except BinanceFuturesTestnetProtectiveAPIError:
+            except BinanceFuturesTestnetProtectiveAPIError as exc:
+                if exc.binance_code == -1021 and retry < int(self.config.max_query_retries):
+                    timestamp_retry_count += 1
+                    self.synchronize_server_time(force=True)
+                    continue
                 raise
             except (TimeoutError, OSError, ConnectionResetError) as exc:
                 last_error = exc
@@ -359,6 +379,7 @@ class BinanceFuturesTestnetProtectiveOrdersClient:
     def _signed_request_with_metadata(self, method: str, path: str, parameters: dict[str, Any]) -> tuple[Any, BinanceFuturesTestnetProtectiveRequestMetadata]:
         self._require_credentials()
         self._require_allowed_authenticated_transport(method, path)
+        self.synchronize_server_time(force=self.server_time_offset_ms is None)
         fresh_parameters = {key: value for key, value in parameters.items() if value is not None and key not in ("timestamp", "recvWindow", "signature")}
         fresh_parameters["timestamp"] = self._fresh_signed_timestamp_ms()
         fresh_parameters["recvWindow"] = int(self.config.recv_window_ms)
@@ -379,6 +400,8 @@ class BinanceFuturesTestnetProtectiveOrdersClient:
             signature_generated=True,
             signature_redacted=True,
             api_key_header_used=True,
+            server_time_sync_used=self.server_time_offset_ms is not None,
+            server_time_resync_count=self.server_time_resync_count,
         )
         response = self.authenticated_request(method, url, body, int(self.config.request_timeout_seconds), headers)
         if urlparse(response.final_url).hostname != self.ALLOWED_HOST:
@@ -444,6 +467,11 @@ class BinanceFuturesTestnetProtectiveOrdersClient:
     def _fresh_signed_timestamp_ms(self) -> int:
         offset = 0 if self.server_time_offset_ms is None else int(self.server_time_offset_ms)
         return int(self._now_ms()) + offset
+
+    def _server_time_sync_is_stale(self) -> bool:
+        if self.server_time_synced_at_ms is None:
+            return self.server_time_offset_ms is None
+        return int(self._now_ms()) - int(self.server_time_synced_at_ms) > int(self.config.maximum_server_time_sync_age_ms)
 
     def _validate_pair_id(self, pair_id: str) -> None:
         if not pair_id or any(char.isspace() for char in pair_id) or len(pair_id) > 64:
