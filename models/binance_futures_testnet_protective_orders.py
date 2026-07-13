@@ -28,6 +28,7 @@ class BinanceFuturesTestnetProtectiveOrdersConfig:
     recv_window_ms: int = 10000
     maximum_recv_window_ms: int = 10000
     maximum_clock_skew_ms: int = 5000
+    maximum_server_time_sync_age_ms: int = 5000
     feature_enabled: bool = False
     automatic_execution_enabled: bool = False
     explicit_cli_only: bool = True
@@ -194,6 +195,10 @@ class BinanceFuturesTestnetProtectiveRequestMetadata:
     response_status_code: int | None = None
     final_host_validated: bool = False
     retry_count: int = 0
+    server_time_sync_used: bool = False
+    server_time_resync_count: int = 0
+    timestamp_retry_count: int = 0
+    timestamp_error_detected: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return _serialize(asdict(self))

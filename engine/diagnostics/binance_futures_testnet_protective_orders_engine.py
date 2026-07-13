@@ -151,6 +151,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             self._attach_journal_baseline(journal, position, preview)
             self._write_journal(config, journal, "STOP_CREATE_STARTED", {"client_algo_id": stop_client_algo_id})
             stop_create_started = True
+            client.synchronize_server_time(force=True)
             stop_order, meta = client.create_stop_order(preview)
             create_requests.append(meta)
             self._validate_algo_identity(stop_order, preview, "STOP")
@@ -163,6 +164,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             self._write_journal(config, journal, "STOP_QUERY_COMPLETE", self._algo_details(stop_order))
             self._write_journal(config, journal, "TAKE_PROFIT_CREATE_STARTED", {"client_algo_id": take_profit_client_algo_id})
             take_create_started = True
+            client.synchronize_server_time(force=True)
             take_order, meta = client.create_take_profit_order(preview)
             create_requests.append(meta)
             self._validate_algo_identity(take_order, preview, "TAKE_PROFIT")
@@ -176,6 +178,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             self._require_same_position(position, client.require_protectable_position(client.fetch_position_risk()))
             self._write_journal(config, journal, "TAKE_PROFIT_CANCEL_STARTED", {"client_algo_id": take_profit_client_algo_id})
             cancel_started = True
+            client.synchronize_server_time(force=True)
             delete_take, meta = client.cancel_algo_order_exact(take_profit_client_algo_id)
             cancel_requests.append(meta)
             self._validate_delete_ack(delete_take, take_profit_client_algo_id)
@@ -185,6 +188,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             self._require_terminal_safe(final_take, "TAKE_PROFIT")
             self._write_journal(config, journal, "TAKE_PROFIT_CANCELED", self._algo_details(final_take))
             self._write_journal(config, journal, "STOP_CANCEL_STARTED", {"client_algo_id": stop_client_algo_id})
+            client.synchronize_server_time(force=True)
             delete_stop, meta = client.cancel_algo_order_exact(stop_client_algo_id)
             cancel_requests.append(meta)
             self._validate_delete_ack(delete_stop, stop_client_algo_id)
@@ -202,6 +206,14 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             journal.recovery_required = bool(exc.recovery or exc.critical)
             self._write_journal(config, journal, "RECOVERY_REQUIRED" if exc.recovery or exc.critical else "FAILED", {"reason": exc.reason})
             return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "CRITICAL" if exc.critical else "FAIL", exc.decision, exc.reason, credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, journal=journal, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase=journal.phase, recovery_required=exc.recovery or exc.critical, unexpected_trigger=exc.critical, unexpected_position_change=exc.decision == "UNEXPECTED_POSITION_CHANGE")
+        except BinanceFuturesTestnetProtectiveAPIError as exc:
+            message = self._sanitize_api_error(exc)
+            recovery = bool((stop_create_started or take_create_started or cancel_started) and exc.request_transmitted)
+            decision = "TIMESTAMP_OUTSIDE_RECV_WINDOW" if exc.binance_code == -1021 else "RECOVERY_REQUIRED" if recovery else "PROTECTIVE_PRECHECK_FAILED"
+            issues.append(self._issue(decision.lower(), "FAIL", message))
+            journal.recovery_required = recovery
+            self._write_journal(config, journal, "RECOVERY_REQUIRED" if recovery else "FAILED", {"reason": message})
+            return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "FAIL", decision, "Protective lifecycle failed safely.", credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, journal=journal, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase=journal.phase, recovery_required=recovery)
         except Exception as exc:
             message = self._sanitize(str(exc))
             recovery = stop_create_started or take_create_started or cancel_started
@@ -277,6 +289,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             if take is not None:
                 self._check_unexpected_trigger(take)
             if take is not None and take.algo_status == "NEW":
+                client.synchronize_server_time(force=True)
                 delete_take, meta = client.cancel_algo_order_exact(take_profit_client_algo_id)
                 cancel_requests.append(meta)
                 self._validate_delete_ack(delete_take, take_profit_client_algo_id)
@@ -287,6 +300,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
                 self._validate_recovery_identity(final_take, journal, "TAKE_PROFIT", take_profit_client_algo_id)
                 self._check_unexpected_trigger(final_take)
             if stop is not None and stop.algo_status == "NEW":
+                client.synchronize_server_time(force=True)
                 delete_stop, meta = client.cancel_algo_order_exact(stop_client_algo_id)
                 cancel_requests.append(meta)
                 self._validate_delete_ack(delete_stop, stop_client_algo_id)
@@ -351,7 +365,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         self._expect(config.allowed_order_types == ["STOP_MARKET", "TAKE_PROFIT_MARKET"], issues, "allowed_order_types", "Only STOP_MARKET and TAKE_PROFIT_MARKET are allowed.")
         self._expect(config.allowed_methods == ["POST", "GET", "DELETE"], issues, "allowed_methods", "Only exact POST/GET/DELETE are allowed.")
         self._expect(config.algo_order_path == "/fapi/v1/algoOrder", issues, "algo_order_path", "Protective orders must use /fapi/v1/algoOrder.")
-        self._expect(config.request_timeout_seconds == 30 and config.recv_window_ms == 10000 and config.maximum_recv_window_ms == 10000 and config.maximum_clock_skew_ms <= 5000, issues, "timeout_recv_window", "Timeout, recvWindow and clock skew must remain hardened.")
+        self._expect(config.request_timeout_seconds == 30 and config.recv_window_ms == 10000 and config.maximum_recv_window_ms == 10000 and config.maximum_clock_skew_ms <= 5000 and 0 < int(config.maximum_server_time_sync_age_ms) <= 5000, issues, "timeout_recv_window", "Timeout, recvWindow, server-time sync age and clock skew must remain hardened.")
         self._expect(config.required_position_mode == "ONE_WAY" and config.required_position_side == "BOTH" and config.working_type == "MARK_PRICE" and config.close_position and config.price_protect and config.new_order_response_type == "ACK", issues, "close_position_safety", "Protective algo orders must be closePosition/BOTH/MARK_PRICE/priceProtect/ACK.")
         self._expect(0 < float(config.maximum_position_abs_quantity) <= 0.002, issues, "maximum_position_abs_quantity", "Maximum position quantity must be > 0 and <= 0.002.")
         self._expect(0 < float(config.maximum_position_notional_usdt) <= 150.0, issues, "maximum_position_notional_usdt", "Maximum notional must be > 0 and <= 150.")
@@ -390,10 +404,10 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         self._expect(not report_dir.is_absolute() and ".." not in report_dir.parts and len(report_dir.parts) >= 2 and report_dir.parts[0] == "reports" and report_dir.parts[1] == "binance_futures_testnet_protective_orders", issues, "report_export_dir", "report_export_dir must stay under reports/binance_futures_testnet_protective_orders.")
 
     def _server_time_or_issue(self, client: BinanceFuturesTestnetProtectiveOrdersClient, config: BinanceFuturesTestnetProtectiveOrdersConfig, issues: list[BinanceFuturesTestnetProtectiveIssue]) -> None:
-        server = client.fetch_server_time()
-        if int(server["clock_skew_ms"]) > int(config.maximum_clock_skew_ms):
+        try:
+            client.synchronize_server_time(force=True)
+        except ValueError:
             raise ProtectiveAbort("PUBLIC_PREFLIGHT_FAILED", "Clock skew exceeds protective maximum.")
-        client.set_server_time_offset(int(server["server_time"]), int(server["local_time"]))
 
     def _check_unexpected_trigger(self, order: BinanceFuturesTestnetProtectiveAlgoSummary | None) -> None:
         if order is None:

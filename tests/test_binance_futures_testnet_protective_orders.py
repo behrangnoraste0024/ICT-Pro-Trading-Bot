@@ -36,6 +36,17 @@ def _http_get(url, timeout):
     raise AssertionError(f"unexpected GET {url}")
 
 
+class _Clock:
+    def __init__(self, start: int = 1000, step: int = 1) -> None:
+        self.value = start
+        self.step = step
+
+    def __call__(self) -> int:
+        current = self.value
+        self.value += self.step
+        return current
+
+
 def _position(amount: str = "0.001", mark: str = "50000", entry: str = "49000") -> list[dict]:
     return [{"symbol": "BTCUSDT", "positionSide": "BOTH", "positionAmt": amount, "entryPrice": entry, "markPrice": mark, "notional": str(abs(float(amount)) * float(mark))}]
 
@@ -98,6 +109,7 @@ def test_strict_config_rejects_identity_and_limit_drift(tmp_path: Path) -> None:
         "maximum_position_notional_usdt": 151,
         "request_timeout_seconds": 31,
         "recv_window_ms": 10001,
+        "maximum_server_time_sync_age_ms": 5001,
         "pair_confirmation_phrase": "BAD",
         "recovery_confirmation_phrase": "BAD",
         "client_algo_id_prefix": "bad-",
@@ -255,16 +267,171 @@ def test_create_parameters_are_exact_close_position_and_freshly_signed(tmp_path:
     assert "price" not in params
 
 
+def test_lifecycle_refreshes_server_time_before_each_mutation_boundary(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    server_time_calls = []
+    auth_calls = []
+    statuses = {
+        "smcbot-protect-sl-001": ["NEW", "CANCELED"],
+        "smcbot-protect-tp-001": ["NEW", "CANCELED"],
+    }
+
+    def http_get(url, timeout):
+        if url.endswith("/fapi/v1/time"):
+            server_time_calls.append(url)
+            return BinanceLifecycleHTTPResponse(200, url, {"serverTime": 1000}, 10)
+        if "/fapi/v1/exchangeInfo" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _exchange_info(), 10)
+        raise AssertionError(f"unexpected GET {url}")
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        auth_calls.append((method, url, params))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        client_id = params["clientAlgoId"][0]
+        if method == "DELETE":
+            return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200}, 10)
+        order_type = params.get("type", ["STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"])[0]
+        trigger = params.get("triggerPrice", ["45000.00" if order_type == "STOP_MARKET" else "55000.00"])[0]
+        status = statuses[client_id].pop(0) if method == "GET" and statuses[client_id] else statuses[client_id][0] if statuses[client_id] else "CANCELED"
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status=status, trigger=trigger), 10)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "PASS"
+    assert len(server_time_calls) == 5
+    assert [item.server_time_resync_count for item in result.create_requests] == [2, 3]
+    assert [item.server_time_resync_count for item in result.cancel_requests] == [4, 5]
+    assert all(item.server_time_sync_used for item in result.create_requests + result.cancel_requests)
+
+
+def test_stale_server_time_sync_refreshes_before_signing(tmp_path: Path) -> None:
+    calls = []
+
+    def http_get(url, timeout):
+        calls.append(url)
+        return BinanceLifecycleHTTPResponse(200, url, {"serverTime": 7001}, 10)
+
+    def transport(method, url, body, timeout, headers):
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response("smcbot-protect-sl-001", "STOP_MARKET"), 10)
+
+    client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), http_get=http_get, authenticated_request=transport, env=_env(), now_ms_provider=lambda: 6001)
+    client.server_time_offset_ms = 0
+    client.server_time_synced_at_ms = 0
+
+    _, metadata = client.query_algo_order("smcbot-protect-sl-001")
+
+    assert len(calls) == 1
+    assert metadata.server_time_sync_used is True
+    assert metadata.server_time_resync_count == 1
+    assert metadata.timestamp == 7001
+
+
+def test_get_timestamp_error_resyncs_and_retries_once(tmp_path: Path) -> None:
+    auth_calls = []
+    server_time_calls = []
+    clock = _Clock(1000)
+
+    def http_get(url, timeout):
+        server_time_calls.append(url)
+        return BinanceLifecycleHTTPResponse(200, url, {"serverTime": clock.value + 100}, 10)
+
+    def transport(method, url, body, timeout, headers):
+        auth_calls.append(parse_qs(body.decode("utf-8")))
+        if len(auth_calls) == 1:
+            raise BinanceFuturesTestnetProtectiveAPIError("timestamp outside recvWindow", http_status=400, binance_code=-1021, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response("smcbot-protect-sl-001", "STOP_MARKET"), 10)
+
+    client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), http_get=http_get, authenticated_request=transport, env=_env(), now_ms_provider=clock)
+
+    _, metadata = client.query_algo_order("smcbot-protect-sl-001")
+
+    assert len(auth_calls) == 2
+    assert len(server_time_calls) == 2
+    assert metadata.retry_count == 1
+    assert metadata.timestamp_retry_count == 1
+    assert metadata.timestamp_error_detected is True
+    assert auth_calls[0]["timestamp"] != auth_calls[1]["timestamp"]
+    assert auth_calls[0]["signature"] != auth_calls[1]["signature"]
+
+
+def test_get_timestamp_error_retries_once_then_fails(tmp_path: Path) -> None:
+    auth_calls = []
+    clock = _Clock(1000)
+
+    def http_get(url, timeout):
+        return BinanceLifecycleHTTPResponse(200, url, {"serverTime": clock.value + 100}, 10)
+
+    def transport(method, url, body, timeout, headers):
+        auth_calls.append(body)
+        raise BinanceFuturesTestnetProtectiveAPIError("timestamp outside recvWindow", http_status=400, binance_code=-1021, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+
+    client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), http_get=http_get, authenticated_request=transport, env=_env(), now_ms_provider=clock)
+
+    try:
+        client.query_algo_order("smcbot-protect-sl-001")
+    except BinanceFuturesTestnetProtectiveAPIError as exc:
+        assert exc.binance_code == -1021
+    else:
+        raise AssertionError("second timestamp rejection should fail safely")
+    assert len(auth_calls) == 2
+
+
+def test_get_does_not_retry_other_binance_errors(tmp_path: Path) -> None:
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        calls.append(body)
+        raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+
+    client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), http_get=_http_get, authenticated_request=transport, env=_env(), now_ms_provider=lambda: 1000)
+
+    try:
+        client.query_algo_order("smcbot-protect-sl-001")
+    except BinanceFuturesTestnetProtectiveAPIError as exc:
+        assert exc.binance_code == -2013
+    else:
+        raise AssertionError("non-timestamp Binance errors must not retry")
+    assert len(calls) == 1
+
+
+def test_post_and_delete_timestamp_errors_are_not_retried(tmp_path: Path) -> None:
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        calls.append(method)
+        raise BinanceFuturesTestnetProtectiveAPIError("timestamp outside recvWindow", http_status=400, binance_code=-1021, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+
+    client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), http_get=_http_get, authenticated_request=transport, env=_env(), now_ms_provider=lambda: 1000)
+    filters = client.parse_exchange_filters(_exchange_info())
+    position = client.require_protectable_position(_position())
+    preview = client.build_preview("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", position, filters)
+
+    for action in (lambda: client.create_stop_order(preview), lambda: client.cancel_algo_order_exact("smcbot-protect-sl-001")):
+        try:
+            action()
+        except BinanceFuturesTestnetProtectiveAPIError as exc:
+            assert exc.binance_code == -1021
+        else:
+            raise AssertionError("mutation timestamp errors must fail without retry")
+
+    assert calls == ["POST", "DELETE"]
+
+
 def test_exact_get_and_delete_algo_contract_uses_client_algo_id_only(tmp_path: Path) -> None:
     calls = []
-    now_values = iter([1000, 1001])
 
     def transport(method, url, body, timeout, headers):
         params = parse_qs(body.decode("utf-8"))
         calls.append((method, params))
         return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": "smcbot-protect-sl-001", "algoId": 1, "code": 200}, 10)
 
-    client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), authenticated_request=transport, env=_env(), now_ms_provider=lambda: next(now_values))
+    client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), authenticated_request=transport, env=_env(), now_ms_provider=lambda: 1000)
+    client.server_time_offset_ms = 0
+    client.server_time_synced_at_ms = 1000
 
     client.query_algo_order("smcbot-protect-sl-001")
     client.cancel_algo_order_exact("smcbot-protect-sl-001")
@@ -477,6 +644,29 @@ def test_mutation_uncertainty_returns_recovery_required_and_does_not_retry_post(
     assert not _runtime_file(tmp_path, "protective.lock").exists()
 
 
+def test_lifecycle_post_timestamp_error_requires_recovery_without_retry(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, url, params))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        if method == "POST":
+            raise BinanceFuturesTestnetProtectiveAPIError("timestamp outside recvWindow", http_status=400, binance_code=-1021, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        raise AssertionError("no query/cancel after timestamp-rejected POST")
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "TIMESTAMP_OUTSIDE_RECV_WINDOW"
+    assert result.recovery_required is True
+    assert len([call for call in calls if call[0] == "POST"]) == 1
+
+
 def test_recovery_queries_both_ids_cancels_new_take_profit_before_stop(tmp_path: Path) -> None:
     path = _write_config(tmp_path)
     calls = []
@@ -579,7 +769,7 @@ def test_journal_confirmed_order_returning_absent_requires_recovery(tmp_path: Pa
 
 def test_query_retry_policy_for_transient_only_and_fresh_signature(tmp_path: Path) -> None:
     calls = []
-    now_values = iter([1000, 1001, 1002])
+    now_values = iter([1000, 1001, 1002, 1003])
 
     def transport(method, url, body, timeout, headers):
         params = parse_qs(body.decode("utf-8"))
@@ -589,6 +779,8 @@ def test_query_retry_policy_for_transient_only_and_fresh_signature(tmp_path: Pat
         return BinanceLifecycleHTTPResponse(200, url, _algo_response("smcbot-protect-sl-001", "STOP_MARKET"), 10)
 
     client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), authenticated_request=transport, env=_env(), now_ms_provider=lambda: next(now_values))
+    client.server_time_offset_ms = 0
+    client.server_time_synced_at_ms = 1000
     client.query_algo_order("smcbot-protect-sl-001")
 
     assert len(calls) == 2
@@ -603,6 +795,8 @@ def test_query_retry_policy_for_transient_only_and_fresh_signature(tmp_path: Pat
         raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
 
     client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), authenticated_request=deterministic, env=_env(), now_ms_provider=lambda: 1000)
+    client.server_time_offset_ms = 0
+    client.server_time_synced_at_ms = 1000
     try:
         client.query_algo_order("smcbot-protect-sl-001")
     except BinanceFuturesTestnetProtectiveAPIError:
