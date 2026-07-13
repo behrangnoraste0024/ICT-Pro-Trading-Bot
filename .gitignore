@@ -105,3 +105,7 @@ reports/binance_futures_testnet_order_lifecycle/*.json
 reports/binance_futures_testnet_order_lifecycle/*.jsonl
 reports/binance_futures_testnet_order_lifecycle/*.md
 reports/binance_futures_testnet_order_lifecycle/*.tmp
+
+# Binance Futures Testnet protective-order runtime state
+data/runtime/binance_futures_testnet_protective_orders/*
+!data/runtime/binance_futures_testnet_protective_orders/.gitkeep
