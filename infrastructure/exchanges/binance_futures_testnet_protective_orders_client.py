@@ -179,6 +179,8 @@ class BinanceFuturesTestnetProtectiveOrdersClient:
         take_profit_offset_bps: int | None = None,
     ) -> BinanceFuturesTestnetProtectivePreview:
         self._validate_pair_id(pair_id)
+        stop_client_algo_id = stop_client_algo_id or self.derive_client_algo_id(pair_id, "STOP", position.direction, position.mark_price)
+        take_profit_client_algo_id = take_profit_client_algo_id or self.derive_client_algo_id(pair_id, "TAKE_PROFIT", position.direction, position.mark_price)
         self._validate_client_algo_id(stop_client_algo_id)
         self._validate_client_algo_id(take_profit_client_algo_id)
         if stop_client_algo_id == take_profit_client_algo_id:
@@ -205,6 +207,16 @@ class BinanceFuturesTestnetProtectiveOrdersClient:
             take_profit_trigger=take_trigger,
             transmission_ready=True,
         )
+
+
+    def derive_client_algo_id(self, pair_id: str, label: str, position_direction: str, mark_price: Decimal) -> str:
+        self._validate_pair_id(pair_id)
+        suffix = "sl" if label == "STOP" else "tp" if label == "TAKE_PROFIT" else "xx"
+        material = f"{self.config.exchange_symbol}|{pair_id}|{label}|{position_direction}|{_format_decimal(mark_price)}"
+        digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
+        client_algo_id = f"{self.config.client_algo_id_prefix}{suffix}-{digest}"
+        self._validate_client_algo_id(client_algo_id)
+        return client_algo_id
 
     def derive_triggers(
         self,

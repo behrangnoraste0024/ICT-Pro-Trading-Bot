@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
+from decimal import InvalidOperation
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,11 @@ from models.binance_futures_testnet_protective_orders import (
     BinanceFuturesTestnetProtectiveRequestMetadata,
     BinanceFuturesTestnetProtectiveResult,
     BinanceFuturesTestnetProtectiveValidationReport,
+    PROTECTIVE_JOURNAL_SCHEMA_VERSION,
+    ProtectiveMutationIntent,
+    ProtectiveMutationKind,
+    ProtectiveReconciliationResult,
+    ProtectiveReconciliationState,
 )
 
 
@@ -97,7 +104,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             position = client.require_protectable_position([{"symbol": config.exchange_symbol, "positionSide": "BOTH", "positionAmt": str(position_amount), "entryPrice": str(entry_price), "markPrice": str(mark_price)}])
             filters = client.parse_exchange_filters({"symbols": [{"symbol": config.exchange_symbol, "filters": [{"filterType": "PRICE_FILTER", "minPrice": "1", "maxPrice": "1000000", "tickSize": str(tick_size)}]}]})
             preview = client.build_preview(pair_id, stop_client_algo_id, take_profit_client_algo_id, position, filters, stop_offset_bps, take_profit_offset_bps)
-            return self._result(config, "BUILD_PREVIEW", "PASS", "PROTECTIVE_PREVIEW_VALID", "Local protective preview is valid and non-executable.", preview=preview, position=position, exchange_filters=filters, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="CREATED_LOCALLY")
+            return self._result(config, "BUILD_PREVIEW", "PASS", "PROTECTIVE_PREVIEW_VALID", "Local protective preview is valid and non-executable.", preview=preview, position=position, exchange_filters=filters, issues=issues, pair_id=pair_id, stop_client_algo_id=preview.stop_client_algo_id, take_profit_client_algo_id=preview.take_profit_client_algo_id, phase="CREATED_LOCALLY")
         except Exception as exc:
             issues.append(self._issue("protective_preview_rejected", "FAIL", self._sanitize(str(exc))))
             return self._result(config, "BUILD_PREVIEW", "FAIL", "OPERATION_BLOCKED", "Local protective preview was rejected.", issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
@@ -130,7 +137,6 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         if not lock_acquired:
             issues.append(self._issue("protective_lock_exists", "FAIL", "An active protective-order lock already exists."))
             return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "FAIL", "RECOVERY_REQUIRED", "Existing protective lock blocks a new lifecycle.", credential_metadata=metadata, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, recovery_required=True)
-        journal = BinanceFuturesTestnetProtectiveJournal(pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
         filters = None
         position = final_position = None
         preview = None
@@ -138,8 +144,26 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         create_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata] = []
         query_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata] = []
         cancel_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata] = []
+        reconciliation_results: list[ProtectiveReconciliationResult] = []
+        journal = BinanceFuturesTestnetProtectiveJournal(pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
         stop_create_started = take_create_started = cancel_started = False
         try:
+            try:
+                existing_journal = self._load_existing_journal_strict(config, pair_id, stop_client_algo_id, take_profit_client_algo_id)
+            except ProtectiveAbort as exc:
+                issues.append(self._issue(exc.decision.lower(), "FAIL", exc.reason))
+                return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "FAIL", exc.decision, exc.reason, credential_metadata=metadata, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_REQUIRED", recovery_required=True)
+            except Exception as exc:
+                message = self._sanitize(str(exc))
+                issues.append(self._issue("protective_journal_load_failed", "FAIL", message))
+                return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "FAIL", "RECOVERY_REQUIRED", "Protective journal could not be trusted; recovery is required.", credential_metadata=metadata, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_REQUIRED", recovery_required=True)
+            if existing_journal is not None:
+                journal = existing_journal
+                self._handle_existing_lifecycle_journal(client, config, journal, pair_id, stop_client_algo_id, take_profit_client_algo_id, query_requests, reconciliation_results)
+                stop_client_algo_id = stop_client_algo_id or journal.stop_client_algo_id
+                take_profit_client_algo_id = take_profit_client_algo_id or journal.take_profit_client_algo_id
+                self._archive_resolved_journal(config, journal)
+                journal = BinanceFuturesTestnetProtectiveJournal(pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
             self._write_journal(config, journal, "PRECHECK_STARTED", {"pair_id": pair_id})
             filters = client.fetch_exchange_filters()
             self._server_time_or_issue(client, config, issues)
@@ -148,14 +172,14 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             position = client.require_protectable_position(client.fetch_position_risk())
             self._write_journal(config, journal, "POSITION_VALIDATED", self._position_details(position))
             preview = client.build_preview(pair_id, stop_client_algo_id, take_profit_client_algo_id, position, filters, stop_offset_bps, take_profit_offset_bps)
+            stop_client_algo_id = preview.stop_client_algo_id
+            take_profit_client_algo_id = preview.take_profit_client_algo_id
+            journal.stop_client_algo_id = stop_client_algo_id
+            journal.take_profit_client_algo_id = take_profit_client_algo_id
             self._attach_journal_baseline(journal, position, preview)
             self._write_journal(config, journal, "STOP_CREATE_STARTED", {"client_algo_id": stop_client_algo_id})
             stop_create_started = True
-            client.synchronize_server_time(force=True)
-            stop_order, meta = client.create_stop_order(preview)
-            create_requests.append(meta)
-            self._validate_algo_identity(stop_order, preview, "STOP")
-            self._check_unexpected_trigger(stop_order)
+            stop_order = self._create_with_reconciliation(client, config, journal, preview, "STOP", create_requests, query_requests, reconciliation_results)
             self._write_journal(config, journal, "STOP_CREATED", self._algo_details(stop_order))
             stop_order, meta = client.query_algo_order(stop_client_algo_id)
             query_requests.append(meta)
@@ -164,11 +188,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             self._write_journal(config, journal, "STOP_QUERY_COMPLETE", self._algo_details(stop_order))
             self._write_journal(config, journal, "TAKE_PROFIT_CREATE_STARTED", {"client_algo_id": take_profit_client_algo_id})
             take_create_started = True
-            client.synchronize_server_time(force=True)
-            take_order, meta = client.create_take_profit_order(preview)
-            create_requests.append(meta)
-            self._validate_algo_identity(take_order, preview, "TAKE_PROFIT")
-            self._check_unexpected_trigger(take_order)
+            take_order = self._create_with_reconciliation(client, config, journal, preview, "TAKE_PROFIT", create_requests, query_requests, reconciliation_results)
             self._write_journal(config, journal, "TAKE_PROFIT_CREATED", self._algo_details(take_order))
             take_order, meta = client.query_algo_order(take_profit_client_algo_id)
             query_requests.append(meta)
@@ -178,34 +198,37 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             self._require_same_position(position, client.require_protectable_position(client.fetch_position_risk()))
             self._write_journal(config, journal, "TAKE_PROFIT_CANCEL_STARTED", {"client_algo_id": take_profit_client_algo_id})
             cancel_started = True
-            client.synchronize_server_time(force=True)
-            delete_take, meta = client.cancel_algo_order_exact(take_profit_client_algo_id)
-            cancel_requests.append(meta)
-            self._validate_delete_ack(delete_take, take_profit_client_algo_id)
-            final_take, meta = client.query_algo_order(take_profit_client_algo_id)
-            query_requests.append(meta)
-            self._validate_algo_identity(final_take, preview, "TAKE_PROFIT")
-            self._require_terminal_safe(final_take, "TAKE_PROFIT")
-            self._write_journal(config, journal, "TAKE_PROFIT_CANCELED", self._algo_details(final_take))
+            take_delete_absent = self._delete_with_reconciliation(client, config, journal, preview, "TAKE_PROFIT", cancel_requests, query_requests, reconciliation_results)
+            if take_delete_absent:
+                final_take = None
+                self._write_journal(config, journal, "TAKE_PROFIT_CANCELED", {"client_algo_id": take_profit_client_algo_id, "status": "ABSENT"})
+            else:
+                final_take, meta = client.query_algo_order(take_profit_client_algo_id)
+                query_requests.append(meta)
+                self._validate_algo_identity(final_take, preview, "TAKE_PROFIT")
+                self._require_terminal_safe(final_take, "TAKE_PROFIT")
+                self._write_journal(config, journal, "TAKE_PROFIT_CANCELED", self._algo_details(final_take))
             self._write_journal(config, journal, "STOP_CANCEL_STARTED", {"client_algo_id": stop_client_algo_id})
-            client.synchronize_server_time(force=True)
-            delete_stop, meta = client.cancel_algo_order_exact(stop_client_algo_id)
-            cancel_requests.append(meta)
-            self._validate_delete_ack(delete_stop, stop_client_algo_id)
-            final_stop, meta = client.query_algo_order(stop_client_algo_id)
-            query_requests.append(meta)
-            self._validate_algo_identity(final_stop, preview, "STOP")
-            self._require_terminal_safe(final_stop, "STOP")
-            self._write_journal(config, journal, "STOP_CANCELED", self._algo_details(final_stop))
+            stop_delete_absent = self._delete_with_reconciliation(client, config, journal, preview, "STOP", cancel_requests, query_requests, reconciliation_results)
+            if stop_delete_absent:
+                final_stop = None
+                self._write_journal(config, journal, "STOP_CANCELED", {"client_algo_id": stop_client_algo_id, "status": "ABSENT"})
+            else:
+                final_stop, meta = client.query_algo_order(stop_client_algo_id)
+                query_requests.append(meta)
+                self._validate_algo_identity(final_stop, preview, "STOP")
+                self._require_terminal_safe(final_stop, "STOP")
+                self._write_journal(config, journal, "STOP_CANCELED", self._algo_details(final_stop))
             final_position = client.require_protectable_position(client.fetch_position_risk())
             self._require_same_position(position, final_position)
             journal.recovery_required = False
-            self._write_journal(config, journal, "COMPLETE", {"stop_status": final_stop.algo_status, "take_profit_status": final_take.algo_status})
+            self._write_journal(config, journal, "COMPLETE", {"stop_status": "ABSENT" if final_stop is None else final_stop.algo_status, "take_profit_status": "ABSENT" if final_take is None else final_take.algo_status})
         except ProtectiveAbort as exc:
             issues.append(self._issue(exc.decision.lower(), "CRITICAL" if exc.critical else "FAIL", exc.reason))
             journal.recovery_required = bool(exc.recovery or exc.critical)
-            self._write_journal(config, journal, "RECOVERY_REQUIRED" if exc.recovery or exc.critical else "FAILED", {"reason": exc.reason})
-            return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "CRITICAL" if exc.critical else "FAIL", exc.decision, exc.reason, credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, journal=journal, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase=journal.phase, recovery_required=exc.recovery or exc.critical, unexpected_trigger=exc.critical, unexpected_position_change=exc.decision == "UNEXPECTED_POSITION_CHANGE")
+            if exc.decision != "JOURNAL_ARCHIVE_FAILED":
+                self._write_journal(config, journal, "RECOVERY_REQUIRED" if exc.recovery or exc.critical else "FAILED", {"reason": exc.reason})
+            return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "CRITICAL" if exc.critical else "FAIL", exc.decision, exc.reason, credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, reconciliation_results=reconciliation_results, journal=journal, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_REQUIRED" if exc.decision == "JOURNAL_ARCHIVE_FAILED" else journal.phase, recovery_required=exc.recovery or exc.critical, unexpected_trigger=exc.critical, unexpected_position_change=exc.decision == "UNEXPECTED_POSITION_CHANGE")
         except BinanceFuturesTestnetProtectiveAPIError as exc:
             message = self._sanitize_api_error(exc)
             recovery = bool((stop_create_started or take_create_started or cancel_started) and exc.request_transmitted)
@@ -213,7 +236,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             issues.append(self._issue(decision.lower(), "FAIL", message))
             journal.recovery_required = recovery
             self._write_journal(config, journal, "RECOVERY_REQUIRED" if recovery else "FAILED", {"reason": message})
-            return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "FAIL", decision, "Protective lifecycle failed safely.", credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, journal=journal, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase=journal.phase, recovery_required=recovery)
+            return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "FAIL", decision, "Protective lifecycle failed safely.", credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, reconciliation_results=reconciliation_results, journal=journal, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase=journal.phase, recovery_required=recovery)
         except Exception as exc:
             message = self._sanitize(str(exc))
             recovery = stop_create_started or take_create_started or cancel_started
@@ -221,10 +244,10 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             issues.append(self._issue("protective_lifecycle_failed", "FAIL", message))
             journal.recovery_required = recovery
             self._write_journal(config, journal, "RECOVERY_REQUIRED" if recovery else "FAILED", {"reason": message})
-            return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "FAIL", decision, "Protective lifecycle failed safely.", credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, journal=journal, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase=journal.phase, recovery_required=recovery)
+            return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "FAIL", decision, "Protective lifecycle failed safely.", credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, reconciliation_results=reconciliation_results, journal=journal, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase=journal.phase, recovery_required=recovery)
         finally:
             self._release_owned_lock(lock_path, lock_token, lock_acquired)
-        return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "PASS", "PROTECTIVE_LIFECYCLE_COMPLETE", "Protective STOP_MARKET and TAKE_PROFIT_MARKET lifecycle completed without changing the position.", credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, journal=journal, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="COMPLETE", lifecycle_complete=True)
+        return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "PASS", "PROTECTIVE_LIFECYCLE_COMPLETE", "Protective STOP_MARKET and TAKE_PROFIT_MARKET lifecycle completed without changing the position.", credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, reconciliation_results=reconciliation_results, journal=journal, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="COMPLETE", lifecycle_complete=True)
 
     def query_protective_pair(self, stop_client_algo_id: str, take_profit_client_algo_id: str, config_path: str = "configs/binance_futures_testnet_protective_orders.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetProtectiveResult:
         report = self.validate(config_path, expected_profile)
@@ -269,14 +292,25 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         if not lock_acquired:
             issues.append(self._issue("protective_lock_exists", "FAIL", "An active protective-order lock already exists."))
             return self._result(config, "RECOVER_PROTECTIVE_PAIR", "FAIL", "RECOVERY_REQUIRED", "Existing protective lock blocks exact recovery.", credential_metadata=metadata, issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, recovery_required=True)
-        journal = self._load_or_new_journal(config, stop_client_algo_id, take_profit_client_algo_id)
+        journal = BinanceFuturesTestnetProtectiveJournal(stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, recovery_required=True)
         query_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata] = []
         cancel_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata] = []
+        reconciliation_results: list[ProtectiveReconciliationResult] = []
         stop = take = final_stop = final_take = None
         position = None
         try:
+            try:
+                journal = self._load_or_new_journal(config, stop_client_algo_id, take_profit_client_algo_id)
+            except ProtectiveAbort as exc:
+                issues.append(self._issue(exc.decision.lower(), "FAIL", exc.reason))
+                return self._result(config, "RECOVER_PROTECTIVE_PAIR", "FAIL", exc.decision, exc.reason, credential_metadata=metadata, journal=journal, issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_REQUIRED", recovery_required=True)
+            except Exception as exc:
+                message = self._sanitize(str(exc))
+                issues.append(self._issue("protective_journal_load_failed", "FAIL", message))
+                return self._result(config, "RECOVER_PROTECTIVE_PAIR", "FAIL", "RECOVERY_REQUIRED", "Protective journal could not be trusted; recovery is required.", credential_metadata=metadata, journal=journal, issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_REQUIRED", recovery_required=True)
             self._write_journal(config, journal, "RECOVERY_STARTED", {"stop_client_algo_id": stop_client_algo_id, "take_profit_client_algo_id": take_profit_client_algo_id})
             self._server_time_or_issue(client, config, issues)
+            self._reconcile_unresolved_intents(client, config, journal, stop_client_algo_id, take_profit_client_algo_id, query_requests, reconciliation_results)
             stop, meta = self._query_or_absent(client, stop_client_algo_id, journal, "STOP")
             if meta is not None:
                 query_requests.append(meta)
@@ -288,25 +322,29 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
                 self._check_unexpected_trigger(stop)
             if take is not None:
                 self._check_unexpected_trigger(take)
+            if (stop is not None and stop.algo_status == "NEW") or (take is not None and take.algo_status == "NEW"):
+                position = self._current_position_for_recovery(client)
+                self._compare_recovery_baseline(journal, position)
+                self._attach_recovery_baseline_from_orders(journal, position, stop, take)
             if take is not None and take.algo_status == "NEW":
-                client.synchronize_server_time(force=True)
-                delete_take, meta = client.cancel_algo_order_exact(take_profit_client_algo_id)
-                cancel_requests.append(meta)
-                self._validate_delete_ack(delete_take, take_profit_client_algo_id)
-            final_take, meta = self._query_or_absent(client, take_profit_client_algo_id, journal, "TAKE_PROFIT", after_delete=take is not None and take.algo_status == "NEW")
-            if meta is not None:
-                query_requests.append(meta)
+                recovery_preview = self._recovery_preview_from_journal(journal, stop_client_algo_id, take_profit_client_algo_id)
+                self._delete_with_reconciliation(client, config, journal, recovery_preview, "TAKE_PROFIT", cancel_requests, query_requests, reconciliation_results)
+                final_take = None
+            else:
+                final_take, meta = self._query_or_absent(client, take_profit_client_algo_id, journal, "TAKE_PROFIT")
+                if meta is not None:
+                    query_requests.append(meta)
             if final_take is not None:
                 self._validate_recovery_identity(final_take, journal, "TAKE_PROFIT", take_profit_client_algo_id)
                 self._check_unexpected_trigger(final_take)
             if stop is not None and stop.algo_status == "NEW":
-                client.synchronize_server_time(force=True)
-                delete_stop, meta = client.cancel_algo_order_exact(stop_client_algo_id)
-                cancel_requests.append(meta)
-                self._validate_delete_ack(delete_stop, stop_client_algo_id)
-            final_stop, meta = self._query_or_absent(client, stop_client_algo_id, journal, "STOP", after_delete=stop is not None and stop.algo_status == "NEW")
-            if meta is not None:
-                query_requests.append(meta)
+                recovery_preview = self._recovery_preview_from_journal(journal, stop_client_algo_id, take_profit_client_algo_id)
+                self._delete_with_reconciliation(client, config, journal, recovery_preview, "STOP", cancel_requests, query_requests, reconciliation_results)
+                final_stop = None
+            else:
+                final_stop, meta = self._query_or_absent(client, stop_client_algo_id, journal, "STOP")
+                if meta is not None:
+                    query_requests.append(meta)
             if final_stop is not None:
                 self._validate_recovery_identity(final_stop, journal, "STOP", stop_client_algo_id)
                 self._check_unexpected_trigger(final_stop)
@@ -318,18 +356,18 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
                 self._require_terminal_safe(final_stop, "STOP")
             journal.recovery_required = False
             self._write_journal(config, journal, "RECOVERY_COMPLETE", {"stop_status": "ABSENT" if final_stop is None else final_stop.algo_status, "take_profit_status": "ABSENT" if final_take is None else final_take.algo_status})
-            return self._result(config, "RECOVER_PROTECTIVE_PAIR", "PASS", "RECOVERY_COMPLETE", "Protective pair exact recovery completed.", credential_metadata=metadata, position=position, stop_order=stop, take_profit_order=take, final_stop_order=final_stop, final_take_profit_order=final_take, query_requests=query_requests, cancel_requests=cancel_requests, journal=journal, issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_COMPLETE", lifecycle_complete=True)
+            return self._result(config, "RECOVER_PROTECTIVE_PAIR", "PASS", "RECOVERY_COMPLETE", "Protective pair exact recovery completed.", credential_metadata=metadata, position=position, stop_order=stop, take_profit_order=take, final_stop_order=final_stop, final_take_profit_order=final_take, query_requests=query_requests, cancel_requests=cancel_requests, reconciliation_results=reconciliation_results, journal=journal, issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_COMPLETE", lifecycle_complete=True)
         except ProtectiveAbort as exc:
             issues.append(self._issue(exc.decision.lower(), "CRITICAL" if exc.critical else "FAIL", exc.reason))
             journal.recovery_required = True
-            self._write_journal(config, journal, "RECOVERY_REQUIRED", {"reason": exc.reason})
-            return self._result(config, "RECOVER_PROTECTIVE_PAIR", "CRITICAL" if exc.critical else "FAIL", exc.decision, exc.reason, credential_metadata=metadata, position=position, stop_order=stop, take_profit_order=take, final_stop_order=final_stop, final_take_profit_order=final_take, query_requests=query_requests, cancel_requests=cancel_requests, journal=journal, issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_REQUIRED", recovery_required=True, unexpected_trigger=exc.critical)
+            self._try_write_journal(config, journal, "RECOVERY_REQUIRED", {"reason": exc.reason})
+            return self._result(config, "RECOVER_PROTECTIVE_PAIR", "CRITICAL" if exc.critical else "FAIL", exc.decision, exc.reason, credential_metadata=metadata, position=position, stop_order=stop, take_profit_order=take, final_stop_order=final_stop, final_take_profit_order=final_take, query_requests=query_requests, cancel_requests=cancel_requests, reconciliation_results=reconciliation_results, journal=journal, issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_REQUIRED", recovery_required=True, unexpected_trigger=exc.critical)
         except Exception as exc:
             message = self._sanitize(str(exc))
             issues.append(self._issue("protective_recovery_failed", "FAIL", message))
             journal.recovery_required = True
-            self._write_journal(config, journal, "RECOVERY_REQUIRED", {"reason": message})
-            return self._result(config, "RECOVER_PROTECTIVE_PAIR", "FAIL", "RECOVERY_REQUIRED", "Protective pair recovery failed safely.", credential_metadata=metadata, position=position, stop_order=stop, take_profit_order=take, final_stop_order=final_stop, final_take_profit_order=final_take, query_requests=query_requests, cancel_requests=cancel_requests, journal=journal, issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_REQUIRED", recovery_required=True)
+            self._try_write_journal(config, journal, "RECOVERY_REQUIRED", {"reason": message})
+            return self._result(config, "RECOVER_PROTECTIVE_PAIR", "FAIL", "RECOVERY_REQUIRED", "Protective pair recovery failed safely.", credential_metadata=metadata, position=position, stop_order=stop, take_profit_order=take, final_stop_order=final_stop, final_take_profit_order=final_take, query_requests=query_requests, cancel_requests=cancel_requests, reconciliation_results=reconciliation_results, journal=journal, issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_REQUIRED", recovery_required=True)
         finally:
             self._release_owned_lock(lock_path, lock_token, lock_acquired)
 
@@ -402,6 +440,631 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             self._expect(not path.is_absolute() and ".." not in path.parts and len(path.parts) >= 3 and path.parts[0] == "data" and path.parts[1] == "runtime" and path.parts[2] == "binance_futures_testnet_protective_orders", issues, name, f"{name} must stay under data/runtime/binance_futures_testnet_protective_orders.")
         report_dir = Path(config.report_export_dir)
         self._expect(not report_dir.is_absolute() and ".." not in report_dir.parts and len(report_dir.parts) >= 2 and report_dir.parts[0] == "reports" and report_dir.parts[1] == "binance_futures_testnet_protective_orders", issues, "report_export_dir", "report_export_dir must stay under reports/binance_futures_testnet_protective_orders.")
+
+
+
+    def _handle_existing_lifecycle_journal(
+        self,
+        client: BinanceFuturesTestnetProtectiveOrdersClient,
+        config: BinanceFuturesTestnetProtectiveOrdersConfig,
+        journal: BinanceFuturesTestnetProtectiveJournal,
+        pair_id: str,
+        stop_client_algo_id: str,
+        take_profit_client_algo_id: str,
+        query_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata],
+        reconciliation_results: list[ProtectiveReconciliationResult],
+    ) -> None:
+        self._validate_journal_identity(journal, pair_id, stop_client_algo_id, take_profit_client_algo_id)
+        unresolved = [intent for intent in journal.mutation_intents if not intent.resolved]
+        if unresolved:
+            self._server_time_or_issue(client, config, [])
+            self._reconcile_unresolved_intents(
+                client,
+                config,
+                journal,
+                journal.stop_client_algo_id,
+                journal.take_profit_client_algo_id,
+                query_requests,
+                reconciliation_results,
+            )
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Existing unresolved protective mutation intent was reconciled; start recovery before a new lifecycle.", recovery=True)
+        if journal.phase not in ("COMPLETE", "RECOVERY_COMPLETE"):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Existing protective journal is not complete; recovery is required before a new lifecycle.", recovery=True)
+
+    def _load_existing_journal_strict(
+        self,
+        config: BinanceFuturesTestnetProtectiveOrdersConfig,
+        pair_id: str,
+        stop_client_algo_id: str,
+        take_profit_client_algo_id: str,
+    ) -> BinanceFuturesTestnetProtectiveJournal | None:
+        path = self._resolve(config.journal_path)
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal JSON is malformed.", recovery=True) from exc
+        if not isinstance(payload, dict):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal schema is invalid.", recovery=True)
+        journal = self._journal_from_payload_strict(payload, pair_id, stop_client_algo_id, take_profit_client_algo_id)
+        return journal
+
+    def _journal_from_payload_strict(
+        self,
+        payload: dict[str, Any],
+        pair_id: str,
+        stop_client_algo_id: str,
+        take_profit_client_algo_id: str,
+    ) -> BinanceFuturesTestnetProtectiveJournal:
+        required = (
+            "schema_version",
+            "pair_id",
+            "stop_client_algo_id",
+            "take_profit_client_algo_id",
+            "phase",
+            "recovery_required",
+            "baseline_available",
+            "baseline_position_amount",
+            "baseline_position_direction",
+            "stop_trigger",
+            "take_profit_trigger",
+            "entries",
+            "mutation_intents",
+        )
+        for field in required:
+            if field not in payload:
+                raise ProtectiveAbort("RECOVERY_REQUIRED", f"Protective journal missing required field: {field}.", recovery=True)
+        schema_version = payload["schema_version"]
+        if not isinstance(schema_version, str) or not schema_version.strip():
+            raise ProtectiveAbort("UNSUPPORTED_JOURNAL_SCHEMA", "Protective journal schema_version is invalid.", recovery=True)
+        if schema_version != PROTECTIVE_JOURNAL_SCHEMA_VERSION:
+            raise ProtectiveAbort("UNSUPPORTED_JOURNAL_SCHEMA", "Protective journal schema_version is unsupported.", recovery=True)
+        stored_pair = self._required_journal_string(payload, "pair_id")
+        stored_stop = self._required_journal_string(payload, "stop_client_algo_id")
+        stored_take = self._required_journal_string(payload, "take_profit_client_algo_id")
+        if pair_id and stored_pair != pair_id:
+            raise ProtectiveAbort("STALE_OR_MISMATCHED_JOURNAL", "Existing protective journal belongs to a different pair_id.", recovery=True)
+        if stop_client_algo_id and stored_stop != stop_client_algo_id:
+            raise ProtectiveAbort("STALE_OR_MISMATCHED_JOURNAL", "Existing protective journal STOP clientAlgoId is incompatible.", recovery=True)
+        if take_profit_client_algo_id and stored_take != take_profit_client_algo_id:
+            raise ProtectiveAbort("STALE_OR_MISMATCHED_JOURNAL", "Existing protective journal TAKE_PROFIT clientAlgoId is incompatible.", recovery=True)
+        self._validate_client_algo_id_text(stored_stop)
+        self._validate_client_algo_id_text(stored_take)
+        if stored_stop == stored_take:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal clientAlgoIds must be distinct.", recovery=True)
+        phase = self._required_journal_string(payload, "phase")
+        allowed_phases = {
+            "PRECHECK_STARTED",
+            "POSITION_VALIDATED",
+            "STOP_CREATE_STARTED",
+            "STOP_CREATE_INTENT_PERSISTED",
+            "STOP_CREATED",
+            "STOP_QUERY_COMPLETE",
+            "TAKE_PROFIT_CREATE_STARTED",
+            "TAKE_PROFIT_CREATE_INTENT_PERSISTED",
+            "TAKE_PROFIT_CREATED",
+            "TAKE_PROFIT_QUERY_COMPLETE",
+            "TAKE_PROFIT_CANCEL_STARTED",
+            "TAKE_PROFIT_DELETE_INTENT_PERSISTED",
+            "TAKE_PROFIT_CANCELED",
+            "STOP_CANCEL_STARTED",
+            "STOP_DELETE_INTENT_PERSISTED",
+            "STOP_CANCELED",
+            "COMPLETE",
+            "RECOVERY_STARTED",
+            "RECOVERY_COMPLETE",
+            "RECOVERY_REQUIRED",
+            "FAILED",
+        }
+        if phase not in allowed_phases or "_AMBIGUOUS" in phase or phase.endswith("_CREATE_CONFIRMED") or phase.endswith("_CREATE_NOT_APPLIED") or phase.endswith("_DELETE_CONFIRMED") or phase.endswith("_DELETE_NOT_APPLIED"):
+            dynamic_prefixes = ("STOP_CREATE_", "TAKE_PROFIT_CREATE_", "STOP_DELETE_", "TAKE_PROFIT_DELETE_")
+            dynamic_suffixes = ("AMBIGUOUS", "CREATE_CONFIRMED", "CREATE_NOT_APPLIED", "DELETE_CONFIRMED", "DELETE_NOT_APPLIED", "RECOVERY_REQUIRED", "PRESENT", "ABSENT", "IDENTITY_MISMATCH")
+            if not any(phase.startswith(prefix) and phase.endswith(suffix) for prefix in dynamic_prefixes for suffix in dynamic_suffixes):
+                raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal phase is invalid.", recovery=True)
+        recovery_required = self._required_journal_bool(payload, "recovery_required")
+        baseline_available = self._required_journal_bool(payload, "baseline_available")
+        entries = payload["entries"]
+        if not isinstance(entries, list):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal entries must be a list.", recovery=True)
+        for entry in entries:
+            self._validate_journal_entry(entry)
+        raw_intents = payload["mutation_intents"]
+        if not isinstance(raw_intents, list):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal mutation_intents must be a list.", recovery=True)
+        baseline_amount = self._optional_journal_decimal(payload, "baseline_position_amount")
+        if baseline_amount is not None and (not baseline_amount.is_finite() or baseline_amount == 0):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal baseline amount is invalid.", recovery=True)
+        baseline_direction = payload["baseline_position_direction"]
+        if baseline_direction is not None and baseline_direction not in ("LONG", "SHORT"):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal baseline direction is invalid.", recovery=True)
+        stop_trigger = self._optional_journal_decimal(payload, "stop_trigger")
+        take_profit_trigger = self._optional_journal_decimal(payload, "take_profit_trigger")
+        for trigger in (stop_trigger, take_profit_trigger):
+            if trigger is not None and (not trigger.is_finite() or trigger <= 0):
+                raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal trigger is invalid.", recovery=True)
+        if baseline_available:
+            if baseline_amount is None or baseline_direction not in ("LONG", "SHORT"):
+                raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal baseline metadata is incomplete.", recovery=True)
+        elif baseline_amount is not None or baseline_direction is not None or stop_trigger is not None or take_profit_trigger is not None:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal baseline metadata is inconsistent.", recovery=True)
+        if phase in ("COMPLETE", "RECOVERY_COMPLETE") and recovery_required:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Resolved protective journal cannot require recovery.", recovery=True)
+        journal = BinanceFuturesTestnetProtectiveJournal(
+            schema_version=schema_version,
+            pair_id=stored_pair,
+            stop_client_algo_id=stored_stop,
+            take_profit_client_algo_id=stored_take,
+            phase=phase,
+            recovery_required=recovery_required,
+            baseline_available=baseline_available,
+            baseline_position_amount=baseline_amount,
+            baseline_position_direction=baseline_direction,
+            stop_trigger=stop_trigger,
+            take_profit_trigger=take_profit_trigger,
+            entries=entries,
+            mutation_intents=[],
+        )
+        for item in raw_intents:
+            if not isinstance(item, dict):
+                raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent schema is invalid.", recovery=True)
+            intent = self._intent_from_payload(item)
+            self._validate_persisted_intent(intent, journal.pair_id, journal.stop_client_algo_id, journal.take_profit_client_algo_id)
+            journal.mutation_intents.append(intent)
+        return journal
+
+    def _required_journal_string(self, payload: dict[str, Any], field: str) -> str:
+        value = payload[field]
+        if not isinstance(value, str) or not value.strip():
+            raise ProtectiveAbort("RECOVERY_REQUIRED", f"Protective journal field {field} must be a non-empty string.", recovery=True)
+        return value
+
+    def _required_journal_bool(self, payload: dict[str, Any], field: str) -> bool:
+        value = payload[field]
+        if not isinstance(value, bool):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", f"Protective journal field {field} must be a boolean.", recovery=True)
+        return value
+
+    def _optional_journal_decimal(self, payload: dict[str, Any], field: str):
+        value = payload[field]
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", f"Protective journal field {field} is invalid.", recovery=True)
+        try:
+            return self._decimal(value)
+        except (InvalidOperation, ValueError) as exc:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", f"Protective journal field {field} is invalid.", recovery=True) from exc
+
+    def _validate_journal_entry(self, entry: Any) -> None:
+        if not isinstance(entry, dict):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal entry schema is invalid.", recovery=True)
+        if "created_at" not in entry or "phase" not in entry or "details" not in entry:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal entry is missing required fields.", recovery=True)
+        if not isinstance(entry["created_at"], str) or not entry["created_at"].strip():
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal entry created_at is invalid.", recovery=True)
+        if not isinstance(entry["phase"], str) or not entry["phase"].strip():
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal entry phase is invalid.", recovery=True)
+        if not isinstance(entry["details"], dict):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal entry details must be an object.", recovery=True)
+
+    def _validate_journal_identity(self, journal: BinanceFuturesTestnetProtectiveJournal, pair_id: str, stop_client_algo_id: str, take_profit_client_algo_id: str) -> None:
+        if pair_id and journal.pair_id and journal.pair_id != pair_id:
+            raise ProtectiveAbort("STALE_OR_MISMATCHED_JOURNAL", "Existing protective journal belongs to a different pair_id.", recovery=True)
+        if stop_client_algo_id and journal.stop_client_algo_id != stop_client_algo_id:
+            raise ProtectiveAbort("STALE_OR_MISMATCHED_JOURNAL", "Existing protective journal STOP clientAlgoId is incompatible.", recovery=True)
+        if take_profit_client_algo_id and journal.take_profit_client_algo_id != take_profit_client_algo_id:
+            raise ProtectiveAbort("STALE_OR_MISMATCHED_JOURNAL", "Existing protective journal TAKE_PROFIT clientAlgoId is incompatible.", recovery=True)
+
+    def _validate_persisted_intent(self, intent: ProtectiveMutationIntent, pair_id: str, stop_client_algo_id: str, take_profit_client_algo_id: str) -> None:
+        if intent.intent_version != "1.0":
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Unsupported protective mutation intent version.", recovery=True)
+        if intent.pair_id != pair_id:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent pair_id mismatch.", recovery=True)
+        if intent.symbol != "BTCUSDT":
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent symbol mismatch.", recovery=True)
+        if intent.label not in ("STOP", "TAKE_PROFIT"):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent label is invalid.", recovery=True)
+        if intent.mutation_kind not in (ProtectiveMutationKind.CREATE.value, ProtectiveMutationKind.DELETE.value):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent kind is invalid.", recovery=True)
+        expected_id = stop_client_algo_id if intent.label == "STOP" else take_profit_client_algo_id
+        if intent.client_algo_id != expected_id:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent clientAlgoId mismatch.", recovery=True)
+        self._validate_client_algo_id_text(intent.client_algo_id)
+        expected_type = "STOP_MARKET" if intent.label == "STOP" else "TAKE_PROFIT_MARKET"
+        if intent.expected_order_type != expected_type:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent order type mismatch.", recovery=True)
+        if intent.expected_side not in ("BUY", "SELL"):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent side is invalid.", recovery=True)
+        if intent.expected_trigger_price is None or not intent.expected_trigger_price.is_finite() or intent.expected_trigger_price <= 0:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent trigger is invalid.", recovery=True)
+        if intent.expected_close_position is not True or intent.expected_working_type != "MARK_PRICE" or intent.expected_price_protect is not True:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent safety flags are invalid.", recovery=True)
+        if intent.baseline_position_amount is None or not intent.baseline_position_amount.is_finite() or intent.baseline_position_amount == 0 or intent.baseline_position_direction not in ("LONG", "SHORT"):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent baseline metadata is invalid.", recovery=True)
+        if not intent.created_at or not intent.mutation_phase:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent lifecycle metadata is invalid.", recovery=True)
+        allowed_states = {"", "PENDING", ProtectiveReconciliationState.PRESENT.value, ProtectiveReconciliationState.ABSENT.value, ProtectiveReconciliationState.AMBIGUOUS.value, ProtectiveReconciliationState.IDENTITY_MISMATCH.value}
+        if intent.reconciliation_state not in allowed_states:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent reconciliation state is invalid.", recovery=True)
+        if intent.resolved and intent.reconciliation_state in ("", "PENDING", ProtectiveReconciliationState.AMBIGUOUS.value, ProtectiveReconciliationState.IDENTITY_MISMATCH.value):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Resolved protective mutation intent state is inconsistent.", recovery=True)
+        if intent.resolved and intent.reconciliation_state in ("", ProtectiveReconciliationState.AMBIGUOUS.value):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent resolved state is inconsistent.", recovery=True)
+        self._parse_intent_created_at(intent.created_at)
+
+    def _parse_intent_created_at(self, value: str | None) -> datetime:
+        if not isinstance(value, str) or not value.strip():
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent created_at is invalid.", recovery=True)
+        candidate = value.strip()
+        if candidate.endswith("Z"):
+            candidate = candidate[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(candidate)
+        except ValueError as exc:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent created_at is invalid.", recovery=True) from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent created_at must include timezone information.", recovery=True)
+        return parsed.astimezone(UTC)
+
+    def _archive_resolved_journal(self, config: BinanceFuturesTestnetProtectiveOrdersConfig, journal: BinanceFuturesTestnetProtectiveJournal) -> None:
+        self._validate_archiveable_journal(journal)
+        path = self._resolve(config.journal_path)
+        if not path.exists():
+            return
+        context = self._lock_token_part(f"{journal.pair_id}-{journal.stop_client_algo_id}-{journal.take_profit_client_algo_id}")[:80]
+        timestamp = self._now().replace(':', '').replace('-', '').replace('.', '').replace('+', '')
+        for _ in range(100):
+            archive = path.with_name(f"{path.name}.archived.{context}.{timestamp}.{uuid.uuid4().hex}")
+            if archive.exists():
+                continue
+            try:
+                path.rename(archive)
+                self._fsync_parent_directory(path.parent)
+            except OSError as exc:
+                raise ProtectiveAbort("JOURNAL_ARCHIVE_FAILED", "Protective journal archive failed; recovery is required before a new lifecycle.", recovery=True) from exc
+            return
+        raise ProtectiveAbort("RECOVERY_REQUIRED", "Could not allocate a unique protective journal archive path.", recovery=True)
+
+    def _validate_archiveable_journal(self, journal: BinanceFuturesTestnetProtectiveJournal) -> None:
+        if journal.phase not in ("COMPLETE", "RECOVERY_COMPLETE") or journal.recovery_required:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Only terminal resolved protective journals may be archived.", recovery=True)
+        if not journal.pair_id or not journal.stop_client_algo_id or not journal.take_profit_client_algo_id:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal archive identity is incomplete.", recovery=True)
+        if journal.stop_client_algo_id == journal.take_profit_client_algo_id:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective journal archive IDs must be distinct.", recovery=True)
+        self._validate_client_algo_id_text(journal.stop_client_algo_id)
+        self._validate_client_algo_id_text(journal.take_profit_client_algo_id)
+        for intent in journal.mutation_intents:
+            self._validate_persisted_intent(intent, journal.pair_id, journal.stop_client_algo_id, journal.take_profit_client_algo_id)
+            if not intent.resolved or intent.reconciliation_state in ("", ProtectiveReconciliationState.AMBIGUOUS.value, ProtectiveReconciliationState.IDENTITY_MISMATCH.value, "PENDING"):
+                raise ProtectiveAbort("RECOVERY_REQUIRED", "Unresolved protective mutation intent blocks archive.", recovery=True)
+
+    def _create_with_reconciliation(
+        self,
+        client: BinanceFuturesTestnetProtectiveOrdersClient,
+        config: BinanceFuturesTestnetProtectiveOrdersConfig,
+        journal: BinanceFuturesTestnetProtectiveJournal,
+        preview: BinanceFuturesTestnetProtectivePreview,
+        label: str,
+        create_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata],
+        query_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata],
+        reconciliation_results: list[ProtectiveReconciliationResult],
+    ) -> BinanceFuturesTestnetProtectiveAlgoSummary:
+        intent = self._mutation_intent(journal, preview, label, ProtectiveMutationKind.CREATE.value, f"{label}_CREATE_STARTED")
+        self._persist_intent(config, journal, intent, f"{label}_CREATE_INTENT_PERSISTED")
+        pre_create = self._reconcile_intent(client, intent, query_requests)
+        pre_create.interpreted_mutation_result = self._interpret_mutation(intent, pre_create)
+        if pre_create.reconciliation_state == ProtectiveReconciliationState.PRESENT.value:
+            pre_create.resolved = True
+            pre_create.recovery_required = False
+            reconciliation_results.append(pre_create)
+            self._resolve_intent(config, journal, intent, pre_create)
+            if pre_create.order is None:
+                raise ProtectiveAbort("RECOVERY_REQUIRED", f"{label} pre-create lookup returned no order.", recovery=True)
+            self._check_unexpected_trigger(pre_create.order)
+            return pre_create.order
+        if pre_create.reconciliation_state != ProtectiveReconciliationState.ABSENT.value:
+            pre_create.recovery_required = True
+            reconciliation_results.append(pre_create)
+            self._resolve_intent(config, journal, intent, pre_create)
+            raise ProtectiveAbort("RECOVERY_REQUIRED", f"{label} pre-create lookup result: {pre_create.reconciliation_state}.", recovery=True)
+        reconciliation_results.append(pre_create)
+        try:
+            client.synchronize_server_time(force=True)
+            order, meta = client.create_stop_order(preview) if label == "STOP" else client.create_take_profit_order(preview)
+            create_requests.append(meta)
+            self._validate_algo_identity(order, preview, label)
+            self._check_unexpected_trigger(order)
+            result = self._reconciliation_result(intent, ProtectiveReconciliationState.PRESENT.value, "CREATE_CONFIRMED", True, False, "Create response was deterministic.", order)
+            reconciliation_results.append(result)
+            self._resolve_intent(config, journal, intent, result)
+            return order
+        except (TimeoutError, OSError, ConnectionResetError) as exc:
+            self._mark_intent_ambiguous(config, journal, intent, self._sanitize(str(exc)))
+            result = self._reconcile_intent(client, intent, query_requests)
+            interpreted = self._interpret_mutation(intent, result)
+            result.interpreted_mutation_result = interpreted
+            result.resolved = result.reconciliation_state in (ProtectiveReconciliationState.PRESENT.value, ProtectiveReconciliationState.ABSENT.value)
+            result.recovery_required = interpreted != "CREATE_CONFIRMED"
+            reconciliation_results.append(result)
+            self._resolve_intent(config, journal, intent, result)
+            if interpreted == "CREATE_CONFIRMED" and result.order is not None:
+                self._check_unexpected_trigger(result.order)
+                return result.order
+            raise ProtectiveAbort("RECOVERY_REQUIRED", f"{label} create reconciliation result: {interpreted}.", recovery=True) from exc
+        except BinanceFuturesTestnetProtectiveAPIError as exc:
+            if exc.http_status is not None and exc.http_status >= 500:
+                self._mark_intent_ambiguous(config, journal, intent, self._sanitize_api_error(exc))
+                result = self._reconcile_intent(client, intent, query_requests)
+                result.interpreted_mutation_result = self._interpret_mutation(intent, result)
+                result.recovery_required = result.interpreted_mutation_result != "CREATE_CONFIRMED"
+                reconciliation_results.append(result)
+                self._resolve_intent(config, journal, intent, result)
+                if result.interpreted_mutation_result == "CREATE_CONFIRMED" and result.order is not None:
+                    return result.order
+                raise ProtectiveAbort("RECOVERY_REQUIRED", f"{label} create reconciliation result: {result.interpreted_mutation_result}.", recovery=True) from exc
+            raise
+
+    def _delete_with_reconciliation(
+        self,
+        client: BinanceFuturesTestnetProtectiveOrdersClient,
+        config: BinanceFuturesTestnetProtectiveOrdersConfig,
+        journal: BinanceFuturesTestnetProtectiveJournal,
+        preview: BinanceFuturesTestnetProtectivePreview,
+        label: str,
+        cancel_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata],
+        query_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata],
+        reconciliation_results: list[ProtectiveReconciliationResult],
+    ) -> bool:
+        client_algo_id = preview.stop_client_algo_id if label == "STOP" else preview.take_profit_client_algo_id
+        intent = self._mutation_intent(journal, preview, label, ProtectiveMutationKind.DELETE.value, f"{label}_DELETE_STARTED")
+        self._persist_intent(config, journal, intent, f"{label}_DELETE_INTENT_PERSISTED")
+        try:
+            client.synchronize_server_time(force=True)
+            order, meta = client.cancel_algo_order_exact(client_algo_id)
+            cancel_requests.append(meta)
+            self._validate_delete_ack(order, client_algo_id)
+            ack = self._reconciliation_result(intent, "PENDING", "DELETE_ACKNOWLEDGED", False, False, "Delete response was deterministic; exact lookup still required.", None)
+            reconciliation_results.append(ack)
+            lookup = self._reconcile_intent(client, intent, query_requests)
+            lookup.interpreted_mutation_result = self._interpret_mutation(intent, lookup)
+            lookup.resolved = lookup.interpreted_mutation_result == "DELETE_CONFIRMED"
+            lookup.recovery_required = lookup.interpreted_mutation_result != "DELETE_CONFIRMED"
+            reconciliation_results.append(lookup)
+            self._resolve_intent(config, journal, intent, lookup)
+            if lookup.interpreted_mutation_result != "DELETE_CONFIRMED":
+                raise ProtectiveAbort("RECOVERY_REQUIRED", f"{label} delete reconciliation result: {lookup.interpreted_mutation_result}.", recovery=True)
+            return True
+        except (TimeoutError, OSError, ConnectionResetError) as exc:
+            self._mark_intent_ambiguous(config, journal, intent, self._sanitize(str(exc)))
+            result = self._reconcile_intent(client, intent, query_requests)
+            result.interpreted_mutation_result = self._interpret_mutation(intent, result)
+            result.resolved = result.reconciliation_state in (ProtectiveReconciliationState.PRESENT.value, ProtectiveReconciliationState.ABSENT.value)
+            result.recovery_required = result.interpreted_mutation_result != "DELETE_CONFIRMED"
+            reconciliation_results.append(result)
+            self._resolve_intent(config, journal, intent, result)
+            if result.interpreted_mutation_result != "DELETE_CONFIRMED":
+                raise ProtectiveAbort("RECOVERY_REQUIRED", f"{label} delete reconciliation result: {result.interpreted_mutation_result}.", recovery=True) from exc
+            return True
+        except BinanceFuturesTestnetProtectiveAPIError as exc:
+            if exc.http_status is not None and exc.http_status >= 500:
+                self._mark_intent_ambiguous(config, journal, intent, self._sanitize_api_error(exc))
+                result = self._reconcile_intent(client, intent, query_requests)
+                result.interpreted_mutation_result = self._interpret_mutation(intent, result)
+                result.recovery_required = result.interpreted_mutation_result != "DELETE_CONFIRMED"
+                reconciliation_results.append(result)
+                self._resolve_intent(config, journal, intent, result)
+                if result.interpreted_mutation_result != "DELETE_CONFIRMED":
+                    raise ProtectiveAbort("RECOVERY_REQUIRED", f"{label} delete reconciliation result: {result.interpreted_mutation_result}.", recovery=True) from exc
+                return True
+            raise
+
+
+    def _reconcile_unresolved_intents(
+        self,
+        client: BinanceFuturesTestnetProtectiveOrdersClient,
+        config: BinanceFuturesTestnetProtectiveOrdersConfig,
+        journal: BinanceFuturesTestnetProtectiveJournal,
+        stop_client_algo_id: str,
+        take_profit_client_algo_id: str,
+        query_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata],
+        reconciliation_results: list[ProtectiveReconciliationResult],
+    ) -> None:
+        for intent in list(journal.mutation_intents):
+            if intent.resolved:
+                continue
+            if intent.client_algo_id not in (stop_client_algo_id, take_profit_client_algo_id):
+                raise ProtectiveAbort("RECOVERY_REQUIRED", "Persisted mutation intent belongs to a different protective pair.", recovery=True)
+            expected_label = "STOP" if intent.client_algo_id == stop_client_algo_id else "TAKE_PROFIT"
+            if intent.label != expected_label or intent.symbol != "BTCUSDT":
+                raise ProtectiveAbort("RECOVERY_REQUIRED", "Persisted mutation intent identity is stale or malformed.", recovery=True)
+            self._validate_persisted_intent(intent, journal.pair_id, stop_client_algo_id, take_profit_client_algo_id)
+            result = self._reconcile_intent(client, intent, query_requests)
+            result.interpreted_mutation_result = self._interpret_mutation(intent, result)
+            result.recovery_required = result.interpreted_mutation_result in ("RECOVERY_REQUIRED", "DELETE_NOT_APPLIED")
+            result.resolved = not result.recovery_required
+            reconciliation_results.append(result)
+            self._resolve_intent(config, journal, intent, result)
+            if result.recovery_required:
+                raise ProtectiveAbort("RECOVERY_REQUIRED", f"Unresolved persisted {intent.label} {intent.mutation_kind} intent: {result.interpreted_mutation_result}.", recovery=True)
+
+    def _attach_recovery_baseline_from_orders(self, journal: BinanceFuturesTestnetProtectiveJournal, position: BinanceFuturesTestnetProtectivePosition, stop, take) -> None:
+        if journal.baseline_available:
+            return
+        if position.position_amt == 0 or position.direction not in ("LONG", "SHORT"):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective recovery requires baseline metadata before mutation.", recovery=True)
+        journal.baseline_available = True
+        journal.baseline_position_amount = position.position_amt
+        journal.baseline_position_direction = position.direction
+        if stop is not None:
+            journal.stop_trigger = stop.trigger_price
+        if take is not None:
+            journal.take_profit_trigger = take.trigger_price
+
+    def _recovery_preview_from_journal(self, journal: BinanceFuturesTestnetProtectiveJournal, stop_client_algo_id: str, take_profit_client_algo_id: str) -> BinanceFuturesTestnetProtectivePreview:
+        if not journal.baseline_available:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective recovery journal is missing baseline metadata.", recovery=True)
+        if journal.baseline_position_amount is None or journal.baseline_position_amount == 0:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective recovery journal baseline amount is invalid.", recovery=True)
+        if journal.baseline_position_direction not in ("LONG", "SHORT"):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective recovery journal baseline direction is invalid.", recovery=True)
+        if journal.stop_trigger is None and journal.take_profit_trigger is None:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective recovery journal trigger metadata is missing.", recovery=True)
+        return BinanceFuturesTestnetProtectivePreview(
+            pair_id=journal.pair_id,
+            symbol="BTCUSDT",
+            position_direction=journal.baseline_position_direction,
+            position_amount=journal.baseline_position_amount,
+            protective_side="SELL" if journal.baseline_position_direction == "LONG" else "BUY",
+            stop_client_algo_id=stop_client_algo_id,
+            take_profit_client_algo_id=take_profit_client_algo_id,
+            stop_trigger=journal.stop_trigger,
+            take_profit_trigger=journal.take_profit_trigger,
+            transmission_ready=True,
+        )
+
+    def _mutation_intent(self, journal: BinanceFuturesTestnetProtectiveJournal, preview: BinanceFuturesTestnetProtectivePreview, label: str, kind: str, phase: str) -> ProtectiveMutationIntent:
+        trigger = preview.stop_trigger if label == "STOP" else preview.take_profit_trigger
+        client_algo_id = preview.stop_client_algo_id if label == "STOP" else preview.take_profit_client_algo_id
+        order_type = "STOP_MARKET" if label == "STOP" else "TAKE_PROFIT_MARKET"
+        return ProtectiveMutationIntent(
+            pair_id=preview.pair_id or journal.pair_id,
+            symbol=preview.symbol,
+            label=label,
+            mutation_kind=kind,
+            client_algo_id=client_algo_id,
+            expected_order_type=order_type,
+            expected_side=preview.protective_side,
+            expected_trigger_price=trigger,
+            expected_close_position=True,
+            expected_working_type="MARK_PRICE",
+            expected_price_protect=True,
+            baseline_position_amount=preview.position_amount,
+            baseline_position_direction=preview.position_direction,
+            created_at=self._now(),
+            mutation_phase=phase,
+        )
+
+    def _persist_intent(self, config: BinanceFuturesTestnetProtectiveOrdersConfig, journal: BinanceFuturesTestnetProtectiveJournal, intent: ProtectiveMutationIntent, phase: str) -> None:
+        journal.mutation_intents = [item for item in journal.mutation_intents if not (item.client_algo_id == intent.client_algo_id and item.mutation_kind == intent.mutation_kind and item.label == intent.label)]
+        journal.mutation_intents.append(intent)
+        self._write_journal(config, journal, phase, {"mutation_intent": intent.to_dict()})
+
+    def _mark_intent_ambiguous(self, config: BinanceFuturesTestnetProtectiveOrdersConfig, journal: BinanceFuturesTestnetProtectiveJournal, intent: ProtectiveMutationIntent, reason: str) -> None:
+        intent.reconciliation_state = ProtectiveReconciliationState.AMBIGUOUS.value
+        intent.reconciliation_reason = reason
+        intent.resolved = False
+        self._persist_intent(config, journal, intent, f"{intent.label}_{intent.mutation_kind}_AMBIGUOUS")
+
+    def _resolve_intent(self, config: BinanceFuturesTestnetProtectiveOrdersConfig, journal: BinanceFuturesTestnetProtectiveJournal, intent: ProtectiveMutationIntent, result: ProtectiveReconciliationResult) -> None:
+        intent.reconciliation_state = result.reconciliation_state
+        intent.reconciliation_reason = result.reason
+        intent.resolved = result.resolved
+        self._persist_intent(config, journal, intent, f"{intent.label}_{intent.mutation_kind}_{result.interpreted_mutation_result or result.reconciliation_state}")
+
+    def _reconcile_intent(self, client: BinanceFuturesTestnetProtectiveOrdersClient, intent: ProtectiveMutationIntent, query_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata]) -> ProtectiveReconciliationResult:
+        try:
+            order, meta = client.query_algo_order(intent.client_algo_id)
+            query_requests.append(meta)
+            try:
+                self._validate_algo_identity(order, None, intent.label, stop_client_algo_id=intent.client_algo_id if intent.label == "STOP" else None, take_profit_client_algo_id=intent.client_algo_id if intent.label == "TAKE_PROFIT" else None, expected_side=intent.expected_side, expected_trigger=intent.expected_trigger_price)
+            except ProtectiveAbort as exc:
+                return self._reconciliation_result(intent, ProtectiveReconciliationState.IDENTITY_MISMATCH.value, "RECOVERY_REQUIRED", False, True, exc.reason, order)
+            return self._reconciliation_result(intent, ProtectiveReconciliationState.PRESENT.value, "", True, False, "Exact clientAlgoId lookup found a matching order.", order)
+        except BinanceFuturesTestnetProtectiveAPIError as exc:
+            if exc.binance_code == -2013 and exc.deterministic_rejection:
+                return self._reconciliation_result(intent, ProtectiveReconciliationState.ABSENT.value, "", True, False, "Exact clientAlgoId lookup returned deterministic not-found.", None)
+            return self._reconciliation_result(intent, ProtectiveReconciliationState.AMBIGUOUS.value, "RECOVERY_REQUIRED", False, True, self._sanitize_api_error(exc), None)
+        except (TimeoutError, OSError, ConnectionResetError) as exc:
+            return self._reconciliation_result(intent, ProtectiveReconciliationState.AMBIGUOUS.value, "RECOVERY_REQUIRED", False, True, self._sanitize(str(exc)), None)
+
+    def _interpret_mutation(self, intent: ProtectiveMutationIntent, result: ProtectiveReconciliationResult) -> str:
+        if result.reconciliation_state == ProtectiveReconciliationState.IDENTITY_MISMATCH.value:
+            return "RECOVERY_REQUIRED"
+        if result.reconciliation_state == ProtectiveReconciliationState.AMBIGUOUS.value:
+            return "RECOVERY_REQUIRED"
+        if intent.mutation_kind == ProtectiveMutationKind.CREATE.value:
+            return "CREATE_CONFIRMED" if result.reconciliation_state == ProtectiveReconciliationState.PRESENT.value else "CREATE_NOT_APPLIED"
+        if intent.mutation_kind == ProtectiveMutationKind.DELETE.value:
+            return "DELETE_CONFIRMED" if result.reconciliation_state == ProtectiveReconciliationState.ABSENT.value else "DELETE_NOT_APPLIED"
+        return "RECOVERY_REQUIRED"
+
+    def _reconciliation_result(self, intent: ProtectiveMutationIntent, state: str, interpreted: str, resolved: bool, recovery_required: bool, reason: str, order: BinanceFuturesTestnetProtectiveAlgoSummary | None) -> ProtectiveReconciliationResult:
+        return ProtectiveReconciliationResult(label=intent.label, mutation_kind=intent.mutation_kind, client_algo_id=intent.client_algo_id, reconciliation_state=state, interpreted_mutation_result=interpreted, resolved=resolved, recovery_required=recovery_required, reason=reason, order=order)
+
+    def _intent_from_payload(self, payload: dict[str, Any]) -> ProtectiveMutationIntent:
+        required = (
+            "intent_version",
+            "pair_id",
+            "symbol",
+            "label",
+            "mutation_kind",
+            "client_algo_id",
+            "expected_order_type",
+            "expected_side",
+            "expected_trigger_price",
+            "expected_close_position",
+            "expected_working_type",
+            "expected_price_protect",
+            "baseline_position_amount",
+            "baseline_position_direction",
+            "created_at",
+            "mutation_phase",
+            "resolved",
+            "reconciliation_state",
+            "reconciliation_reason",
+        )
+        for field in required:
+            if field not in payload or payload[field] is None:
+                raise ProtectiveAbort("RECOVERY_REQUIRED", f"Protective mutation intent missing required field: {field}.", recovery=True)
+        string_fields = ("intent_version", "pair_id", "symbol", "label", "mutation_kind", "client_algo_id", "expected_order_type", "expected_side", "expected_working_type", "baseline_position_direction", "created_at", "mutation_phase", "reconciliation_state", "reconciliation_reason")
+        for field in string_fields:
+            if not isinstance(payload[field], str):
+                raise ProtectiveAbort("RECOVERY_REQUIRED", f"Protective mutation intent field {field} must be a string.", recovery=True)
+        for field in ("expected_close_position", "expected_price_protect", "resolved"):
+            if not isinstance(payload[field], bool):
+                raise ProtectiveAbort("RECOVERY_REQUIRED", f"Protective mutation intent field {field} must be a boolean.", recovery=True)
+        try:
+            trigger = self._decimal(payload["expected_trigger_price"])
+            baseline_amount = self._decimal(payload["baseline_position_amount"])
+        except (InvalidOperation, ValueError) as exc:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent decimal field is invalid.", recovery=True) from exc
+        if not trigger.is_finite() or trigger <= 0:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent trigger is invalid.", recovery=True)
+        if not baseline_amount.is_finite() or baseline_amount == 0:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective mutation intent baseline amount is invalid.", recovery=True)
+        self._parse_intent_created_at(payload["created_at"])
+        return ProtectiveMutationIntent(
+            intent_version=payload["intent_version"],
+            pair_id=payload["pair_id"],
+            symbol=payload["symbol"],
+            label=payload["label"],
+            mutation_kind=payload["mutation_kind"],
+            client_algo_id=payload["client_algo_id"],
+            expected_order_type=payload["expected_order_type"],
+            expected_side=payload["expected_side"],
+            expected_trigger_price=trigger,
+            expected_close_position=payload["expected_close_position"],
+            expected_working_type=payload["expected_working_type"],
+            expected_price_protect=payload["expected_price_protect"],
+            baseline_position_amount=baseline_amount,
+            baseline_position_direction=payload["baseline_position_direction"],
+            created_at=payload["created_at"],
+            mutation_phase=payload["mutation_phase"],
+            resolved=payload["resolved"],
+            reconciliation_state=payload["reconciliation_state"],
+            reconciliation_reason=payload["reconciliation_reason"],
+        )
+
+
+    def _validate_client_algo_id_text(self, client_algo_id: str) -> None:
+        if not client_algo_id or not client_algo_id.startswith("smcbot-protect-") or len(client_algo_id) > 36:
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective clientAlgoId is invalid.", recovery=True)
+        if any(char.isspace() for char in client_algo_id) or any(not (char.isalnum() or char in ".:/_-") for char in client_algo_id):
+            raise ProtectiveAbort("RECOVERY_REQUIRED", "Protective clientAlgoId contains unsafe characters.", recovery=True)
 
     def _server_time_or_issue(self, client: BinanceFuturesTestnetProtectiveOrdersClient, config: BinanceFuturesTestnetProtectiveOrdersConfig, issues: list[BinanceFuturesTestnetProtectiveIssue]) -> None:
         try:
@@ -526,27 +1189,10 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         journal.take_profit_trigger = preview.take_profit_trigger
 
     def _load_or_new_journal(self, config: BinanceFuturesTestnetProtectiveOrdersConfig, stop_client_algo_id: str, take_profit_client_algo_id: str) -> BinanceFuturesTestnetProtectiveJournal:
-        path = self._resolve(config.journal_path)
-        if path.exists():
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-                if payload.get("stop_client_algo_id") == stop_client_algo_id and payload.get("take_profit_client_algo_id") == take_profit_client_algo_id:
-                    return BinanceFuturesTestnetProtectiveJournal(
-                        pair_id=str(payload.get("pair_id") or ""),
-                        stop_client_algo_id=stop_client_algo_id,
-                        take_profit_client_algo_id=take_profit_client_algo_id,
-                        phase=str(payload.get("phase") or "RECOVERY_REQUIRED"),
-                        recovery_required=bool(payload.get("recovery_required", True)),
-                        baseline_available=bool(payload.get("baseline_available", False)),
-                        baseline_position_amount=None if payload.get("baseline_position_amount") is None else self._decimal(payload.get("baseline_position_amount")),
-                        baseline_position_direction=payload.get("baseline_position_direction"),
-                        stop_trigger=None if payload.get("stop_trigger") is None else self._decimal(payload.get("stop_trigger")),
-                        take_profit_trigger=None if payload.get("take_profit_trigger") is None else self._decimal(payload.get("take_profit_trigger")),
-                        entries=list(payload.get("entries") or []),
-                    )
-            except Exception:
-                pass
-        return BinanceFuturesTestnetProtectiveJournal(stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, recovery_required=True, entries=[{"created_at": self._now(), "phase": "RECOVERY_STARTED", "details": {"baseline_available": False}}])
+        existing = self._load_existing_journal_strict(config, "", stop_client_algo_id, take_profit_client_algo_id)
+        if existing is not None:
+            return existing
+        return BinanceFuturesTestnetProtectiveJournal(pair_id="manual-recovery", stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, recovery_required=True, entries=[{"created_at": self._now(), "phase": "RECOVERY_STARTED", "details": {"baseline_available": False}}])
 
     def _current_position_for_recovery(self, client: BinanceFuturesTestnetProtectiveOrdersClient) -> BinanceFuturesTestnetProtectivePosition:
         rows = client.fetch_position_risk()
@@ -569,6 +1215,13 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
 
         return Decimal(str(value))
 
+    def _try_write_journal(self, config: BinanceFuturesTestnetProtectiveOrdersConfig, journal: BinanceFuturesTestnetProtectiveJournal, phase: str, details: dict[str, Any]) -> bool:
+        try:
+            self._write_journal(config, journal, phase, details)
+            return True
+        except Exception:
+            return False
+
     def _write_journal(self, config: BinanceFuturesTestnetProtectiveOrdersConfig, journal: BinanceFuturesTestnetProtectiveJournal, phase: str, details: dict[str, Any]) -> None:
         if not config.allow_sanitized_local_journal:
             return
@@ -577,8 +1230,29 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         path = self._resolve(config.journal_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         temp = path.with_suffix(path.suffix + ".tmp")
-        temp.write_text(json.dumps(journal.to_dict(), indent=2), encoding="utf-8")
-        temp.replace(path)
+        try:
+            with temp.open("w", encoding="utf-8") as handle:
+                handle.write(json.dumps(journal.to_dict(), indent=2))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, path)
+            self._fsync_parent_directory(path.parent)
+        except Exception:
+            try:
+                if temp.exists():
+                    temp.unlink()
+            except OSError:
+                pass
+            raise
+
+    def _fsync_parent_directory(self, directory: Path) -> None:
+        if os.name == "nt":
+            return
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
     def _lock_token(self, operation: str, pair_id: str, stop_client_algo_id: str, take_profit_client_algo_id: str) -> str:
         parts = [self._lock_token_part(value) for value in (operation, pair_id, stop_client_algo_id, take_profit_client_algo_id)]
