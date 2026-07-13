@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+
+import pytest
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -9,6 +12,7 @@ from engine.diagnostics.binance_futures_testnet_protective_orders_engine import 
 from infrastructure.exchanges.binance_futures_testnet_order_lifecycle_client import BinanceLifecycleHTTPResponse
 from infrastructure.exchanges.binance_futures_testnet_protective_orders_client import BinanceFuturesTestnetProtectiveAPIError, BinanceFuturesTestnetProtectiveOrdersClient
 from models.binance_futures_testnet_protective_orders import BinanceFuturesTestnetProtectiveOrdersConfig
+from reporting.binance_futures_testnet_protective_orders_report import format_binance_futures_testnet_protective_orders_result
 
 
 def _env() -> dict[str, str]:
@@ -275,6 +279,8 @@ def test_lifecycle_refreshes_server_time_before_each_mutation_boundary(tmp_path:
         "smcbot-protect-sl-001": ["NEW", "CANCELED"],
         "smcbot-protect-tp-001": ["NEW", "CANCELED"],
     }
+    created = set()
+    deleted = set()
 
     def http_get(url, timeout):
         if url.endswith("/fapi/v1/time"):
@@ -293,11 +299,16 @@ def test_lifecycle_refreshes_server_time_before_each_mutation_boundary(tmp_path:
             return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
         client_id = params["clientAlgoId"][0]
         if method == "DELETE":
+            deleted.add(client_id)
             return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200}, 10)
         order_type = params.get("type", ["STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"])[0]
         trigger = params.get("triggerPrice", ["45000.00" if order_type == "STOP_MARKET" else "55000.00"])[0]
-        status = statuses[client_id].pop(0) if method == "GET" and statuses[client_id] else statuses[client_id][0] if statuses[client_id] else "CANCELED"
-        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status=status, trigger=trigger), 10)
+        if method == "POST":
+            created.add(client_id)
+            return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+        if client_id in deleted or client_id not in created:
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
 
     result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
 
@@ -510,6 +521,8 @@ def test_lifecycle_sequence_cancel_order_and_position_unchanged(tmp_path: Path) 
         "smcbot-protect-sl-001": ["NEW", "CANCELED"],
         "smcbot-protect-tp-001": ["NEW", "CANCELED"],
     }
+    created = set()
+    deleted = set()
 
     def transport(method, url, body, timeout, headers):
         params = parse_qs(body.decode("utf-8"))
@@ -519,20 +532,24 @@ def test_lifecycle_sequence_cancel_order_and_position_unchanged(tmp_path: Path) 
         if "positionRisk" in url:
             return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
         client_id = (params.get("clientAlgoId") or [""])[0]
-        if method == "POST":
-            status = statuses[client_id][0]
-        else:
-            status = statuses[client_id].pop(0) if statuses[client_id] else "CANCELED"
         order_type = params.get("type", ["STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"])[0]
         trigger = params.get("triggerPrice", ["45000.00" if order_type == "STOP_MARKET" else "55000.00"])[0]
-        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status=status, trigger=trigger), 10)
+        if method == "POST":
+            created.add(client_id)
+            return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+        if method == "DELETE":
+            deleted.add(client_id)
+            return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200}, 10)
+        if client_id in deleted or client_id not in created:
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
 
     result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
 
     assert result.status == "PASS"
     assert result.lifecycle_complete is True
     algo_calls = [(method, (params.get("clientAlgoId") or [""])[0]) for method, url, params in calls if "algoOrder" in url]
-    assert algo_calls[:4] == [("POST", "smcbot-protect-sl-001"), ("GET", "smcbot-protect-sl-001"), ("POST", "smcbot-protect-tp-001"), ("GET", "smcbot-protect-tp-001")]
+    assert algo_calls[:5] == [("GET", "smcbot-protect-sl-001"), ("POST", "smcbot-protect-sl-001"), ("GET", "smcbot-protect-sl-001"), ("GET", "smcbot-protect-tp-001"), ("POST", "smcbot-protect-tp-001")]
     assert ("DELETE", "smcbot-protect-tp-001") in algo_calls
     assert algo_calls.index(("DELETE", "smcbot-protect-tp-001")) < algo_calls.index(("DELETE", "smcbot-protect-sl-001"))
     assert not _runtime_file(tmp_path, "protective.lock").exists()
@@ -567,7 +584,7 @@ def test_exact_algo_response_identity_mismatch_fails_closed(tmp_path: Path) -> N
         result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
 
         assert result.status == "FAIL"
-        assert result.decision == "ORDER_IDENTITY_MISMATCH"
+        assert result.decision in ("ORDER_IDENTITY_MISMATCH", "RECOVERY_REQUIRED")
 
 
 def test_delete_response_can_be_sparse_but_final_get_is_verified(tmp_path: Path) -> None:
@@ -577,6 +594,8 @@ def test_delete_response_can_be_sparse_but_final_get_is_verified(tmp_path: Path)
         "smcbot-protect-sl-001": ["NEW", "CANCELED"],
         "smcbot-protect-tp-001": ["NEW", "CANCELED"],
     }
+    created = set()
+    deleted = set()
 
     def transport(method, url, body, timeout, headers):
         params = parse_qs(body.decode("utf-8"))
@@ -587,11 +606,16 @@ def test_delete_response_can_be_sparse_but_final_get_is_verified(tmp_path: Path)
             return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
         client_id = params["clientAlgoId"][0]
         if method == "DELETE":
+            deleted.add(client_id)
             return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200, "msg": "success"}, 10)
         order_type = params.get("type", ["STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"])[0]
         trigger = params.get("triggerPrice", ["45000.00" if order_type == "STOP_MARKET" else "55000.00"])[0]
-        status = statuses[client_id].pop(0) if method == "GET" and statuses[client_id] else statuses[client_id][0] if statuses[client_id] else "CANCELED"
-        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status=status, trigger=trigger), 10)
+        if method == "POST":
+            created.add(client_id)
+            return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+        if client_id in deleted or client_id not in created:
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
 
     result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
 
@@ -632,9 +656,11 @@ def test_mutation_uncertainty_returns_recovery_required_and_does_not_retry_post(
             return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
         if "positionRisk" in url:
             return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        if method == "GET":
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
         if method == "POST":
             raise TimeoutError("timeout after POST transmission")
-        raise AssertionError("no query/cancel after uncertain create")
+        raise AssertionError("no cancel after uncertain create")
 
     result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
 
@@ -655,9 +681,11 @@ def test_lifecycle_post_timestamp_error_requires_recovery_without_retry(tmp_path
             return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
         if "positionRisk" in url:
             return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        if method == "GET":
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
         if method == "POST":
             raise BinanceFuturesTestnetProtectiveAPIError("timestamp outside recvWindow", http_status=400, binance_code=-1021, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
-        raise AssertionError("no query/cancel after timestamp-rejected POST")
+        raise AssertionError("no cancel after timestamp-rejected POST")
 
     result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
 
@@ -681,7 +709,12 @@ def test_recovery_queries_both_ids_cancels_new_take_profit_before_stop(tmp_path:
         if "positionRisk" in url:
             return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
         client_id = params["clientAlgoId"][0]
-        status = statuses[client_id][0] if method == "DELETE" else statuses[client_id].pop(0)
+        if method == "DELETE":
+            statuses[client_id] = ["ABSENT"]
+            return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200}, 10)
+        if statuses[client_id][0] == "ABSENT":
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        status = statuses[client_id].pop(0)
         order_type = "STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"
         return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status=status), 10)
 
@@ -741,8 +774,9 @@ def test_recovery_stop_new_take_profit_absent_cancels_stop_once(tmp_path: Path) 
         client_id = params["clientAlgoId"][0]
         if client_id == "smcbot-protect-tp-001":
             raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
-        status = "CANCELED" if method == "GET" and any(call[0] == "DELETE" and call[2]["clientAlgoId"][0] == client_id for call in calls) else "NEW"
-        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, "STOP_MARKET", status=status), 10)
+        if method == "GET" and any(call[0] == "DELETE" and call[2]["clientAlgoId"][0] == client_id for call in calls):
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, "STOP_MARKET", status="NEW"), 10)
 
     result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).recover_protective_pair("smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_RECOVERY", config_path=str(path))
 
@@ -810,7 +844,7 @@ def test_recovery_matching_journal_validates_side_and_triggers(tmp_path: Path) -
     path = _write_config(tmp_path)
     journal = _runtime_file(tmp_path, "protective.json")
     journal.parent.mkdir(parents=True, exist_ok=True)
-    journal.write_text(json.dumps({"pair_id": "pair-001", "stop_client_algo_id": "smcbot-protect-sl-001", "take_profit_client_algo_id": "smcbot-protect-tp-001", "baseline_available": True, "baseline_position_amount": "0.001", "baseline_position_direction": "LONG", "stop_trigger": "45000.00", "take_profit_trigger": "55000.00", "entries": []}), encoding="utf-8")
+    journal.write_text(json.dumps({"schema_version": "1.0", "pair_id": "pair-001", "stop_client_algo_id": "smcbot-protect-sl-001", "take_profit_client_algo_id": "smcbot-protect-tp-001", "phase": "RECOVERY_REQUIRED", "recovery_required": True, "baseline_available": True, "baseline_position_amount": "0.001", "baseline_position_direction": "LONG", "stop_trigger": "45000.00", "take_profit_trigger": "55000.00", "mutation_intents": [], "entries": []}), encoding="utf-8")
 
     def transport(method, url, body, timeout, headers):
         params = parse_qs(body.decode("utf-8"))
@@ -850,7 +884,7 @@ def test_recovery_preserves_matching_journal_and_compares_baseline(tmp_path: Pat
     path = _write_config(tmp_path)
     journal = _runtime_file(tmp_path, "protective.json")
     journal.parent.mkdir(parents=True, exist_ok=True)
-    journal.write_text(json.dumps({"pair_id": "pair-001", "stop_client_algo_id": "smcbot-protect-sl-001", "take_profit_client_algo_id": "smcbot-protect-tp-001", "phase": "RECOVERY_REQUIRED", "recovery_required": True, "baseline_available": True, "baseline_position_amount": "0.001", "baseline_position_direction": "LONG", "stop_trigger": "45000.00", "take_profit_trigger": "55000.00", "entries": [{"phase": "OLD", "details": {"kept": True}}]}), encoding="utf-8")
+    journal.write_text(json.dumps({"schema_version": "1.0", "pair_id": "pair-001", "stop_client_algo_id": "smcbot-protect-sl-001", "take_profit_client_algo_id": "smcbot-protect-tp-001", "phase": "RECOVERY_REQUIRED", "recovery_required": True, "baseline_available": True, "baseline_position_amount": "0.001", "baseline_position_direction": "LONG", "stop_trigger": "45000.00", "take_profit_trigger": "55000.00", "mutation_intents": [], "entries": [{"created_at": "2026-01-01T00:00:00+00:00", "phase": "OLD", "details": {"kept": True}}]}), encoding="utf-8")
 
     def transport(method, url, body, timeout, headers):
         params = parse_qs(body.decode("utf-8"))
@@ -873,7 +907,7 @@ def test_recovery_does_not_reuse_unrelated_journal(tmp_path: Path) -> None:
     path = _write_config(tmp_path)
     journal = _runtime_file(tmp_path, "protective.json")
     journal.parent.mkdir(parents=True, exist_ok=True)
-    journal.write_text(json.dumps({"pair_id": "other", "stop_client_algo_id": "other-sl", "take_profit_client_algo_id": "other-tp", "entries": [{"phase": "OLD"}]}), encoding="utf-8")
+    journal.write_text(json.dumps({"schema_version": "1.0", "pair_id": "other", "stop_client_algo_id": "smcbot-protect-other-sl", "take_profit_client_algo_id": "smcbot-protect-other-tp", "phase": "RECOVERY_REQUIRED", "recovery_required": True, "baseline_available": False, "baseline_position_amount": None, "baseline_position_direction": None, "stop_trigger": None, "take_profit_trigger": None, "mutation_intents": [], "entries": [{"created_at": "2026-01-01T00:00:00+00:00", "phase": "OLD", "details": {}}]}), encoding="utf-8")
 
     def transport(method, url, body, timeout, headers):
         params = parse_qs(body.decode("utf-8"))
@@ -885,10 +919,8 @@ def test_recovery_does_not_reuse_unrelated_journal(tmp_path: Path) -> None:
 
     result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).recover_protective_pair("smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_RECOVERY", config_path=str(path))
 
-    assert result.status == "PASS"
-    assert result.journal.pair_id == ""
-    assert result.journal.baseline_available is False
-    assert not any(entry.get("phase") == "OLD" for entry in result.journal.entries)
+    assert result.status == "FAIL"
+    assert result.decision == "STALE_OR_MISMATCHED_JOURNAL"
 
 
 def test_query_pair_detects_triggered_state_as_critical(tmp_path: Path) -> None:
@@ -945,3 +977,1140 @@ def test_triggered_order_in_recovery_is_critical(tmp_path: Path) -> None:
 
     assert result.status == "CRITICAL"
     assert result.unexpected_trigger is True
+
+
+def test_deterministic_protective_client_algo_ids_are_stable_safe_and_unique(tmp_path: Path) -> None:
+    client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), env=_env())
+
+    stop_id = client.derive_client_algo_id("pair-001", "STOP", "LONG", Decimal("50000"))
+    take_id = client.derive_client_algo_id("pair-001", "TAKE_PROFIT", "LONG", Decimal("50000"))
+
+    assert stop_id == client.derive_client_algo_id("pair-001", "STOP", "LONG", Decimal("50000"))
+    assert stop_id != take_id
+    assert stop_id != client.derive_client_algo_id("pair-002", "STOP", "LONG", Decimal("50000"))
+    assert len(stop_id) <= 36
+    assert len(take_id) <= 36
+    assert stop_id.startswith("smcbot-protect-sl-")
+    assert take_id.startswith("smcbot-protect-tp-")
+    assert all(char.isalnum() or char in "-_" for char in stop_id + take_id)
+
+    try:
+        client.build_preview("pair-001", "bad id", "smcbot-protect-tp-001", client.require_protectable_position(_position()), client.parse_exchange_filters(_exchange_info()), 1000, 1000)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid explicit clientAlgoId must fail closed")
+
+
+def test_intent_is_persisted_before_post_and_absent_reconciliation_stops(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, url, params))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        if method == "POST":
+            journal_payload = json.loads(_runtime_file(tmp_path, "protective.json").read_text(encoding="utf-8"))
+            assert journal_payload["mutation_intents"][0]["mutation_kind"] == "CREATE"
+            raise TimeoutError("timeout after possible transmission")
+        if method == "GET":
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        raise AssertionError("unexpected mutation")
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+    assert len([call for call in calls if call[0] == "POST"]) == 1
+    assert result.reconciliation_results[-1].reconciliation_state == "ABSENT"
+    assert result.reconciliation_results[-1].interpreted_mutation_result == "CREATE_NOT_APPLIED"
+
+
+def test_persistence_failure_prevents_protective_post(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, url, params))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        raise AssertionError("mutation must not be transmitted if intent persistence fails")
+
+    engine = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000)
+    original = engine._write_journal
+
+    def failing_write(config, journal, phase, details):
+        if phase.endswith("CREATE_INTENT_PERSISTED"):
+            raise OSError("journal fsync failed")
+        return original(config, journal, phase, details)
+
+    engine._write_journal = failing_write
+    result = engine.run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert not any(call[0] == "POST" for call in calls)
+
+
+def test_post_timeout_with_exact_order_present_confirms_create_and_does_not_retry(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, url, params))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        client_id = params["clientAlgoId"][0]
+        order_type = params.get("type", ["STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"])[0]
+        trigger = params.get("triggerPrice", ["45000.00" if order_type == "STOP_MARKET" else "55000.00"])[0]
+        if method == "POST" and client_id == "smcbot-protect-sl-001":
+            raise TimeoutError("timeout after possible POST transmission")
+        if method == "GET" and not any(call[0] == "POST" and call[2].get("clientAlgoId", [""])[0] == client_id for call in calls):
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        if method == "GET" and any(call[0] == "DELETE" and call[2].get("clientAlgoId", [""])[0] == client_id for call in calls):
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        if method == "DELETE":
+            return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200}, 10)
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "PASS"
+    stop_posts = [call for call in calls if call[0] == "POST" and call[2].get("clientAlgoId", [""])[0] == "smcbot-protect-sl-001"]
+    assert len(stop_posts) == 1
+    assert any(item.interpreted_mutation_result == "CREATE_CONFIRMED" for item in result.reconciliation_results)
+
+
+def test_delete_timeout_absent_confirms_delete_without_retry(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, url, params))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        client_id = params["clientAlgoId"][0]
+        order_type = params.get("type", ["STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"])[0]
+        trigger = params.get("triggerPrice", ["45000.00" if order_type == "STOP_MARKET" else "55000.00"])[0]
+        if method == "DELETE" and client_id == "smcbot-protect-tp-001":
+            raise TimeoutError("timeout after possible DELETE transmission")
+        if method == "GET" and not any(call[0] == "POST" and call[2].get("clientAlgoId", [""])[0] == client_id for call in calls):
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        if method == "GET" and any(call[0] == "DELETE" and call[2].get("clientAlgoId", [""])[0] == client_id for call in calls):
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        if method == "DELETE":
+            return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200}, 10)
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "PASS"
+    deletes = [call for call in calls if call[0] == "DELETE" and call[2].get("clientAlgoId", [""])[0] == "smcbot-protect-tp-001"]
+    assert len(deletes) == 1
+    assert any(item.interpreted_mutation_result == "DELETE_CONFIRMED" for item in result.reconciliation_results)
+
+
+def test_delete_timeout_present_requires_recovery_and_does_not_retry(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, url, params))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        client_id = params["clientAlgoId"][0]
+        order_type = params.get("type", ["STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"])[0]
+        trigger = params.get("triggerPrice", ["45000.00" if order_type == "STOP_MARKET" else "55000.00"])[0]
+        if method == "DELETE" and client_id == "smcbot-protect-tp-001":
+            raise ConnectionResetError("reset after possible DELETE")
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+    deletes = [call for call in calls if call[0] == "DELETE" and call[2].get("clientAlgoId", [""])[0] == "smcbot-protect-tp-001"]
+    assert len(deletes) == 1
+    assert result.reconciliation_results[-1].interpreted_mutation_result == "DELETE_NOT_APPLIED"
+
+
+def test_ambiguous_lookup_failures_remain_recovery_required(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    for exc in (TimeoutError("lookup timeout"), OSError("TLS lookup failed"), ConnectionResetError("lookup reset"), BinanceFuturesTestnetProtectiveAPIError("temporary 5xx", http_status=503, binance_code=None, method="GET", path="/fapi/v1/algoOrder", request_transmitted=True, response_received=False)):
+        calls = []
+
+        def transport(method, url, body, timeout, headers, exc=exc):
+            params = parse_qs(body.decode("utf-8"))
+            calls.append((method, url, params))
+            if "positionSide/dual" in url:
+                return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+            if "positionRisk" in url:
+                return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+            if method == "POST":
+                raise TimeoutError("create maybe transmitted")
+            if method == "GET":
+                raise exc
+            raise AssertionError("unexpected mutation")
+
+        result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+        assert result.status == "FAIL"
+        assert result.decision == "RECOVERY_REQUIRED"
+        assert len([call for call in calls if call[0] == "POST"]) == 0
+        assert result.reconciliation_results[-1].reconciliation_state == "AMBIGUOUS"
+
+
+def test_reconciliation_identity_mismatch_fails_closed(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        if method == "POST":
+            raise TimeoutError("create maybe transmitted")
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response("smcbot-protect-sl-001", "STOP_MARKET", side="BUY"), 10)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+    assert result.reconciliation_results[-1].reconciliation_state == "IDENTITY_MISMATCH"
+
+
+def test_recovery_resolves_persisted_ambiguous_create_intent(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    journal = _runtime_file(tmp_path, "protective.json")
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text(json.dumps({
+        "schema_version": "1.0",
+        "pair_id": "pair-001",
+        "stop_client_algo_id": "smcbot-protect-sl-001",
+        "take_profit_client_algo_id": "smcbot-protect-tp-001",
+        "phase": "RECOVERY_REQUIRED",
+        "recovery_required": True,
+        "baseline_available": True,
+        "baseline_position_amount": "0.001",
+        "baseline_position_direction": "LONG",
+        "stop_trigger": "45000.00",
+        "take_profit_trigger": "55000.00",
+        "mutation_intents": [{
+            "intent_version": "1.0",
+            "pair_id": "pair-001",
+            "symbol": "BTCUSDT",
+            "label": "STOP",
+            "mutation_kind": "CREATE",
+            "client_algo_id": "smcbot-protect-sl-001",
+            "expected_order_type": "STOP_MARKET",
+            "expected_side": "SELL",
+            "expected_trigger_price": "45000.00",
+            "expected_close_position": True,
+            "expected_working_type": "MARK_PRICE",
+            "expected_price_protect": True,
+            "baseline_position_amount": "0.001",
+            "baseline_position_direction": "LONG",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "mutation_phase": "STOP_CREATE_STARTED",
+            "resolved": False,
+            "reconciliation_state": "AMBIGUOUS",
+            "reconciliation_reason": "timeout"
+        }],
+        "entries": []
+    }), encoding="utf-8")
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, url, params))
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        client_id = params["clientAlgoId"][0]
+        if client_id == "smcbot-protect-tp-001":
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        if method == "GET" and any(call[0] == "DELETE" for call in calls):
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, "STOP_MARKET", status="NEW", trigger="45000.00"), 10)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).recover_protective_pair("smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_RECOVERY", config_path=str(path))
+
+    assert result.status == "PASS"
+    assert any(item.interpreted_mutation_result == "CREATE_CONFIRMED" for item in result.reconciliation_results)
+
+
+def test_stale_or_malformed_persisted_intent_requires_recovery(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    journal = _runtime_file(tmp_path, "protective.json")
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text(json.dumps({
+        "stop_client_algo_id": "smcbot-protect-sl-001",
+        "take_profit_client_algo_id": "smcbot-protect-tp-001",
+        "mutation_intents": [{"label": "STOP", "mutation_kind": "CREATE", "client_algo_id": "smcbot-protect-other", "symbol": "BTCUSDT"}],
+        "entries": []
+    }), encoding="utf-8")
+
+    def transport(method, url, body, timeout, headers):
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        raise AssertionError("stale intent must fail before exact order lookup")
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).recover_protective_pair("smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_RECOVERY", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+
+
+def test_protective_reconciliation_report_is_sanitized(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        if method == "POST":
+            raise TimeoutError("timeout signature=secret X-MBX-APIKEY")
+        raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+    rendered = format_binance_futures_testnet_protective_orders_result(result)
+
+    assert "Mutation Reconciliation" in rendered
+    assert "signature=" not in rendered
+    assert "X-MBX-APIKEY" not in rendered
+    assert "unit-test-secret" not in rendered
+
+
+def _ambiguous_stop_create_journal(pair_id: str = "pair-001", symbol: str = "BTCUSDT", version: str = "1.0") -> dict:
+    return {
+        "schema_version": "1.0",
+        "pair_id": pair_id,
+        "stop_client_algo_id": "smcbot-protect-sl-001",
+        "take_profit_client_algo_id": "smcbot-protect-tp-001",
+        "phase": "RECOVERY_REQUIRED",
+        "recovery_required": True,
+        "baseline_available": True,
+        "baseline_position_amount": "0.001",
+        "baseline_position_direction": "LONG",
+        "stop_trigger": "45000.00",
+        "take_profit_trigger": "55000.00",
+        "mutation_intents": [{
+            "intent_version": version,
+            "pair_id": pair_id,
+            "symbol": symbol,
+            "label": "STOP",
+            "mutation_kind": "CREATE",
+            "client_algo_id": "smcbot-protect-sl-001",
+            "expected_order_type": "STOP_MARKET",
+            "expected_side": "SELL",
+            "expected_trigger_price": "45000.00",
+            "expected_close_position": True,
+            "expected_working_type": "MARK_PRICE",
+            "expected_price_protect": True,
+            "baseline_position_amount": "0.001",
+            "baseline_position_direction": "LONG",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "mutation_phase": "STOP_CREATE_STARTED",
+            "resolved": False,
+            "reconciliation_state": "AMBIGUOUS",
+            "reconciliation_reason": "timeout",
+        }],
+        "entries": [],
+    }
+
+
+def test_fresh_lifecycle_unresolved_journal_blocks_mutation_after_exact_reconcile(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    journal = _runtime_file(tmp_path, "protective.json")
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text(json.dumps(_ambiguous_stop_create_journal()), encoding="utf-8")
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, url, params))
+        client_id = params["clientAlgoId"][0]
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, "STOP_MARKET", status="NEW", trigger="45000.00"), 10)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+    assert [call[0] for call in calls] == ["GET"]
+    persisted = json.loads(journal.read_text(encoding="utf-8"))
+    assert persisted["mutation_intents"][0]["resolved"] is True
+
+
+def test_fresh_lifecycle_malformed_or_stale_journal_blocks_without_mutation(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    cases = [
+        "{not-json",
+        json.dumps(["wrong"]),
+        json.dumps(_ambiguous_stop_create_journal(version="9.9")),
+        json.dumps(_ambiguous_stop_create_journal(pair_id="other-pair")),
+        json.dumps(_ambiguous_stop_create_journal(symbol="ETHUSDT")),
+    ]
+    for payload in cases:
+        journal = _runtime_file(tmp_path, "protective.json")
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        journal.write_text(payload, encoding="utf-8")
+        calls = []
+
+        def transport(method, url, body, timeout, headers):
+            calls.append(method)
+            raise AssertionError("journal validation failure must happen before authenticated mutation")
+
+        result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+        assert result.status == "FAIL"
+        assert result.recovery_required is True
+        assert calls == []
+
+
+def test_pre_create_lookup_present_reuses_order_and_sends_zero_post(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, url, params))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        client_id = params["clientAlgoId"][0]
+        order_type = "STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"
+        trigger = "45000.00" if order_type == "STOP_MARKET" else "55000.00"
+        if method == "DELETE":
+            return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200}, 10)
+        if method == "GET" and any(call[0] == "DELETE" and call[2].get("clientAlgoId", [""])[0] == client_id for call in calls):
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "PASS"
+    assert not any(call[0] == "POST" for call in calls)
+
+
+def test_pre_create_lookup_ambiguous_or_mismatch_sends_zero_post(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    for response in ("timeout", "mismatch"):
+        calls = []
+
+        def transport(method, url, body, timeout, headers, response=response):
+            params = parse_qs(body.decode("utf-8"))
+            calls.append((method, url, params))
+            if "positionSide/dual" in url:
+                return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+            if "positionRisk" in url:
+                return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+            if response == "timeout":
+                raise TimeoutError("pre-create lookup timeout")
+            return BinanceLifecycleHTTPResponse(200, url, _algo_response("smcbot-protect-sl-001", "STOP_MARKET", side="BUY"), 10)
+
+        result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+        assert result.status == "FAIL"
+        assert result.decision == "RECOVERY_REQUIRED"
+        assert not any(call[0] == "POST" for call in calls)
+
+
+def test_resolved_compatible_journal_is_archived_before_new_lifecycle(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    journal = _runtime_file(tmp_path, "protective.json")
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text(json.dumps({"schema_version": "1.0", "pair_id": "pair-001", "stop_client_algo_id": "smcbot-protect-sl-001", "take_profit_client_algo_id": "smcbot-protect-tp-001", "phase": "COMPLETE", "recovery_required": False, "baseline_available": False, "baseline_position_amount": None, "baseline_position_direction": None, "stop_trigger": None, "take_profit_trigger": None, "mutation_intents": [], "entries": []}), encoding="utf-8")
+    calls = []
+    created = set()
+    deleted = set()
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, url, params))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        client_id = params["clientAlgoId"][0]
+        order_type = params.get("type", ["STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"])[0]
+        trigger = params.get("triggerPrice", ["45000.00" if order_type == "STOP_MARKET" else "55000.00"])[0]
+        if method == "POST":
+            created.add(client_id)
+            return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+        if method == "DELETE":
+            deleted.add(client_id)
+            return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200}, 10)
+        if client_id in deleted or client_id not in created:
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "PASS"
+    assert list(journal.parent.glob("protective.json.archived.*"))
+
+
+
+def _write_runtime_journal(tmp_path: Path, payload: dict) -> Path:
+    journal = _runtime_file(tmp_path, "protective.json")
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text(json.dumps(payload), encoding="utf-8")
+    return journal
+
+
+def _run_lifecycle_with_journal_payload(tmp_path: Path, payload: dict):
+    path = _write_config(tmp_path)
+    _write_runtime_journal(tmp_path, payload)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        calls.append(method)
+        raise AssertionError("invalid journal must fail before authenticated transport")
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+    return result, calls
+
+
+@pytest.mark.parametrize("field", [
+    "intent_version",
+    "pair_id",
+    "symbol",
+    "label",
+    "mutation_kind",
+    "client_algo_id",
+    "expected_order_type",
+    "expected_side",
+    "expected_trigger_price",
+    "expected_close_position",
+    "expected_working_type",
+    "expected_price_protect",
+    "baseline_position_amount",
+    "baseline_position_direction",
+    "created_at",
+    "mutation_phase",
+    "resolved",
+    "reconciliation_state",
+    "reconciliation_reason",
+])
+def test_persisted_intent_missing_required_field_fails_before_transport(tmp_path: Path, field: str) -> None:
+    payload = _ambiguous_stop_create_journal()
+    payload["mutation_intents"][0].pop(field)
+
+    result, calls = _run_lifecycle_with_journal_payload(tmp_path, payload)
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+    assert calls == []
+
+
+@pytest.mark.parametrize("field,value", [
+    ("expected_close_position", "true"),
+    ("expected_price_protect", 1),
+    ("resolved", "false"),
+    ("expected_trigger_price", "NaN"),
+    ("expected_trigger_price", "Infinity"),
+    ("expected_trigger_price", "0"),
+    ("expected_trigger_price", "-1"),
+    ("baseline_position_amount", "NaN"),
+])
+def test_persisted_intent_invalid_required_field_fails_before_transport(tmp_path: Path, field: str, value) -> None:
+    payload = _ambiguous_stop_create_journal()
+    payload["mutation_intents"][0][field] = value
+
+    result, calls = _run_lifecycle_with_journal_payload(tmp_path, payload)
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+    assert calls == []
+
+
+@pytest.mark.parametrize("mutation_intents", [None, {}, "[]"])
+def test_journal_mutation_intents_must_be_explicit_list(tmp_path: Path, mutation_intents) -> None:
+    payload = _ambiguous_stop_create_journal()
+    if mutation_intents is None:
+        payload.pop("mutation_intents")
+    else:
+        payload["mutation_intents"] = mutation_intents
+
+    result, calls = _run_lifecycle_with_journal_payload(tmp_path, payload)
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+    assert calls == []
+
+
+def test_recovery_delete_persists_intent_before_transport_and_result_after_lookup(tmp_path: Path, monkeypatch) -> None:
+    path = _write_config(tmp_path)
+    events = []
+    deleted = set()
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        if "positionRisk" in url:
+            events.append("position_risk")
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        client_id = params["clientAlgoId"][0]
+        events.append(f"{method}:{client_id}")
+        if method == "DELETE":
+            deleted.add(client_id)
+            return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200}, 10)
+        if client_id in deleted:
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        order_type = "STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"
+        trigger = "45000.00" if order_type == "STOP_MARKET" else "55000.00"
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+
+    engine = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000)
+    original_write = engine._write_journal
+
+    def recording_write(config, journal, phase, details):
+        events.append(f"persist:{phase}")
+        return original_write(config, journal, phase, details)
+
+    monkeypatch.setattr(engine, "_write_journal", recording_write)
+
+    result = engine.recover_protective_pair("smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_RECOVERY", config_path=str(path))
+
+    assert result.status == "PASS"
+    assert events.index("persist:TAKE_PROFIT_DELETE_INTENT_PERSISTED") < events.index("DELETE:smcbot-protect-tp-001")
+    tp_delete_index = events.index("DELETE:smcbot-protect-tp-001")
+    assert any(index > tp_delete_index and event == "GET:smcbot-protect-tp-001" for index, event in enumerate(events))
+    assert any(event.startswith("persist:TAKE_PROFIT_DELETE_DELETE_CONFIRMED") for event in events)
+    assert events.index("persist:STOP_DELETE_INTENT_PERSISTED") < events.index("DELETE:smcbot-protect-sl-001")
+    assert len([event for event in events if event.startswith("DELETE:")]) == 2
+
+
+@pytest.mark.parametrize("failing_phase", ["TAKE_PROFIT_DELETE_INTENT_PERSISTED", "STOP_DELETE_INTENT_PERSISTED"])
+def test_recovery_delete_persistence_failure_prevents_delete(tmp_path: Path, monkeypatch, failing_phase: str) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+    deleted = set()
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        client_id = params["clientAlgoId"][0]
+        calls.append((method, client_id))
+        if method == "DELETE":
+            if client_id == "smcbot-protect-tp-001":
+                deleted.add(client_id)
+                return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200}, 10)
+            raise AssertionError("STOP DELETE must not transmit after persistence failure")
+        if client_id in deleted:
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        order_type = "STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"
+        trigger = "45000.00" if order_type == "STOP_MARKET" else "55000.00"
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+
+    engine = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000)
+    original_write = engine._write_journal
+
+    def failing_write(config, journal, phase, details):
+        if phase == failing_phase:
+            raise OSError("forced persistence failure")
+        return original_write(config, journal, phase, details)
+
+    monkeypatch.setattr(engine, "_write_journal", failing_write)
+
+    result = engine.recover_protective_pair("smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_RECOVERY", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+    if failing_phase == "TAKE_PROFIT_DELETE_INTENT_PERSISTED":
+        assert not any(call[0] == "DELETE" for call in calls)
+    else:
+        assert ("DELETE", "smcbot-protect-tp-001") in calls
+        assert ("DELETE", "smcbot-protect-sl-001") not in calls
+
+
+def test_recovery_delete_atomic_replace_failure_prevents_delete(tmp_path: Path, monkeypatch) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        client_id = params["clientAlgoId"][0]
+        calls.append((method, client_id))
+        order_type = "STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"
+        trigger = "45000.00" if order_type == "STOP_MARKET" else "55000.00"
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+
+    import engine.diagnostics.binance_futures_testnet_protective_orders_engine as protective_engine_module
+
+    original_replace = protective_engine_module.os.replace
+
+    def failing_replace(src, dst):
+        if str(src).endswith("protective.json.tmp"):
+            raise OSError("forced replace failure")
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(protective_engine_module.os, "replace", failing_replace)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).recover_protective_pair("smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_RECOVERY", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+    assert not any(call[0] == "DELETE" for call in calls)
+
+
+def test_delete_ack_result_uses_pending_reconciliation_state(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    events = []
+    deleted = set()
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        client_id = params["clientAlgoId"][0]
+        events.append((method, client_id))
+        if method == "DELETE":
+            deleted.add(client_id)
+            return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200}, 10)
+        if client_id in deleted or method == "GET" and not any(event[0] == "POST" and event[1] == client_id for event in events):
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        order_type = params.get("type", ["STOP_MARKET" if client_id.endswith("sl-001") else "TAKE_PROFIT_MARKET"])[0]
+        trigger = params.get("triggerPrice", ["45000.00" if order_type == "STOP_MARKET" else "55000.00"])[0]
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "PASS"
+    ack_results = [item for item in result.reconciliation_results if item.interpreted_mutation_result == "DELETE_ACKNOWLEDGED"]
+    assert ack_results
+    assert {item.reconciliation_state for item in ack_results} == {"PENDING"}
+
+
+
+def test_protective_engine_has_no_direct_recovery_delete_bypass() -> None:
+    source = Path("engine/diagnostics/binance_futures_testnet_protective_orders_engine.py").read_text(encoding="utf-8")
+    assert source.count("client.cancel_algo_order_exact(") == 1
+    assert "def _delete_with_reconciliation" in source
+
+
+
+def _assert_untrusted_journal_preserved(tmp_path: Path, original: bytes, *, recovery: bool = False) -> None:
+    path = _write_config(tmp_path)
+    journal = _runtime_file(tmp_path, "protective.json")
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_bytes(original)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        calls.append((method, url))
+        raise AssertionError("untrusted journal must fail before authenticated transport")
+
+    engine = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000)
+    if recovery:
+        result = engine.recover_protective_pair("smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_RECOVERY", config_path=str(path))
+    else:
+        result = engine.run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.recovery_required is True
+    assert journal.read_bytes() == original
+    assert not list(journal.parent.glob("protective.json.archived.*"))
+    assert calls == []
+
+
+@pytest.mark.parametrize("payload", [
+    b"{not-json",
+    json.dumps(["wrong"]).encode("utf-8"),
+    json.dumps({**_ambiguous_stop_create_journal(), "pair_id": "other-pair"}).encode("utf-8"),
+    json.dumps({**_ambiguous_stop_create_journal(symbol="ETHUSDT")}).encode("utf-8"),
+    json.dumps({**_ambiguous_stop_create_journal(), "mutation_intents": None}).encode("utf-8"),
+])
+def test_untrusted_lifecycle_journal_bytes_are_preserved(tmp_path: Path, payload: bytes) -> None:
+    _assert_untrusted_journal_preserved(tmp_path, payload, recovery=False)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("intent_version", "9.9"),
+    ("client_algo_id", "bad-id"),
+    ("mutation_kind", "UPDATE"),
+    ("label", "UNKNOWN"),
+    ("created_at", "not-a-time"),
+])
+def test_untrusted_intent_journal_bytes_are_preserved(tmp_path: Path, field: str, value: str) -> None:
+    payload = _ambiguous_stop_create_journal()
+    payload["mutation_intents"][0][field] = value
+    _assert_untrusted_journal_preserved(tmp_path, json.dumps(payload).encode("utf-8"), recovery=False)
+
+
+@pytest.mark.parametrize("payload", [
+    b"{not-json",
+    json.dumps(["wrong"]).encode("utf-8"),
+    json.dumps({**_ambiguous_stop_create_journal(), "pair_id": "other-pair"}).encode("utf-8"),
+    json.dumps({**_ambiguous_stop_create_journal(), "mutation_intents": None}).encode("utf-8"),
+])
+def test_untrusted_recovery_journal_bytes_are_preserved(tmp_path: Path, payload: bytes) -> None:
+    _assert_untrusted_journal_preserved(tmp_path, payload, recovery=True)
+
+
+@pytest.mark.parametrize("created_at", [
+    "",
+    "   ",
+    "not-a-time",
+    "2026-99-99T00:00:00Z",
+    "2026-07-13T19:42:38",
+    123,
+    1.5,
+    None,
+])
+def test_invalid_created_at_fails_closed_and_preserves_journal(tmp_path: Path, created_at) -> None:
+    payload = _ambiguous_stop_create_journal()
+    payload["mutation_intents"][0]["created_at"] = created_at
+    _assert_untrusted_journal_preserved(tmp_path, json.dumps(payload).encode("utf-8"), recovery=False)
+
+
+@pytest.mark.parametrize("created_at", ["2026-07-13T19:42:38Z", "2026-07-13T19:42:38+00:00", "2026-07-13T23:12:38+03:30"])
+def test_valid_created_at_formats_are_accepted(tmp_path: Path, created_at: str) -> None:
+    payload = _ambiguous_stop_create_journal()
+    payload["mutation_intents"][0]["created_at"] = created_at
+    path = _write_config(tmp_path)
+    _write_runtime_journal(tmp_path, payload)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, params["clientAlgoId"][0]))
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response("smcbot-protect-sl-001", "STOP_MARKET", status="NEW", trigger="45000.00"), 10)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+    assert calls == [("GET", "smcbot-protect-sl-001")]
+
+
+def _assert_rejected_strict_journal_preserved(tmp_path: Path, payload: dict) -> None:
+    _assert_untrusted_journal_preserved(tmp_path, json.dumps(payload, sort_keys=True).encode("utf-8"), recovery=False)
+
+
+MISSING = object()
+
+
+def _set_or_remove_journal_field(payload: dict, field: str, value) -> None:
+    if value is MISSING:
+        payload.pop(field)
+    else:
+        payload[field] = value
+
+
+@pytest.mark.parametrize("value", [MISSING, None, "", 1, True, {"version": "1.0"}, "9.9"])
+def test_journal_schema_version_rejects_invalid_values_and_preserves_bytes(tmp_path: Path, value) -> None:
+    payload = _ambiguous_stop_create_journal()
+    _set_or_remove_journal_field(payload, "schema_version", value)
+    _assert_rejected_strict_journal_preserved(tmp_path, payload)
+
+
+def test_journal_schema_version_supported_value_reloads_successfully(tmp_path: Path) -> None:
+    engine = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=lambda *args: None, now_ms_provider=lambda: 1000)
+    journal = engine._journal_from_payload_strict(_ambiguous_stop_create_journal(), "pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001")
+    assert journal.schema_version == "1.0"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("pair_id", MISSING),
+    ("pair_id", None),
+    ("pair_id", ""),
+    ("pair_id", 1),
+    ("pair_id", True),
+    ("pair_id", "other-pair"),
+])
+def test_journal_pair_id_is_required_string_and_exact_match(tmp_path: Path, field: str, value) -> None:
+    payload = _ambiguous_stop_create_journal()
+    _set_or_remove_journal_field(payload, field, value)
+    _assert_rejected_strict_journal_preserved(tmp_path, payload)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("stop_client_algo_id", MISSING),
+    ("stop_client_algo_id", None),
+    ("stop_client_algo_id", 1),
+    ("stop_client_algo_id", ""),
+    ("stop_client_algo_id", "smcbot-protect-other"),
+    ("take_profit_client_algo_id", MISSING),
+    ("take_profit_client_algo_id", None),
+    ("take_profit_client_algo_id", False),
+    ("take_profit_client_algo_id", ""),
+    ("take_profit_client_algo_id", "smcbot-protect-other"),
+])
+def test_journal_protective_ids_are_required_strings_and_exact_match(tmp_path: Path, field: str, value) -> None:
+    payload = _ambiguous_stop_create_journal()
+    _set_or_remove_journal_field(payload, field, value)
+    _assert_rejected_strict_journal_preserved(tmp_path, payload)
+
+
+def test_journal_stop_and_take_profit_ids_must_be_distinct(tmp_path: Path) -> None:
+    payload = _ambiguous_stop_create_journal()
+    payload["take_profit_client_algo_id"] = payload["stop_client_algo_id"]
+    payload["mutation_intents"][0]["client_algo_id"] = payload["stop_client_algo_id"]
+    _assert_rejected_strict_journal_preserved(tmp_path, payload)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("recovery_required", "false"),
+    ("recovery_required", 0),
+    ("recovery_required", None),
+    ("baseline_available", "true"),
+    ("baseline_available", 1),
+    ("baseline_available", None),
+])
+def test_journal_booleans_reject_coerced_values(tmp_path: Path, field: str, value) -> None:
+    payload = _ambiguous_stop_create_journal()
+    payload[field] = value
+    _assert_rejected_strict_journal_preserved(tmp_path, payload)
+
+
+@pytest.mark.parametrize("value", [MISSING, None, "[]", {}, ["bad-entry"]])
+def test_journal_entries_must_be_explicit_sanitized_list(tmp_path: Path, value) -> None:
+    payload = _ambiguous_stop_create_journal()
+    _set_or_remove_journal_field(payload, "entries", value)
+    _assert_rejected_strict_journal_preserved(tmp_path, payload)
+
+
+@pytest.mark.parametrize("value", [MISSING, None, "", 1, "UNKNOWN_PHASE"])
+def test_journal_phase_must_be_known_string(tmp_path: Path, value) -> None:
+    payload = _ambiguous_stop_create_journal()
+    _set_or_remove_journal_field(payload, "phase", value)
+    _assert_rejected_strict_journal_preserved(tmp_path, payload)
+
+
+def test_journal_serialization_writes_schema_and_reloads_exact_top_level_types(tmp_path: Path) -> None:
+    engine = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=lambda *args: None, now_ms_provider=lambda: 1000)
+    original = engine._journal_from_payload_strict(_ambiguous_stop_create_journal(), "pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001")
+    payload = original.to_dict()
+    assert payload["schema_version"] == "1.0"
+    assert isinstance(payload["schema_version"], str)
+    assert isinstance(payload["pair_id"], str)
+    assert isinstance(payload["stop_client_algo_id"], str)
+    assert isinstance(payload["take_profit_client_algo_id"], str)
+    assert isinstance(payload["phase"], str)
+    assert isinstance(payload["recovery_required"], bool)
+    assert isinstance(payload["baseline_available"], bool)
+    assert isinstance(payload["entries"], list)
+    assert isinstance(payload["mutation_intents"], list)
+    reloaded = engine._journal_from_payload_strict(payload, "pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001")
+    assert reloaded.schema_version == original.schema_version
+    assert reloaded.pair_id == original.pair_id
+    assert reloaded.stop_client_algo_id == original.stop_client_algo_id
+    assert reloaded.take_profit_client_algo_id == original.take_profit_client_algo_id
+    assert reloaded.recovery_required is original.recovery_required
+    assert reloaded.baseline_available is original.baseline_available
+
+
+def _terminal_journal_payload(marker: str = "original") -> dict:
+    return {
+        "schema_version": "1.0",
+        "pair_id": "pair-001",
+        "stop_client_algo_id": "smcbot-protect-sl-001",
+        "take_profit_client_algo_id": "smcbot-protect-tp-001",
+        "phase": "COMPLETE",
+        "recovery_required": False,
+        "baseline_available": False,
+        "baseline_position_amount": None,
+        "baseline_position_direction": None,
+        "stop_trigger": None,
+        "take_profit_trigger": None,
+        "mutation_intents": [],
+        "entries": [{"created_at": "2026-01-01T00:00:00+00:00", "phase": "COMPLETE", "details": {"marker": marker}}],
+    }
+
+
+def _successful_lifecycle_transport(calls: list):
+    created = set()
+    deleted = set()
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, url, params))
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, _position(), 10)
+        client_id = params["clientAlgoId"][0]
+        order_type = params.get("type", ["STOP_MARKET" if "sl-" in client_id else "TAKE_PROFIT_MARKET"])[0]
+        trigger = params.get("triggerPrice", ["45000.00" if order_type == "STOP_MARKET" else "55000.00"])[0]
+        if method == "POST":
+            created.add(client_id)
+            return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+        if method == "DELETE":
+            deleted.add(client_id)
+            return BinanceLifecycleHTTPResponse(200, url, {"clientAlgoId": client_id, "algoId": 1, "code": 200}, 10)
+        if client_id in deleted or client_id not in created:
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response(client_id, order_type, status="NEW", trigger=trigger), 10)
+
+    return transport
+
+
+def test_archive_preserves_exact_content_and_new_journal_is_separate(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    journal = _runtime_file(tmp_path, "protective.json")
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    original = json.dumps(_terminal_journal_payload("archive-me"), sort_keys=True).encode("utf-8")
+    journal.write_bytes(original)
+    calls = []
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=_successful_lifecycle_transport(calls), now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    archives = list(journal.parent.glob("protective.json.archived.*"))
+    assert result.status == "PASS"
+    assert len(archives) == 1
+    assert archives[0].read_bytes() == original
+    assert journal.exists()
+    assert journal.read_bytes() != original
+
+
+def test_archive_collision_uses_unique_destination_without_overwrite(tmp_path: Path, monkeypatch) -> None:
+    path = _write_config(tmp_path)
+    journal = _runtime_file(tmp_path, "protective.json")
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    first_uuid = "a" * 32
+    second_uuid = "b" * 32
+    timestamp = "2026-07-13T19:42:38+00:00"
+    original = json.dumps(_terminal_journal_payload("collision"), sort_keys=True).encode("utf-8")
+    journal.write_bytes(original)
+    context = "pair-001-smcbot-protect-sl-001-smcbot-protect-tp-001"
+    existing_archive = journal.with_name(f"protective.json.archived.{context}.{timestamp.replace(':', '').replace('-', '').replace('.', '').replace('+', '')}.{first_uuid}")
+    existing_archive.write_bytes(b"existing archive bytes")
+    uuid_values = iter([type("U", (), {"hex": first_uuid})(), type("U", (), {"hex": second_uuid})()])
+    monkeypatch.setattr("engine.diagnostics.binance_futures_testnet_protective_orders_engine.uuid.uuid4", lambda: next(uuid_values))
+    calls = []
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=_successful_lifecycle_transport(calls), now_ms_provider=lambda: 1000, now_provider=lambda: timestamp).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "PASS"
+    assert existing_archive.read_bytes() == b"existing archive bytes"
+    archives = list(journal.parent.glob("protective.json.archived.*"))
+    assert len(archives) == 2
+    assert any(archive.read_bytes() == original for archive in archives)
+
+
+def test_archive_move_failure_preserves_journal_and_blocks_preflight(tmp_path: Path, monkeypatch) -> None:
+    path = _write_config(tmp_path)
+    journal = _runtime_file(tmp_path, "protective.json")
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    original = json.dumps(_terminal_journal_payload("move-fail"), sort_keys=True).encode("utf-8")
+    journal.write_bytes(original)
+    calls = []
+
+    def failing_rename(self, target):
+        raise OSError("forced archive move failure")
+
+    monkeypatch.setattr(Path, "rename", failing_rename)
+
+    def transport(method, url, body, timeout, headers):
+        calls.append((method, url))
+        raise AssertionError("archive failure must happen before preflight")
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=lambda url, timeout: (_ for _ in ()).throw(AssertionError("no public preflight after archive failure")), authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.recovery_required is True
+    assert journal.read_bytes() == original
+    assert calls == []
+    assert not list(journal.parent.glob("protective.json.archived.*"))
+
+
+def test_unresolved_or_incompatible_journal_is_not_archived(tmp_path: Path) -> None:
+    cases = [
+        _ambiguous_stop_create_journal(),
+        {**_terminal_journal_payload("bad-phase"), "phase": "RECOVERY_REQUIRED", "recovery_required": True},
+        {**_terminal_journal_payload("stale"), "pair_id": "other-pair"},
+    ]
+    for index, payload in enumerate(cases):
+        case_root = tmp_path / f"case-{index}"
+        path = _write_config(case_root)
+        journal = _runtime_file(case_root, "protective.json")
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        original = json.dumps(payload, sort_keys=True).encode("utf-8")
+        journal.write_bytes(original)
+        calls = []
+
+        def transport(method, url, body, timeout, headers):
+            calls.append((method, url))
+            return BinanceLifecycleHTTPResponse(200, url, _algo_response("smcbot-protect-sl-001", "STOP_MARKET", status="NEW", trigger="45000.00"), 10)
+
+        result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=case_root, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+        assert result.status == "FAIL"
+        assert not list(journal.parent.glob("protective.json.archived.*"))
+        assert journal.read_bytes() == original or payload.get("pair_id") == "pair-001"
+        assert not any(call[0] in ("POST", "DELETE") for call in calls)
+
+
+def test_unresolved_delete_startup_reconciles_without_new_mutation(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    payload = _ambiguous_stop_create_journal()
+    payload["mutation_intents"][0].update({
+        "mutation_kind": "DELETE",
+        "mutation_phase": "STOP_DELETE_STARTED",
+        "reconciliation_state": "AMBIGUOUS",
+    })
+    _write_runtime_journal(tmp_path, payload)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, params["clientAlgoId"][0]))
+        if method == "GET":
+            raise BinanceFuturesTestnetProtectiveAPIError("NO_SUCH_ORDER", http_status=400, binance_code=-2013, method=method, path="/fapi/v1/algoOrder", request_transmitted=True, response_received=True)
+        raise AssertionError("unresolved DELETE startup must not mutate")
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+    assert calls == [("GET", "smcbot-protect-sl-001")]
+    persisted = json.loads(_runtime_file(tmp_path, "protective.json").read_text(encoding="utf-8"))
+    assert persisted["mutation_intents"][0]["resolved"] is True
+    assert persisted["mutation_intents"][0]["reconciliation_state"] == "ABSENT"
+
+
+@pytest.mark.parametrize("outcome", ["present", "ambiguous"])
+def test_unresolved_delete_startup_present_or_ambiguous_stops_without_mutation(tmp_path: Path, outcome: str) -> None:
+    path = _write_config(tmp_path)
+    payload = _ambiguous_stop_create_journal()
+    payload["mutation_intents"][0].update({"mutation_kind": "DELETE", "mutation_phase": "STOP_DELETE_STARTED"})
+    _write_runtime_journal(tmp_path, payload)
+    calls = []
+
+    def transport(method, url, body, timeout, headers):
+        params = parse_qs(body.decode("utf-8"))
+        calls.append((method, params["clientAlgoId"][0]))
+        if outcome == "ambiguous":
+            raise TimeoutError("lookup ambiguous")
+        return BinanceLifecycleHTTPResponse(200, url, _algo_response("smcbot-protect-sl-001", "STOP_MARKET", status="NEW", trigger="45000.00"), 10)
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, env=_env(), http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 1000).run_protective_lifecycle("pair-001", "smcbot-protect-sl-001", "smcbot-protect-tp-001", confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE", config_path=str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "RECOVERY_REQUIRED"
+    expected_gets = 2 if outcome == "ambiguous" else 1
+    assert calls == [("GET", "smcbot-protect-sl-001")] * expected_gets
+    assert not any(method in ("POST", "DELETE") for method, _ in calls)

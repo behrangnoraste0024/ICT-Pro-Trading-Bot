@@ -75,6 +75,14 @@ def format_binance_futures_testnet_protective_orders_result(result: BinanceFutur
             f"Unexpected Trigger        : {_fmt_bool(result.unexpected_trigger)}",
             f"Unexpected Position Change: {_fmt_bool(result.unexpected_position_change)}",
             "",
+            "Mutation Reconciliation:",
+            "Label | Kind | ClientAlgoId | State | Result | Resolved | Recovery | Reason",
+        ]
+    )
+    lines.extend(_reconciliation_lines(result.reconciliation_results))
+    lines.extend(
+        [
+            "",
             "Safety:",
             f"Production Endpoint Used  : {_fmt_bool(result.production_endpoint_used)}",
             f"Real Funds Used           : {_fmt_bool(result.real_funds_used)}",
@@ -87,6 +95,15 @@ def format_binance_futures_testnet_protective_orders_result(result: BinanceFutur
     lines.extend(_issue_lines(result.issues))
     return "\n".join(lines)
 
+
+
+def _reconciliation_lines(results) -> list[str]:
+    if not results:
+        return ["None | INFO | No mutation reconciliation results."]
+    return [
+        f"{item.label} | {item.mutation_kind} | {item.client_algo_id} | {item.reconciliation_state} | {item.interpreted_mutation_result} | {_fmt_bool(item.resolved)} | {_fmt_bool(item.recovery_required)} | {item.reason}"
+        for item in results
+    ]
 
 def _issue_lines(issues) -> list[str]:
     if not issues:

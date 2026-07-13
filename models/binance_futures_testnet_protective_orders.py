@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from decimal import Decimal
+from enum import Enum
 from typing import Any
+
+
+PROTECTIVE_JOURNAL_SCHEMA_VERSION = "1.0"
 
 
 @dataclass
@@ -206,6 +210,7 @@ class BinanceFuturesTestnetProtectiveRequestMetadata:
 
 @dataclass
 class BinanceFuturesTestnetProtectiveJournal:
+    schema_version: str = PROTECTIVE_JOURNAL_SCHEMA_VERSION
     pair_id: str = ""
     stop_client_algo_id: str = ""
     take_profit_client_algo_id: str = ""
@@ -217,6 +222,69 @@ class BinanceFuturesTestnetProtectiveJournal:
     stop_trigger: Decimal | None = None
     take_profit_trigger: Decimal | None = None
     entries: list[dict[str, Any]] = field(default_factory=list)
+    mutation_intents: list[ProtectiveMutationIntent] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _serialize(asdict(self))
+
+
+
+
+class ProtectiveMutationKind(str, Enum):
+    CREATE = "CREATE"
+    DELETE = "DELETE"
+
+
+class ProtectiveOrderLabel(str, Enum):
+    STOP = "STOP"
+    TAKE_PROFIT = "TAKE_PROFIT"
+
+
+class ProtectiveReconciliationState(str, Enum):
+    PENDING = "PENDING"
+    PRESENT = "PRESENT"
+    ABSENT = "ABSENT"
+    AMBIGUOUS = "AMBIGUOUS"
+    IDENTITY_MISMATCH = "IDENTITY_MISMATCH"
+
+
+@dataclass
+class ProtectiveMutationIntent:
+    intent_version: str = "1.0"
+    pair_id: str = ""
+    symbol: str = "BTCUSDT"
+    label: str = ""
+    mutation_kind: str = ""
+    client_algo_id: str = ""
+    expected_order_type: str = ""
+    expected_side: str = ""
+    expected_trigger_price: Decimal | None = None
+    expected_close_position: bool = True
+    expected_working_type: str = "MARK_PRICE"
+    expected_price_protect: bool = True
+    baseline_position_amount: Decimal | None = None
+    baseline_position_direction: str | None = None
+    created_at: str | None = None
+    mutation_phase: str = ""
+    resolved: bool = False
+    reconciliation_state: str = ""
+    reconciliation_reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return _serialize(asdict(self))
+
+
+@dataclass
+class ProtectiveReconciliationResult:
+    label: str = ""
+    mutation_kind: str = ""
+    client_algo_id: str = ""
+    reconciliation_state: str = ""
+    interpreted_mutation_result: str = ""
+    resolved: bool = False
+    recovery_required: bool = False
+    reason: str = ""
+    order: BinanceFuturesTestnetProtectiveAlgoSummary | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return _serialize(asdict(self))
@@ -274,6 +342,7 @@ class BinanceFuturesTestnetProtectiveResult:
     create_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata] = field(default_factory=list)
     query_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata] = field(default_factory=list)
     cancel_requests: list[BinanceFuturesTestnetProtectiveRequestMetadata] = field(default_factory=list)
+    reconciliation_results: list[ProtectiveReconciliationResult] = field(default_factory=list)
     journal: BinanceFuturesTestnetProtectiveJournal | None = None
     issues: list[BinanceFuturesTestnetProtectiveIssue] = field(default_factory=list)
     lifecycle_complete: bool = False
@@ -303,6 +372,7 @@ class BinanceFuturesTestnetProtectiveResult:
             "create_requests": [item.to_dict() for item in self.create_requests],
             "query_requests": [item.to_dict() for item in self.query_requests],
             "cancel_requests": [item.to_dict() for item in self.cancel_requests],
+            "reconciliation_results": [item.to_dict() for item in self.reconciliation_results],
             "journal": None if self.journal is None else self.journal.to_dict(),
             "issues": [issue.to_dict() for issue in self.issues],
         }
@@ -313,6 +383,8 @@ def serialize_protective(value: Any) -> Any:
 
 
 def _serialize(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
     if isinstance(value, Decimal):
         if not value.is_finite():
             return None
