@@ -94,8 +94,8 @@ def test_strict_config_rejects_identity_and_limit_drift(tmp_path: Path) -> None:
     overrides = {
         "symbol": "ETH/USDT",
         "api_key_env_var": "BINANCE_KEY",
-        "maximum_position_abs_quantity": 0.002,
-        "maximum_position_notional_usdt": 101,
+        "maximum_position_abs_quantity": 0.0021,
+        "maximum_position_notional_usdt": 151,
         "request_timeout_seconds": 31,
         "recv_window_ms": 10001,
         "pair_confirmation_phrase": "BAD",
@@ -135,7 +135,7 @@ def test_invalid_positions_and_immediate_trigger_are_rejected(tmp_path: Path) ->
     client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), env=_env())
     filters = client.parse_exchange_filters({"symbols": [{"symbol": "BTCUSDT", "filters": [{"filterType": "PRICE_FILTER", "minPrice": "1", "maxPrice": "1000000", "tickSize": "0.10"}]}]})
 
-    for rows in ([_position("0")[0]], _position("0.002"), _position("0.001", "200000")):
+    for rows in ([_position("0")[0]], _position("0.0021"), _position("0.002", "80000")):
         try:
             client.require_protectable_position(rows)
         except ValueError:
@@ -149,6 +149,46 @@ def test_invalid_positions_and_immediate_trigger_are_rejected(tmp_path: Path) ->
         pass
     else:
         raise AssertionError("unsafe offset should be rejected")
+
+
+def test_protective_position_limits_accept_demo_minimum_sized_positions(tmp_path: Path) -> None:
+    client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), env=_env())
+
+    position = client.require_protectable_position(_position("0.0016", "63099.66"))
+    max_position = client.require_protectable_position(_position("0.002", "70000"))
+
+    assert position.position_amt == Decimal("0.0016")
+    assert position.notional < Decimal("150")
+    assert max_position.position_amt == Decimal("0.002")
+    assert max_position.notional < Decimal("150")
+
+
+def test_protective_position_limits_reject_above_quantity_or_notional(tmp_path: Path) -> None:
+    client = BinanceFuturesTestnetProtectiveOrdersClient(BinanceFuturesTestnetProtectiveOrdersConfig(), env=_env())
+
+    for rows in (_position("0.0021", "63099.66"), _position("0.002", "80000")):
+        try:
+            client.require_protectable_position(rows)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("position above protective quantity/notional limit should be rejected")
+
+
+def test_config_limits_accept_only_updated_position_ceiling(tmp_path: Path) -> None:
+    valid_path = _write_config(tmp_path, maximum_position_abs_quantity=0.002, maximum_position_notional_usdt=150.0)
+    invalid_quantity_path = _write_config(tmp_path / "quantity", maximum_position_abs_quantity=0.0021)
+    invalid_notional_path = _write_config(tmp_path / "notional", maximum_position_notional_usdt=150.1)
+
+    assert BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path).validate(str(valid_path)).status == "PASS"
+
+    quantity_report = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path / "quantity").validate(str(invalid_quantity_path))
+    notional_report = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path / "notional").validate(str(invalid_notional_path))
+
+    assert quantity_report.status == "FAIL"
+    assert any(issue.name == "maximum_position_abs_quantity" for issue in quantity_report.issues)
+    assert notional_report.status == "FAIL"
+    assert any(issue.name == "maximum_position_notional_usdt" for issue in notional_report.issues)
 
 
 def test_position_side_must_be_present_and_both(tmp_path: Path) -> None:
