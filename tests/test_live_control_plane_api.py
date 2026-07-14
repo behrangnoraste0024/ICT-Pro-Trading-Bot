@@ -100,6 +100,11 @@ def test_all_live_control_plane_routes_are_get_only(client: TestClient) -> None:
         "/api/v1/live/positions/{symbol}",
         "/api/v1/live/protective-orders/current",
         "/api/v1/live/recovery/status",
+        "/api/v1/live/persistence/status",
+        "/api/v1/live/execution-intents/{correlation_id}",
+        "/api/v1/live/protective-pairs/{pair_id}",
+        "/api/v1/live/protective-pairs/{pair_id}/orders",
+        "/api/v1/live/protective-pairs/{pair_id}/events",
     }
     app_paths = {path: set(methods) for path, methods in client.get("/openapi.json").json()["paths"].items() if path.startswith("/api/v1/live")}
     assert set(app_paths) == expected

@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -147,17 +147,33 @@ class ExchangeOrderIdentityRepository(ABC):
     @abstractmethod
     def update_status(self, identity_id: UUID, expected_version: int, status: str) -> ExchangeOrderIdentity: ...
 
+    @abstractmethod
+    def list_by_protective_pair_id(self, protective_pair_id: UUID, limit: int, offset: int = 0) -> list[ExchangeOrderIdentity]: ...
+
 
 class RecoveryEventRepository(ABC):
     """Append-only repository contract; database triggers/permissions are future work."""
     @abstractmethod
     def append(self, event: RecoveryEvent) -> RecoveryEvent: ...
 
+    @abstractmethod
+    def list_by_protective_pair_id(self, protective_pair_id: UUID, limit: int, offset: int = 0) -> list[RecoveryEvent]: ...
+
 
 class AuditEventRepository(ABC):
     """Append-only repository contract; database triggers/permissions are future work."""
     @abstractmethod
     def append(self, event: AuditEvent) -> AuditEvent: ...
+
+    @abstractmethod
+    def list_by_correlation_id(self, correlation_id: UUID, limit: int, offset: int = 0) -> list[AuditEvent]: ...
+
+
+def _validate_pagination(limit: int, offset: int) -> None:
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise PersistenceValidationError("limit must be between 1 and 100")
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise PersistenceValidationError("offset must be zero or greater")
 
 
 def _execution_intent_from_orm(row: ExecutionIntentORM) -> ExecutionIntent:
@@ -290,6 +306,21 @@ class SqlAlchemyExchangeOrderIdentityRepository(ExchangeOrderIdentityRepository)
             raise OptimisticLockError("exchange order identity refresh conflict")
         return _exchange_order_identity_from_orm(row)
 
+    def list_by_protective_pair_id(self, protective_pair_id: UUID, limit: int, offset: int = 0) -> list[ExchangeOrderIdentity]:
+        _validate_pagination(limit, offset)
+        statement = (
+            select(ExchangeOrderIdentityORM)
+            .where(ExchangeOrderIdentityORM.protective_pair_id == protective_pair_id)
+            .order_by(
+                case((ExchangeOrderIdentityORM.leg_type == "STOP", 0), else_=1),
+                ExchangeOrderIdentityORM.created_at.asc(),
+                ExchangeOrderIdentityORM.id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        return [_exchange_order_identity_from_orm(row) for row in self.session.scalars(statement).all()]
+
 
 class SqlAlchemyRecoveryEventRepository(RecoveryEventRepository):
     def __init__(self, session: Session) -> None:
@@ -300,6 +331,17 @@ class SqlAlchemyRecoveryEventRepository(RecoveryEventRepository):
         self.session.add(row)
         _safe_flush(self.session)
         return _recovery_event_from_orm(row)
+
+    def list_by_protective_pair_id(self, protective_pair_id: UUID, limit: int, offset: int = 0) -> list[RecoveryEvent]:
+        _validate_pagination(limit, offset)
+        statement = (
+            select(RecoveryEventORM)
+            .where(RecoveryEventORM.protective_pair_id == protective_pair_id)
+            .order_by(RecoveryEventORM.created_at.asc(), RecoveryEventORM.id.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return [_recovery_event_from_orm(row) for row in self.session.scalars(statement).all()]
 
 
 class SqlAlchemyAuditEventRepository(AuditEventRepository):
@@ -312,3 +354,14 @@ class SqlAlchemyAuditEventRepository(AuditEventRepository):
         self.session.add(row)
         _safe_flush(self.session)
         return _audit_event_from_orm(row)
+
+    def list_by_correlation_id(self, correlation_id: UUID, limit: int, offset: int = 0) -> list[AuditEvent]:
+        _validate_pagination(limit, offset)
+        statement = (
+            select(AuditEventORM)
+            .where(AuditEventORM.correlation_id == correlation_id)
+            .order_by(AuditEventORM.created_at.asc(), AuditEventORM.id.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return [_audit_event_from_orm(row) for row in self.session.scalars(statement).all()]
