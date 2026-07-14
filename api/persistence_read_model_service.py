@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Any, Callable, Iterator
 from uuid import UUID
 
-from sqlalchemy import MetaData, Table, create_engine, inspect, select
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from infrastructure.persistence.execution_repositories import (
@@ -19,16 +19,9 @@ from infrastructure.persistence.execution_repositories import (
     SqlAlchemyProtectivePairRepository,
     SqlAlchemyRecoveryEventRepository,
 )
+from infrastructure.persistence.schema_contract import PERSISTENCE_REVISION, validate_persistence_schema
 from models.execution_persistence import AuditEvent, ExchangeOrderIdentity, ExecutionIntent, ProtectivePair, RecoveryEvent
 
-PERSISTENCE_REVISION = "20260714_0286"
-REQUIRED_TABLES = {
-    "execution_intents",
-    "protective_pairs",
-    "exchange_order_identities",
-    "recovery_events",
-    "audit_events",
-}
 PAIR_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
 SAFE_CODE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 SAFE_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
@@ -198,12 +191,7 @@ class PersistenceReadModelService:
         return self.env.get("ICT_DATABASE_URL") or self.env.get("DATABASE_URL")
 
     def _schema_state(self, connection: Any) -> tuple[bool, str | None]:
-        inspector = inspect(connection)
-        if not REQUIRED_TABLES.issubset(set(inspector.get_table_names())) or not inspector.has_table("alembic_version"):
-            return False, None
-        version_table = Table("alembic_version", MetaData(), autoload_with=connection)
-        revision = connection.scalar(select(version_table.c.version_num))
-        if not isinstance(revision, str) or revision != PERSISTENCE_REVISION:
+        if not validate_persistence_schema(connection):
             return False, None
         return True, PERSISTENCE_REVISION
 
