@@ -75,3 +75,80 @@ class LiveControlPlaneError(BaseModel):
     code: str
     message: str
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+class PersistenceStatusResponse(BaseModel):
+    configured: bool
+    reachable: bool
+    schema_ready: bool
+    migration_revision: str | None = None
+    read_only: bool = True
+    source_of_truth: bool = False
+    updated_at: str
+
+
+class ExecutionIntentReadResponse(BaseModel):
+    correlation_id: str
+    environment: str
+    symbol: str
+    intent_type: str
+    state: str
+    requested_quantity: str | None = None
+    requested_price: str | None = None
+    failure_code: str | None = None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+class ProtectivePairReadResponse(BaseModel):
+    pair_id: str
+    correlation_id: str
+    environment: str
+    symbol: str
+    position_side: str
+    direction: str
+    quantity: str
+    state: str
+    recovery_required: bool
+    blocking_reason: str | None = None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+class ExchangeOrderReadResponse(BaseModel):
+    leg_type: str
+    client_algo_id: str
+    exchange_algo_id: str | None = None
+    exchange_order_id: str | None = None
+    status: str
+    trigger_price: str | None = None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+class ProtectivePairOrdersResponse(BaseModel):
+    pair_id: str
+    orders: list[ExchangeOrderReadResponse] = Field(default_factory=list)
+
+
+class PersistenceEventReadResponse(BaseModel):
+    event_kind: str
+    correlation_id: str | None = None
+    event_type: str | None = None
+    action: str | None = None
+    from_state: str | None = None
+    to_state: str | None = None
+    reason_code: str | None = None
+    result: str
+    error_code: str | None = None
+    created_at: str
+
+
+class ProtectivePairEventsResponse(BaseModel):
+    pair_id: str
+    events: list[PersistenceEventReadResponse] = Field(default_factory=list)
+    limit: int
+    offset: int

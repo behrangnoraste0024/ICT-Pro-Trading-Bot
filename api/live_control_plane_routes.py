@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .live_control_plane_models import (
     LiveControlPlaneError,
@@ -9,12 +9,23 @@ from .live_control_plane_models import (
     LiveReadinessResponse,
     LiveRecoveryStatusResponse,
     LiveSafetyStatusResponse,
+    ExchangeOrderReadResponse,
+    ExecutionIntentReadResponse,
+    PersistenceStatusResponse,
+    ProtectivePairEventsResponse,
+    ProtectivePairOrdersResponse,
+    ProtectivePairReadResponse,
 )
 from .live_control_plane_service import LiveControlPlaneHTTPError, LiveControlPlaneService
+from .persistence_read_model_service import PersistenceReadModelHTTPError, PersistenceReadModelService
 
 
 def get_live_control_plane_service() -> LiveControlPlaneService:
     return LiveControlPlaneService()
+
+
+def get_persistence_read_model_service() -> PersistenceReadModelService:
+    return PersistenceReadModelService()
 
 
 router = APIRouter(prefix="/api/v1/live", tags=["live-control-plane"])
@@ -29,6 +40,19 @@ def _safe_call(callback):
         raise HTTPException(status_code=exc.status_code, detail=payload) from exc
     except Exception as exc:
         error = LiveControlPlaneError(code="LIVE_CONTROL_PLANE_UNAVAILABLE", message="Live control plane state is unavailable.")
+        payload = error.model_dump() if hasattr(error, "model_dump") else error.dict()
+        raise HTTPException(status_code=503, detail=payload) from exc
+
+
+def _safe_persistence_call(callback):
+    try:
+        return callback()
+    except PersistenceReadModelHTTPError as exc:
+        error = LiveControlPlaneError(code=exc.code, message=exc.message)
+        payload = error.model_dump() if hasattr(error, "model_dump") else error.dict()
+        raise HTTPException(status_code=exc.status_code, detail=payload) from exc
+    except Exception as exc:
+        error = LiveControlPlaneError(code="PERSISTENCE_UNAVAILABLE", message="Persistence read model is unavailable.")
         payload = error.model_dump() if hasattr(error, "model_dump") else error.dict()
         raise HTTPException(status_code=503, detail=payload) from exc
 
@@ -56,3 +80,33 @@ def protective_orders_current(service: LiveControlPlaneService = Depends(get_liv
 @router.get("/recovery/status", response_model=LiveRecoveryStatusResponse)
 def recovery_status(service: LiveControlPlaneService = Depends(get_live_control_plane_service)):
     return _safe_call(service.recovery_status)
+
+
+@router.get("/persistence/status", response_model=PersistenceStatusResponse)
+def persistence_status(service: PersistenceReadModelService = Depends(get_persistence_read_model_service)):
+    return _safe_persistence_call(service.status)
+
+
+@router.get("/execution-intents/{correlation_id}", response_model=ExecutionIntentReadResponse)
+def execution_intent(correlation_id: str, service: PersistenceReadModelService = Depends(get_persistence_read_model_service)):
+    return _safe_persistence_call(lambda: service.execution_intent(correlation_id))
+
+
+@router.get("/protective-pairs/{pair_id}", response_model=ProtectivePairReadResponse)
+def protective_pair(pair_id: str, service: PersistenceReadModelService = Depends(get_persistence_read_model_service)):
+    return _safe_persistence_call(lambda: service.protective_pair(pair_id))
+
+
+@router.get("/protective-pairs/{pair_id}/orders", response_model=ProtectivePairOrdersResponse)
+def protective_pair_orders(pair_id: str, service: PersistenceReadModelService = Depends(get_persistence_read_model_service)):
+    return _safe_persistence_call(lambda: service.protective_pair_orders(pair_id))
+
+
+@router.get("/protective-pairs/{pair_id}/events", response_model=ProtectivePairEventsResponse)
+def protective_pair_events(
+    pair_id: str,
+    limit: str = Query(default="50"),
+    offset: str = Query(default="0"),
+    service: PersistenceReadModelService = Depends(get_persistence_read_model_service),
+):
+    return _safe_persistence_call(lambda: service.protective_pair_events(pair_id, limit=limit, offset=offset))
