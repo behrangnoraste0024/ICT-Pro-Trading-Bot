@@ -3,3 +3,6 @@ pandas
 pytest
 fastapi
 httpx
+SQLAlchemy
+alembic
+psycopg[binary]
