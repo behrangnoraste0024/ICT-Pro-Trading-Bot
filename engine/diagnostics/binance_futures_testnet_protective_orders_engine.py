@@ -328,8 +328,8 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
                 self._attach_recovery_baseline_from_orders(journal, position, stop, take)
             if take is not None and take.algo_status == "NEW":
                 recovery_preview = self._recovery_preview_from_journal(journal, stop_client_algo_id, take_profit_client_algo_id)
-                self._delete_with_reconciliation(client, config, journal, recovery_preview, "TAKE_PROFIT", cancel_requests, query_requests, reconciliation_results)
-                final_take = None
+                take_delete_absent = self._delete_with_reconciliation(client, config, journal, recovery_preview, "TAKE_PROFIT", cancel_requests, query_requests, reconciliation_results)
+                final_take = None if take_delete_absent else reconciliation_results[-1].order
             else:
                 final_take, meta = self._query_or_absent(client, take_profit_client_algo_id, journal, "TAKE_PROFIT")
                 if meta is not None:
@@ -339,8 +339,8 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
                 self._check_unexpected_trigger(final_take)
             if stop is not None and stop.algo_status == "NEW":
                 recovery_preview = self._recovery_preview_from_journal(journal, stop_client_algo_id, take_profit_client_algo_id)
-                self._delete_with_reconciliation(client, config, journal, recovery_preview, "STOP", cancel_requests, query_requests, reconciliation_results)
-                final_stop = None
+                stop_delete_absent = self._delete_with_reconciliation(client, config, journal, recovery_preview, "STOP", cancel_requests, query_requests, reconciliation_results)
+                final_stop = None if stop_delete_absent else reconciliation_results[-1].order
             else:
                 final_stop, meta = self._query_or_absent(client, stop_client_algo_id, journal, "STOP")
                 if meta is not None:
@@ -831,35 +831,36 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             reconciliation_results.append(ack)
             lookup = self._reconcile_intent(client, intent, query_requests)
             lookup.interpreted_mutation_result = self._interpret_mutation(intent, lookup)
-            lookup.resolved = lookup.interpreted_mutation_result == "DELETE_CONFIRMED"
-            lookup.recovery_required = lookup.interpreted_mutation_result != "DELETE_CONFIRMED"
+            lookup.resolved = self._is_delete_confirmed(lookup.interpreted_mutation_result)
+            lookup.recovery_required = not lookup.resolved
             reconciliation_results.append(lookup)
             self._resolve_intent(config, journal, intent, lookup)
-            if lookup.interpreted_mutation_result != "DELETE_CONFIRMED":
+            if not lookup.resolved:
                 raise ProtectiveAbort("RECOVERY_REQUIRED", f"{label} delete reconciliation result: {lookup.interpreted_mutation_result}.", recovery=True)
-            return True
+            return lookup.reconciliation_state == ProtectiveReconciliationState.ABSENT.value
         except (TimeoutError, OSError, ConnectionResetError) as exc:
             self._mark_intent_ambiguous(config, journal, intent, self._sanitize(str(exc)))
             result = self._reconcile_intent(client, intent, query_requests)
             result.interpreted_mutation_result = self._interpret_mutation(intent, result)
-            result.resolved = result.reconciliation_state in (ProtectiveReconciliationState.PRESENT.value, ProtectiveReconciliationState.ABSENT.value)
-            result.recovery_required = result.interpreted_mutation_result != "DELETE_CONFIRMED"
+            result.resolved = self._is_delete_confirmed(result.interpreted_mutation_result)
+            result.recovery_required = not result.resolved
             reconciliation_results.append(result)
             self._resolve_intent(config, journal, intent, result)
-            if result.interpreted_mutation_result != "DELETE_CONFIRMED":
+            if not result.resolved:
                 raise ProtectiveAbort("RECOVERY_REQUIRED", f"{label} delete reconciliation result: {result.interpreted_mutation_result}.", recovery=True) from exc
-            return True
+            return result.reconciliation_state == ProtectiveReconciliationState.ABSENT.value
         except BinanceFuturesTestnetProtectiveAPIError as exc:
             if exc.http_status is not None and exc.http_status >= 500:
                 self._mark_intent_ambiguous(config, journal, intent, self._sanitize_api_error(exc))
                 result = self._reconcile_intent(client, intent, query_requests)
                 result.interpreted_mutation_result = self._interpret_mutation(intent, result)
-                result.recovery_required = result.interpreted_mutation_result != "DELETE_CONFIRMED"
+                result.resolved = self._is_delete_confirmed(result.interpreted_mutation_result)
+                result.recovery_required = not result.resolved
                 reconciliation_results.append(result)
                 self._resolve_intent(config, journal, intent, result)
-                if result.interpreted_mutation_result != "DELETE_CONFIRMED":
+                if not result.resolved:
                     raise ProtectiveAbort("RECOVERY_REQUIRED", f"{label} delete reconciliation result: {result.interpreted_mutation_result}.", recovery=True) from exc
-                return True
+                return result.reconciliation_state == ProtectiveReconciliationState.ABSENT.value
             raise
 
 
@@ -981,6 +982,10 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         except (TimeoutError, OSError, ConnectionResetError) as exc:
             return self._reconciliation_result(intent, ProtectiveReconciliationState.AMBIGUOUS.value, "RECOVERY_REQUIRED", False, True, self._sanitize(str(exc)), None)
 
+    @staticmethod
+    def _is_delete_confirmed(interpreted_mutation_result: str) -> bool:
+        return interpreted_mutation_result in ("DELETE_CONFIRMED", "DELETE_CONFIRMED_TERMINAL")
+
     def _interpret_mutation(self, intent: ProtectiveMutationIntent, result: ProtectiveReconciliationResult) -> str:
         if result.reconciliation_state == ProtectiveReconciliationState.IDENTITY_MISMATCH.value:
             return "RECOVERY_REQUIRED"
@@ -989,7 +994,13 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         if intent.mutation_kind == ProtectiveMutationKind.CREATE.value:
             return "CREATE_CONFIRMED" if result.reconciliation_state == ProtectiveReconciliationState.PRESENT.value else "CREATE_NOT_APPLIED"
         if intent.mutation_kind == ProtectiveMutationKind.DELETE.value:
-            return "DELETE_CONFIRMED" if result.reconciliation_state == ProtectiveReconciliationState.ABSENT.value else "DELETE_NOT_APPLIED"
+            if result.reconciliation_state == ProtectiveReconciliationState.ABSENT.value:
+                return "DELETE_CONFIRMED"
+            if result.reconciliation_state == ProtectiveReconciliationState.PRESENT.value and result.order is not None:
+                self._check_unexpected_trigger(result.order)
+                if str(result.order.algo_status or "").upper() in self.TERMINAL_SAFE_STATUSES:
+                    return "DELETE_CONFIRMED_TERMINAL"
+            return "DELETE_NOT_APPLIED"
         return "RECOVERY_REQUIRED"
 
     def _reconciliation_result(self, intent: ProtectiveMutationIntent, state: str, interpreted: str, resolved: bool, recovery_required: bool, reason: str, order: BinanceFuturesTestnetProtectiveAlgoSummary | None) -> ProtectiveReconciliationResult:
