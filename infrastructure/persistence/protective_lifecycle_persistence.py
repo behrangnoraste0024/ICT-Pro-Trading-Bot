@@ -67,6 +67,9 @@ class ProtectivePersistenceState:
 class ProtectiveConsistencyResult:
     status: str
     state: ProtectivePersistenceState | None = None
+    pair_state: str | None = None
+    pair_recovery_required: bool | None = None
+    correlation_id: UUID | None = None
 
 
 class ProtectiveLifecyclePersistence:
@@ -141,7 +144,9 @@ class ProtectiveLifecyclePersistence:
                     state = self._state(pair, stop_client_algo_id, take_profit_client_algo_id)
                     self._validate_persisted_ids(session, pair, stop_client_algo_id, take_profit_client_algo_id, None)
                     if pair.state == "COMPLETED" and not pair.recovery_required:
-                        return ProtectiveConsistencyResult("ALREADY_COMPLETED", state)
+                        return ProtectiveConsistencyResult(
+                            "ALREADY_COMPLETED", state, pair.state, pair.recovery_required, pair.correlation_id
+                        )
                     raise ProtectivePersistenceError("PERSISTENCE_REPLAY_BLOCKED")
                 if pair is None:
                     raise ProtectivePersistenceError("PERSISTENCE_JOURNAL_ONLY_UNRESOLVED")
@@ -155,8 +160,12 @@ class ProtectiveLifecyclePersistence:
                 self._validate_persisted_ids(session, pair, stop_client_algo_id, take_profit_client_algo_id, journal)
                 state = self._state(pair, stop_client_algo_id, take_profit_client_algo_id)
                 if journal.phase in {"COMPLETE", "RECOVERY_COMPLETE"} and pair.state == "COMPLETED" and not pair.recovery_required:
-                    return ProtectiveConsistencyResult("ALREADY_COMPLETED", state)
-                return ProtectiveConsistencyResult("RECOVERY", state)
+                    return ProtectiveConsistencyResult(
+                        "ALREADY_COMPLETED", state, pair.state, pair.recovery_required, pair.correlation_id
+                    )
+                return ProtectiveConsistencyResult(
+                    "RECOVERY", state, pair.state, pair.recovery_required, pair.correlation_id
+                )
         except ProtectivePersistenceError:
             raise
         except Exception as exc:
