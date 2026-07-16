@@ -15,6 +15,37 @@ from models.binance_futures_testnet_protective_orders import BinanceFuturesTestn
 from reporting.binance_futures_testnet_protective_orders_report import format_binance_futures_testnet_protective_orders_result
 
 
+class _LegacyProtectivePersistence:
+    """Release 2.84 tests isolate exchange/journal behavior from the 2.88 write layer."""
+
+    legacy_noop = True
+
+    def __init__(self, **kwargs) -> None:
+        pass
+
+    def ensure_available(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def check_consistency(self, *args, **kwargs):
+        from infrastructure.persistence.protective_lifecycle_persistence import ProtectiveConsistencyResult
+
+        return ProtectiveConsistencyResult("FRESH")
+
+    def prepare_lifecycle(self, *args, **kwargs):
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_legacy_protective_tests(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "engine.diagnostics.binance_futures_testnet_protective_orders_engine.ProtectiveLifecyclePersistence",
+        _LegacyProtectivePersistence,
+    )
+
+
 def _env() -> dict[str, str]:
     return {"BINANCE_FUTURES_TESTNET_API_KEY": "unit-test-key", "BINANCE_FUTURES_TESTNET_API_SECRET": "unit-test-secret"}
 

@@ -32,6 +32,35 @@ STOP_ID = "smcbot-protect-sl-terminal"
 TAKE_ID = "smcbot-protect-tp-terminal"
 
 
+class _LegacyProtectivePersistence:
+    legacy_noop = True
+
+    def __init__(self, **kwargs) -> None:
+        pass
+
+    def ensure_available(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def check_consistency(self, *args, **kwargs):
+        from infrastructure.persistence.protective_lifecycle_persistence import ProtectiveConsistencyResult
+
+        return ProtectiveConsistencyResult("FRESH")
+
+    def prepare_lifecycle(self, *args, **kwargs):
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_terminal_reconciliation_tests(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "engine.diagnostics.binance_futures_testnet_protective_orders_engine.ProtectiveLifecyclePersistence",
+        _LegacyProtectivePersistence,
+    )
+
+
 def _env() -> dict[str, str]:
     return {
         "BINANCE_FUTURES_TESTNET_API_KEY": "unit-test-key",
