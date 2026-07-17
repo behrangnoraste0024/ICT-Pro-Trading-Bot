@@ -93,13 +93,14 @@ def client():
     return TestClient(app)
 
 
-def test_all_live_control_plane_routes_are_get_only(client: TestClient) -> None:
+def test_existing_live_control_plane_routes_remain_get_only(client: TestClient) -> None:
     expected = {
         "/api/v1/live/safety/status",
         "/api/v1/live/readiness",
         "/api/v1/live/positions/{symbol}",
         "/api/v1/live/protective-orders/current",
         "/api/v1/live/recovery/status",
+        "/api/v1/live/recovery/run",
         "/api/v1/live/persistence/status",
         "/api/v1/live/execution-intents/{correlation_id}",
         "/api/v1/live/protective-pairs/{pair_id}",
@@ -108,7 +109,8 @@ def test_all_live_control_plane_routes_are_get_only(client: TestClient) -> None:
     }
     app_paths = {path: set(methods) for path, methods in client.get("/openapi.json").json()["paths"].items() if path.startswith("/api/v1/live")}
     assert set(app_paths) == expected
-    assert all(methods == {"get"} for methods in app_paths.values())
+    assert app_paths["/api/v1/live/recovery/run"] == {"post"}
+    assert all(methods == {"get"} for path, methods in app_paths.items() if path != "/api/v1/live/recovery/run")
     for path in ["/api/v1/live/safety/status", "/api/v1/live/readiness", "/api/v1/live/positions/BTCUSDT", "/api/v1/live/protective-orders/current", "/api/v1/live/recovery/status"]:
         for method in (client.post, client.put, client.patch, client.delete):
             assert method(path).status_code == 405
@@ -362,9 +364,10 @@ def test_recovery_status_reports_required_state_without_invoking_recovery(tmp_pa
     assert result["active_lock"] is True
 
 
-def test_api_does_not_register_mutation_routes(client: TestClient) -> None:
+def test_api_registers_only_supervised_recovery_mutation_route(client: TestClient) -> None:
     route_dump = json.dumps({path: sorted(methods) for path, methods in client.get("/openapi.json").json()["paths"].items() if path.startswith("/api/v1/live")})
-    assert "post" not in route_dump
+    assert route_dump.count('"post"') == 1
+    assert '"/api/v1/live/recovery/run": ["post"]' in route_dump
     assert "put" not in route_dump
     assert "patch" not in route_dump
     assert "delete" not in route_dump

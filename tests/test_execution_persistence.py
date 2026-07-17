@@ -426,9 +426,14 @@ def test_postgresql_dialect_schema_uses_jsonb_uuid_timestamptz_numeric_and_restr
     assert "JSONB" in str(module._metadata_json().compile(dialect=postgresql.dialect())).upper()
 
 
-def test_no_mutation_api_route_was_added_and_no_binance_transport_is_invoked() -> None:
+def test_only_supervised_recovery_mutation_api_route_exists_and_no_binance_transport_is_invoked() -> None:
     client = TestClient(create_app())
     paths = client.get("/openapi.json").json()["paths"]
     live_paths = {path: methods for path, methods in paths.items() if path.startswith("/api/v1/live")}
     assert live_paths
-    assert all(set(methods) == {"get"} for methods in live_paths.values())
+    assert set(live_paths["/api/v1/live/recovery/run"]) == {"post"}
+    assert all(
+        set(methods) == {"get"}
+        for path, methods in live_paths.items()
+        if path != "/api/v1/live/recovery/run"
+    )
