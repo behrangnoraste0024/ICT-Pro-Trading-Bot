@@ -25,6 +25,7 @@ from infrastructure.persistence.execution_orm import (
 )
 from infrastructure.persistence.protective_lifecycle_persistence import ProtectiveLifecyclePersistence
 from infrastructure.persistence.protective_lifecycle_persistence import ProtectivePersistenceError
+from infrastructure.persistence.kill_switch_persistence import KillSwitchPersistence
 from infrastructure.persistence.schema_contract import PERSISTENCE_REVISION
 from models.binance_futures_testnet_protective_orders import (
     BinanceFuturesTestnetProtectiveJournal,
@@ -48,7 +49,13 @@ def _database(tmp_path: Path) -> tuple[str, object]:
     version.create(engine)
     with engine.begin() as connection:
         connection.execute(version.insert().values(version_num=PERSISTENCE_REVISION))
-    return f"sqlite:///{path}", engine
+    database_url = f"sqlite:///{path}"
+    kill_switch = KillSwitchPersistence(env={"ICT_DATABASE_URL": database_url})
+    kill_switch.ensure_available()
+    kill_switch.engage()
+    kill_switch.release(expected_version=1)
+    kill_switch.close()
+    return database_url, engine
 
 
 def _env(database_url: str | None) -> dict[str, str]:
@@ -186,7 +193,7 @@ def test_persistence_unavailable_blocks_before_transport_journal_and_lock(tmp_pa
 
     result, _ = _run(tmp_path, None, no_transport)
 
-    assert result.decision == "PERSISTENCE_UNAVAILABLE"
+    assert result.decision == "KILL_SWITCH_STATE_UNAVAILABLE"
     assert not (tmp_path / "data" / "runtime" / "binance_futures_testnet_protective_orders" / "protective.json").exists()
     assert not (tmp_path / "data" / "runtime" / "binance_futures_testnet_protective_orders" / "protective.lock").exists()
 
@@ -313,12 +320,13 @@ def test_schema_revision_mismatch_blocks_without_authenticated_transport(tmp_pat
 
     result, _ = _run(tmp_path, database_url, transport)
 
-    assert result.decision == "PERSISTENCE_SCHEMA_INVALID"
+    assert result.decision == "KILL_SWITCH_STATE_UNAVAILABLE"
     assert calls == []
 
 
 def test_initial_commit_failure_rolls_back_and_prevents_mutation_journal_and_retained_lock(tmp_path: Path) -> None:
     database_url, database_engine = _database(tmp_path)
+    before = _db_snapshot(database_engine)
 
     def failing_session_factory(**kwargs):
         session = Session(**kwargs)
@@ -348,10 +356,7 @@ def test_initial_commit_failure_rolls_back_and_prevents_mutation_journal_and_ret
     runtime = tmp_path / "data" / "runtime" / "binance_futures_testnet_protective_orders"
     assert not (runtime / "protective.json").exists()
     assert not (runtime / "protective.lock").exists()
-    with Session(database_engine) as session:
-        assert session.scalar(select(ExecutionIntentORM)) is None
-        assert session.scalar(select(ProtectivePairORM)) is None
-        assert session.scalar(select(AuditEventORM)) is None
+    assert _db_snapshot(database_engine) == before
 
 
 def test_no_database_transaction_is_open_during_exchange_transport(tmp_path: Path) -> None:
@@ -759,6 +764,99 @@ def test_each_cancel_commit_immediately_precedes_journal_and_delete(tmp_path: Pa
         "JOURNAL:STOP",
         "DELETE:STOP",
     ]
+
+
+def test_durable_kill_switch_engaged_immediately_before_protective_delete_blocks_transport(tmp_path: Path) -> None:
+    database_url, database_engine = _database(tmp_path)
+    env = _env(database_url)
+
+    class EngageBeforeDeleteTransport(LifecycleTransport):
+        def __init__(self) -> None:
+            super().__init__()
+            self.position_risk_reads = 0
+
+        def __call__(self, method, url, body, timeout, headers):
+            if "positionRisk" in url:
+                self.position_risk_reads += 1
+                if self.position_risk_reads == 2:
+                    persistence = KillSwitchPersistence(env=env)
+                    try:
+                        persistence.ensure_available()
+                        state, changed = persistence.engage()
+                        assert changed is True
+                        assert state.state == "ENGAGED"
+                    finally:
+                        persistence.close()
+            return super().__call__(method, url, body, timeout, headers)
+
+    transport = EngageBeforeDeleteTransport()
+    lifecycle_engine = BinanceFuturesTestnetProtectiveOrdersEngine(
+        repo_root=tmp_path,
+        env=env,
+        http_get=_http_get,
+        authenticated_request=transport,
+        now_ms_provider=lambda: 1000,
+        persistence_factory=ProtectiveLifecyclePersistence,
+    )
+    result = lifecycle_engine.run_protective_lifecycle(
+        PAIR_ID,
+        STOP_ID,
+        TP_ID,
+        confirmation=CONFIRMATION,
+        config_path=str(_config(tmp_path)),
+    )
+
+    methods = [method for method, _ in transport.calls]
+    assert result.status == "FAIL"
+    assert result.decision == "KILL_SWITCH_ENGAGED"
+    assert methods.count("POST") == 2
+    assert methods.count("DELETE") == 0
+    assert transport.deleted == set()
+    assert not (tmp_path / "data/runtime/binance_futures_testnet_protective_orders/protective.lock").exists()
+
+    journal_path = tmp_path / "data/runtime/binance_futures_testnet_protective_orders/protective.json"
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert journal["phase"] == "RECOVERY_REQUIRED"
+    assert journal["recovery_required"] is True
+    unresolved_deletes = [
+        intent for intent in journal["mutation_intents"]
+        if intent["mutation_kind"] == "DELETE" and not intent["resolved"]
+    ]
+    assert [(intent["label"], intent["client_algo_id"]) for intent in unresolved_deletes] == [("TAKE_PROFIT", TP_ID)]
+
+    with Session(database_engine) as session:
+        pair = session.scalar(select(ProtectivePairORM))
+        identities = list(session.scalars(select(ExchangeOrderIdentityORM).order_by(ExchangeOrderIdentityORM.leg_type)).all())
+        cancel_intents = list(session.scalars(
+            select(ExecutionIntentORM).where(ExecutionIntentORM.intent_type == "PROTECTIVE_PAIR_CANCEL")
+        ).all())
+        recovery_events = list(session.scalars(select(RecoveryEventORM)).all())
+    assert pair is not None
+    assert pair.state == "RECOVERY_REQUIRED"
+    assert pair.recovery_required is True
+    assert len(cancel_intents) == 1
+    assert cancel_intents[0].state == "RECOVERY_REQUIRED"
+    assert len(recovery_events) == 1
+    assert recovery_events[0].reason_code == "KILL_SWITCH_ENGAGED"
+    assert [(identity.leg_type, identity.client_algo_id, identity.status) for identity in identities] == [
+        ("STOP", STOP_ID, "NEW"),
+        ("TAKE_PROFIT", TP_ID, "NEW"),
+    ]
+
+    config = lifecycle_engine.load_config(str(_config(tmp_path)))
+    loaded_journal = lifecycle_engine._load_existing_journal_strict(config, PAIR_ID, STOP_ID, TP_ID)
+    assert loaded_journal is not None
+    verifier = ProtectiveLifecyclePersistence(env=env)
+    try:
+        verifier.ensure_available()
+        consistency = verifier.check_consistency(loaded_journal, PAIR_ID, STOP_ID, TP_ID)
+    finally:
+        verifier.close()
+    assert consistency.status == "RECOVERY"
+    assert consistency.pair_state == "RECOVERY_REQUIRED"
+    assert consistency.pair_recovery_required is True
+    serialized = json.dumps(result.to_dict()).casefold()
+    assert all(marker not in serialized for marker in ("unit-test-key", "unit-test-secret", "sqlite://", "postgresql://", "traceback"))
 
 
 def test_create_intent_commit_precedes_every_post(tmp_path: Path) -> None:

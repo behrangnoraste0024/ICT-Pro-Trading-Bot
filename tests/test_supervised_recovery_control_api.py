@@ -31,6 +31,8 @@ from infrastructure.persistence.protective_lifecycle_persistence import (
     ProtectivePersistenceError,
     ProtectivePersistenceState,
 )
+from infrastructure.persistence.kill_switch_persistence import KillSwitchPersistence
+from infrastructure.persistence.kill_switch_gate import KillSwitchGateError
 from infrastructure.persistence.execution_orm import (
     AuditEventORM,
     ExchangeOrderIdentityORM,
@@ -165,24 +167,26 @@ class FakePersistence:
         self.closed = True
 
 
-def _service(tmp_path: Path, *, journal=None, persistence=None, runner=None, credentials=False):
+def _service(tmp_path: Path, *, journal=None, persistence=None, runner=None, credentials=False, kill_switch_gate=None):
     journal = journal or _journal()
     runtime = tmp_path / "data/runtime/binance_futures_testnet_protective_orders"
-    runtime.mkdir(parents=True)
+    runtime.mkdir(parents=True, exist_ok=True)
     (runtime / "protective.json").write_text(json.dumps(journal.to_dict()), encoding="utf-8")
     configs = tmp_path / "configs"
-    configs.mkdir()
+    configs.mkdir(exist_ok=True)
     (configs / "btc_paper_runtime.json").write_text(json.dumps({"kill_switch_enabled": True}), encoding="utf-8")
     persistence = persistence or FakePersistence()
     env = {}
     if credentials:
         env.update(BINANCE_FUTURES_TESTNET_API_KEY="key", BINANCE_FUTURES_TESTNET_API_SECRET="secret")
+    gate = kill_switch_gate or type("EngagedGate", (), {"require_engaged": lambda self: None})()
     service = SupervisedRecoveryService(
         repo_root=tmp_path,
         env=env,
         protective_engine=FakeEngine(tmp_path, journal),
         persistence_factory=lambda **kwargs: persistence,
         recovery_runner=runner,
+        kill_switch_gate=gate,
     )
     return service, persistence, runtime
 
@@ -237,11 +241,16 @@ def test_recovery_validation_errors_never_echo_hostile_input(changes, marker) ->
     assert marker.lower() not in response.text.lower()
 
 
-def test_only_recovery_run_is_post_and_all_other_live_routes_remain_get() -> None:
+def test_only_approved_control_routes_are_post_and_all_other_live_routes_remain_get() -> None:
     paths = create_app().openapi()["paths"]
     live = {path: set(methods) for path, methods in paths.items() if path.startswith("/api/v1/live")}
-    assert live["/api/v1/live/recovery/run"] == {"post"}
-    assert all(methods == {"get"} for path, methods in live.items() if path != "/api/v1/live/recovery/run")
+    mutation_paths = {
+        "/api/v1/live/recovery/run",
+        "/api/v1/live/kill-switch/engage",
+        "/api/v1/live/kill-switch/release",
+    }
+    assert all(live[path] == {"post"} for path in mutation_paths)
+    assert all(methods == {"get"} for path, methods in live.items() if path not in mutation_paths)
 
 
 def test_dry_run_is_immutable_network_free_and_does_not_require_credentials(tmp_path: Path) -> None:
@@ -363,7 +372,11 @@ def test_lock_and_kill_switch_block_before_persistence_or_runner(tmp_path: Path)
     assert persistence.calls == []
 
     (runtime / "protective.lock").unlink()
-    (tmp_path / "configs/btc_paper_runtime.json").write_text(json.dumps({"kill_switch_enabled": False}), encoding="utf-8")
+    blocked_gate = type(
+        "BlockedGate",
+        (), {"require_engaged": lambda self: (_ for _ in ()).throw(KillSwitchGateError("KILL_SWITCH_NOT_ENGAGED"))},
+    )()
+    service, persistence, _ = _service(tmp_path, persistence=persistence, kill_switch_gate=blocked_gate)
     with pytest.raises(Exception) as killed:
         service.run(SupervisedRecoveryRequest(**_request()))
     assert getattr(killed.value, "code", None) == "KILL_SWITCH_NOT_ENGAGED"
@@ -432,6 +445,10 @@ def _real_database(tmp_path: Path) -> tuple[str, object]:
     version.create(engine)
     with engine.begin() as connection:
         connection.execute(version.insert().values(version_num=PERSISTENCE_REVISION))
+    gate = KillSwitchPersistence(env={"ICT_DATABASE_URL": database_url})
+    gate.ensure_available()
+    gate.engage()
+    gate.close()
     return database_url, engine
 
 
@@ -612,6 +629,11 @@ def _projection_gap_service(tmp_path: Path, failure_kind: str):
     config_path.write_text(json.dumps(config.to_dict()), encoding="utf-8")
     (config_path.parent / "btc_paper_runtime.json").write_text(json.dumps({"kill_switch_enabled": True}), encoding="utf-8")
 
+    setup_gate = KillSwitchPersistence(env={"ICT_DATABASE_URL": database_url})
+    setup_gate.ensure_available()
+    setup_gate.release(1)
+    setup_gate.close()
+
     class GapPersistence(ProtectiveLifecyclePersistence):
         def confirm_create(self, state, label, order):
             if failure_kind == "CREATE" and label == "STOP":
@@ -639,6 +661,10 @@ def _projection_gap_service(tmp_path: Path, failure_kind: str):
         config_path=str(config_path),
     )
     assert initial.decision == "RECOVERY_REQUIRED"
+    recovery_gate = KillSwitchPersistence(env={"ICT_DATABASE_URL": database_url})
+    recovery_gate.ensure_available()
+    recovery_gate.engage()
+    recovery_gate.close()
     present = {STOP_ID} if failure_kind == "CREATE" else {STOP_ID}
     recovery_transport = ReconcileOnlyTransport(present)
     protective_engine = BinanceFuturesTestnetProtectiveOrdersEngine(

@@ -93,7 +93,7 @@ def client():
     return TestClient(app)
 
 
-def test_existing_live_control_plane_routes_remain_get_only(client: TestClient) -> None:
+def test_live_control_plane_routes_allow_only_recovery_and_kill_switch_mutations(client: TestClient) -> None:
     expected = {
         "/api/v1/live/safety/status",
         "/api/v1/live/readiness",
@@ -101,6 +101,8 @@ def test_existing_live_control_plane_routes_remain_get_only(client: TestClient) 
         "/api/v1/live/protective-orders/current",
         "/api/v1/live/recovery/status",
         "/api/v1/live/recovery/run",
+        "/api/v1/live/kill-switch/engage",
+        "/api/v1/live/kill-switch/release",
         "/api/v1/live/persistence/status",
         "/api/v1/live/execution-intents/{correlation_id}",
         "/api/v1/live/protective-pairs/{pair_id}",
@@ -109,8 +111,13 @@ def test_existing_live_control_plane_routes_remain_get_only(client: TestClient) 
     }
     app_paths = {path: set(methods) for path, methods in client.get("/openapi.json").json()["paths"].items() if path.startswith("/api/v1/live")}
     assert set(app_paths) == expected
-    assert app_paths["/api/v1/live/recovery/run"] == {"post"}
-    assert all(methods == {"get"} for path, methods in app_paths.items() if path != "/api/v1/live/recovery/run")
+    mutation_paths = {
+        "/api/v1/live/recovery/run",
+        "/api/v1/live/kill-switch/engage",
+        "/api/v1/live/kill-switch/release",
+    }
+    assert all(app_paths[path] == {"post"} for path in mutation_paths)
+    assert all(methods == {"get"} for path, methods in app_paths.items() if path not in mutation_paths)
     for path in ["/api/v1/live/safety/status", "/api/v1/live/readiness", "/api/v1/live/positions/BTCUSDT", "/api/v1/live/protective-orders/current", "/api/v1/live/recovery/status"]:
         for method in (client.post, client.put, client.patch, client.delete):
             assert method(path).status_code == 405
@@ -364,9 +371,11 @@ def test_recovery_status_reports_required_state_without_invoking_recovery(tmp_pa
     assert result["active_lock"] is True
 
 
-def test_api_registers_only_supervised_recovery_mutation_route(client: TestClient) -> None:
+def test_api_registers_only_approved_control_mutation_routes(client: TestClient) -> None:
     route_dump = json.dumps({path: sorted(methods) for path, methods in client.get("/openapi.json").json()["paths"].items() if path.startswith("/api/v1/live")})
-    assert route_dump.count('"post"') == 1
+    assert route_dump.count('"post"') == 3
+    assert '"/api/v1/live/kill-switch/engage": ["post"]' in route_dump
+    assert '"/api/v1/live/kill-switch/release": ["post"]' in route_dump
     assert '"/api/v1/live/recovery/run": ["post"]' in route_dump
     assert "put" not in route_dump
     assert "patch" not in route_dump

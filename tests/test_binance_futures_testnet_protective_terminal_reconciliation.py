@@ -26,6 +26,7 @@ from models.binance_futures_testnet_protective_orders import (
     ProtectiveReconciliationResult,
     ProtectiveReconciliationState,
 )
+from tests.kill_switch_test_support import durable_state_env
 
 
 STOP_ID = "smcbot-protect-sl-terminal"
@@ -62,10 +63,7 @@ def _isolate_terminal_reconciliation_tests(monkeypatch) -> None:
 
 
 def _env() -> dict[str, str]:
-    return {
-        "BINANCE_FUTURES_TESTNET_API_KEY": "unit-test-key",
-        "BINANCE_FUTURES_TESTNET_API_SECRET": "unit-test-secret",
-    }
+    return durable_state_env()
 
 
 def _write_config(tmp_path: Path) -> Path:

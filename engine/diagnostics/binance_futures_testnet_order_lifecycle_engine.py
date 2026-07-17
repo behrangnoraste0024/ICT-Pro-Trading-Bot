@@ -20,6 +20,7 @@ from infrastructure.exchanges.binance_futures_testnet_order_lifecycle_client imp
     BinanceFuturesTestnetLifecycleOperationBlocked,
     BinanceFuturesTestnetOrderLifecycleClient,
 )
+from infrastructure.persistence.kill_switch_gate import DurableKillSwitchGate, KillSwitchGateError
 from models.binance_futures_testnet_order_lifecycle import (
     BinanceFuturesTestnetBookTicker,
     BinanceFuturesTestnetLifecycleCredentialMetadata,
@@ -56,6 +57,7 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         env: dict[str, str] | None = None,
         now_ms_provider=None,
         now_provider=None,
+        kill_switch_gate=None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.runtime_config_engine = runtime_config_engine or BTCPaperRuntimeConfigEngine(repo_root=self.repo_root)
@@ -72,6 +74,13 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         self.env = {} if env is None else env
         self.now_ms_provider = now_ms_provider
         self.now_provider = now_provider
+        self.kill_switch_gate = kill_switch_gate or DurableKillSwitchGate(env=self.env)
+
+    def _require_mutation_permission(self) -> None:
+        try:
+            self.kill_switch_gate.require_released()
+        except KillSwitchGateError as exc:
+            raise LifecycleAbort(LifecycleDecision.OPERATION_BLOCKED.value, "Durable kill switch blocks exchange mutation.") from exc
 
     def validate(self, config_path: str = "configs/binance_futures_testnet_order_lifecycle.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetLifecycleValidationReport:
         issues: list[BinanceFuturesTestnetLifecycleIssue] = []
@@ -146,6 +155,11 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         if not metadata.credentials_complete:
             decision = LifecycleDecision.CREDENTIALS_INCOMPLETE.value if metadata.api_key_present or metadata.api_secret_present else LifecycleDecision.CREDENTIALS_NOT_CONFIGURED.value
             return self._result(config, LifecycleAction.RUN_LIFECYCLE.value, "WARNING", decision, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, lifecycle_id=lifecycle_id, client_order_id=client_order_id, credentials_inspected=True)
+        try:
+            self._require_mutation_permission()
+        except LifecycleAbort as exc:
+            issues.append(self._issue(exc.decision.lower(), "FAIL", exc.reason))
+            return self._result(config, LifecycleAction.RUN_LIFECYCLE.value, "FAIL", exc.decision, exc.reason, credential_metadata=metadata, issues=issues, lifecycle_id=lifecycle_id, client_order_id=client_order_id, credentials_inspected=True)
         lock_path = self._resolve(config.lifecycle_lock_path)
         lock_token = self._lock_token("run_lifecycle", lifecycle_id, client_order_id)
         lock_acquired = self._acquire_owned_lock(lock_path, lock_token)
@@ -178,6 +192,7 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             preview.zero_position_precheck_valid = True
             self._write_journal(config, journal, LifecyclePhase.CREATE_REQUEST_STARTED.value, {"client_order_id": client_order_id})
             create_started = True
+            self._require_mutation_permission()
             created, create_meta = client.create_order(preview)
             self._check_unexpected_fill(created)
             self._write_journal(config, journal, LifecyclePhase.ORDER_CREATED.value, created.to_dict())
@@ -187,6 +202,7 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             if queried.status == "NEW":
                 self._write_journal(config, journal, LifecyclePhase.CANCEL_REQUEST_STARTED.value, {"client_order_id": client_order_id})
                 cancel_started = True
+                self._require_mutation_permission()
                 cancelled, cancel_meta = client.cancel_order_exact(client_order_id)
                 self._write_journal(config, journal, LifecyclePhase.ORDER_CANCELLED.value, cancelled.to_dict())
             elif queried.status not in ("EXPIRED", "REJECTED"):
@@ -252,7 +268,13 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         metadata = client.inspect_credentials()
         if not metadata.credentials_complete:
             return self._result(config, LifecycleAction.RECOVERY_CANCEL.value, "WARNING", LifecycleDecision.CREDENTIALS_NOT_CONFIGURED.value, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, client_order_id=client_order_id, credentials_inspected=True)
+        try:
+            self._require_mutation_permission()
+        except LifecycleAbort as exc:
+            issues.append(self._issue(exc.decision.lower(), "FAIL", exc.reason))
+            return self._result(config, LifecycleAction.RECOVERY_CANCEL.value, "FAIL", exc.decision, exc.reason, credential_metadata=metadata, issues=issues, client_order_id=client_order_id, credentials_inspected=True)
         self._server_time_or_issue(client, config, issues)
+        self._require_mutation_permission()
         order, meta = client.cancel_order_exact(client_order_id)
         return self._result(config, LifecycleAction.RECOVERY_CANCEL.value, "PASS", LifecycleDecision.ORDER_CANCEL_SUCCESS.value, "Exact lifecycle order recovery cancellation succeeded.", credential_metadata=metadata, cancel_order=order, cancel_request=meta, issues=issues, client_order_id=client_order_id, phase=LifecyclePhase.RECOVERY_CANCEL_COMPLETE.value, credentials_inspected=True, public_server_time_request_used=True, authenticated_transport_invoked=True, cancel_request_transmitted=True, signature_generated=True, order_cancelled=True)
 
@@ -268,6 +290,11 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         metadata = client.inspect_credentials()
         if not metadata.credentials_complete:
             return self._result(config, LifecycleAction.RECOVER_LIFECYCLE.value, "WARNING", LifecycleDecision.CREDENTIALS_NOT_CONFIGURED.value, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, client_order_id=client_order_id, credentials_inspected=True)
+        try:
+            self._require_mutation_permission()
+        except LifecycleAbort as exc:
+            issues.append(self._issue(exc.decision.lower(), "FAIL", exc.reason))
+            return self._result(config, LifecycleAction.RECOVER_LIFECYCLE.value, "FAIL", exc.decision, exc.reason, credential_metadata=metadata, issues=issues, client_order_id=client_order_id, credentials_inspected=True)
         lock_path = self._resolve(config.lifecycle_lock_path)
         lock_token = self._lock_token("recover_lifecycle", "", client_order_id)
         lock_acquired = self._acquire_owned_lock(lock_path, lock_token)
@@ -283,6 +310,7 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             queried, query_meta = client.query_order(client_order_id)
             self._check_unexpected_fill(queried)
             if queried.status == "NEW":
+                self._require_mutation_permission()
                 cancelled, cancel_meta = client.cancel_order_exact(client_order_id)
                 self._check_unexpected_fill(cancelled)
             elif queried.status not in ("CANCELED", "EXPIRED", "REJECTED"):

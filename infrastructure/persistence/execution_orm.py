@@ -68,6 +68,24 @@ class ExecutionPersistenceBase(DeclarativeBase):
     pass
 
 
+class KillSwitchStateORM(ExecutionPersistenceBase):
+    __tablename__ = "kill_switch_states"
+
+    id: Mapped[Any] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(96), nullable=False, unique=True)
+    environment: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(AwareDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(AwareDateTime, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __table_args__ = (
+        Index("ix_kill_switch_states_scope", "scope"),
+        Index("ix_kill_switch_states_updated_at", "updated_at"),
+    )
+
+
 class ExecutionIntentORM(ExecutionPersistenceBase):
     __tablename__ = "execution_intents"
 

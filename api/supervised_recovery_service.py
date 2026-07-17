@@ -15,6 +15,7 @@ from infrastructure.persistence.protective_lifecycle_persistence import (
     ProtectiveLifecyclePersistence,
     ProtectivePersistenceError,
 )
+from infrastructure.persistence.kill_switch_gate import DurableKillSwitchGate, KillSwitchGateError
 from models.binance_futures_testnet_protective_orders import BinanceFuturesTestnetProtectiveJournal
 
 from .supervised_recovery_models import CONFIRMATION, ENVIRONMENT, SYMBOL, SupervisedRecoveryRequest
@@ -45,6 +46,7 @@ class SupervisedRecoveryService:
         protective_engine: BinanceFuturesTestnetProtectiveOrdersEngine | None = None,
         persistence_factory: Callable[..., ProtectiveLifecyclePersistence] = ProtectiveLifecyclePersistence,
         recovery_runner: Callable[..., Any] | None = None,
+        kill_switch_gate: DurableKillSwitchGate | None = None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.env = os.environ if env is None else env
@@ -53,6 +55,7 @@ class SupervisedRecoveryService:
         )
         self.persistence_factory = persistence_factory
         self.recovery_runner = recovery_runner or self.protective_engine.recover_protective_pair
+        self.kill_switch_gate = kill_switch_gate or DurableKillSwitchGate(env=self.env)
 
     def run(self, request: SupervisedRecoveryRequest) -> dict[str, Any]:
         eligibility = self._preflight(request)
@@ -160,9 +163,9 @@ class SupervisedRecoveryService:
 
     def _kill_switch_engaged(self) -> bool:
         try:
-            payload = json.loads((self.repo_root / "configs" / "btc_paper_runtime.json").read_text(encoding="utf-8"))
-            return isinstance(payload, dict) and payload.get("kill_switch_enabled") is True
-        except (OSError, json.JSONDecodeError):
+            self.kill_switch_gate.require_engaged()
+            return True
+        except KillSwitchGateError:
             return False
 
     def _require_credentials(self) -> None:
