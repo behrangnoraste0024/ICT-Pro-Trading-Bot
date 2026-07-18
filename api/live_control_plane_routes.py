@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from .kill_switch_control_models import (
+    KillSwitchControlResponse,
+    KillSwitchEngageRequest,
+    KillSwitchReleaseRequest,
+)
+from .kill_switch_control_service import KillSwitchControlService, KillSwitchHTTPError
 from .live_control_plane_models import (
     LiveControlPlaneError,
     LivePositionResponse,
@@ -32,6 +38,10 @@ def get_persistence_read_model_service() -> PersistenceReadModelService:
 
 def get_supervised_recovery_service() -> SupervisedRecoveryService:
     return SupervisedRecoveryService()
+
+
+def get_kill_switch_control_service() -> KillSwitchControlService:
+    return KillSwitchControlService()
 
 
 router = APIRouter(prefix="/api/v1/live", tags=["live-control-plane"])
@@ -76,6 +86,19 @@ def _safe_recovery_call(callback):
         raise HTTPException(status_code=503, detail=payload) from exc
 
 
+def _safe_kill_switch_call(callback):
+    try:
+        return callback()
+    except KillSwitchHTTPError as exc:
+        error = LiveControlPlaneError(code=exc.code, message=exc.message)
+        payload = error.model_dump() if hasattr(error, "model_dump") else error.dict()
+        raise HTTPException(status_code=exc.status_code, detail=payload) from exc
+    except Exception as exc:
+        error = LiveControlPlaneError(code="KILL_SWITCH_UNAVAILABLE", message="Kill switch control is unavailable.")
+        payload = error.model_dump() if hasattr(error, "model_dump") else error.dict()
+        raise HTTPException(status_code=503, detail=payload) from exc
+
+
 @router.get("/safety/status", response_model=LiveSafetyStatusResponse)
 def safety_status(service: LiveControlPlaneService = Depends(get_live_control_plane_service)):
     return _safe_call(service.safety_status)
@@ -107,6 +130,22 @@ def run_recovery(
     service: SupervisedRecoveryService = Depends(get_supervised_recovery_service),
 ):
     return _safe_recovery_call(lambda: service.run(request))
+
+
+@router.post("/kill-switch/engage", response_model=KillSwitchControlResponse)
+def engage_kill_switch(
+    request: KillSwitchEngageRequest,
+    service: KillSwitchControlService = Depends(get_kill_switch_control_service),
+):
+    return _safe_kill_switch_call(service.engage)
+
+
+@router.post("/kill-switch/release", response_model=KillSwitchControlResponse)
+def release_kill_switch(
+    request: KillSwitchReleaseRequest,
+    service: KillSwitchControlService = Depends(get_kill_switch_control_service),
+):
+    return _safe_kill_switch_call(service.release)
 
 
 @router.get("/persistence/status", response_model=PersistenceStatusResponse)

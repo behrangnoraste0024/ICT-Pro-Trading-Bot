@@ -14,6 +14,7 @@ from infrastructure.persistence.execution_orm import (
     AuditEventORM,
     ExchangeOrderIdentityORM,
     ExecutionIntentORM,
+    KillSwitchStateORM,
     ProtectivePairORM,
     RecoveryEventORM,
 )
@@ -34,6 +35,7 @@ from models.execution_persistence import (
     validate_leg_type,
     validate_state,
 )
+from models.kill_switch_state import KILL_SWITCH_STATES, KillSwitchState
 
 FORBIDDEN_METADATA_KEYS = {
     "apikey",
@@ -169,6 +171,17 @@ class AuditEventRepository(ABC):
     def list_by_correlation_id(self, correlation_id: UUID, limit: int, offset: int = 0) -> list[AuditEvent]: ...
 
 
+class KillSwitchStateRepository(ABC):
+    @abstractmethod
+    def create(self, state: KillSwitchState) -> KillSwitchState: ...
+
+    @abstractmethod
+    def get_by_scope(self, scope: str) -> KillSwitchState | None: ...
+
+    @abstractmethod
+    def update_state(self, state_id: UUID, expected_version: int, state: str) -> KillSwitchState: ...
+
+
 def _validate_pagination(limit: int, offset: int) -> None:
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
         raise PersistenceValidationError("limit must be between 1 and 100")
@@ -194,6 +207,19 @@ def _recovery_event_from_orm(row: RecoveryEventORM) -> RecoveryEvent:
 
 def _audit_event_from_orm(row: AuditEventORM) -> AuditEvent:
     return AuditEvent(id=row.id, correlation_id=row.correlation_id, category=row.category, action=row.action, environment=row.environment, symbol=row.symbol, result=row.result, error_code=row.error_code, metadata_json=deepcopy(row.metadata_json), created_at=_utc(row.created_at))
+
+
+def _kill_switch_state_from_orm(row: KillSwitchStateORM) -> KillSwitchState:
+    return KillSwitchState(
+        id=row.id,
+        scope=row.scope,
+        environment=row.environment,
+        symbol=row.symbol,
+        state=row.state,
+        created_at=_utc(row.created_at),
+        updated_at=_utc(row.updated_at),
+        version=row.version,
+    )
 
 
 class SqlAlchemyExecutionIntentRepository(ExecutionIntentRepository):
@@ -230,6 +256,44 @@ class SqlAlchemyExecutionIntentRepository(ExecutionIntentRepository):
         if row is None:
             raise OptimisticLockError("execution intent refresh conflict")
         return _execution_intent_from_orm(row)
+
+
+class SqlAlchemyKillSwitchStateRepository(KillSwitchStateRepository):
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create(self, state: KillSwitchState) -> KillSwitchState:
+        if state.state not in KILL_SWITCH_STATES:
+            raise PersistenceValidationError("unsupported kill switch state")
+        row = KillSwitchStateORM(**state.__dict__)
+        self.session.add(row)
+        _safe_flush(self.session)
+        return _kill_switch_state_from_orm(row)
+
+    def get_by_scope(self, scope: str) -> KillSwitchState | None:
+        row = self.session.scalar(select(KillSwitchStateORM).where(KillSwitchStateORM.scope == scope))
+        return None if row is None else _kill_switch_state_from_orm(row)
+
+    def update_state(self, state_id: UUID, expected_version: int, state: str) -> KillSwitchState:
+        if state not in KILL_SWITCH_STATES:
+            raise PersistenceValidationError("unsupported kill switch state")
+        result = self.session.execute(
+            update(KillSwitchStateORM)
+            .where(KillSwitchStateORM.id == state_id, KillSwitchStateORM.version == expected_version)
+            .values(state=state, updated_at=utc_now(), version=KillSwitchStateORM.version + 1)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise OptimisticLockError("kill switch state version conflict")
+        self.session.expire_all()
+        row = self.session.scalar(
+            select(KillSwitchStateORM)
+            .where(KillSwitchStateORM.id == state_id)
+            .execution_options(populate_existing=True)
+        )
+        if row is None:
+            raise OptimisticLockError("kill switch state refresh conflict")
+        return _kill_switch_state_from_orm(row)
 
 
 class SqlAlchemyProtectivePairRepository(ProtectivePairRepository):

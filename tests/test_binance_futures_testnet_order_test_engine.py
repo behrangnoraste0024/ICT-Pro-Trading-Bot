@@ -10,6 +10,7 @@ from decimal import Decimal
 from engine.diagnostics.binance_futures_testnet_order_test_engine import BinanceFuturesTestnetOrderTestEngine
 from infrastructure.exchanges.binance_futures_testnet_order_test_client import BinanceOrderTestHTTPResponse
 from models.binance_futures_testnet_order_test import BinanceFuturesTestnetOrderTestConfig
+from tests.kill_switch_test_support import durable_state_env
 
 
 @dataclass
@@ -66,8 +67,8 @@ def _write_config(tmp_path: Path, **overrides) -> Path:
     return path
 
 
-def _env() -> dict[str, str]:
-    return {"BINANCE_FUTURES_TESTNET_API_KEY": "unit-test-key-token", "BINANCE_FUTURES_TESTNET_API_SECRET": "unit-test-private-token"}
+def _env(state: str = "RELEASED") -> dict[str, str]:
+    return durable_state_env(state)
 
 
 def _http_get(url, timeout):
@@ -206,6 +207,33 @@ def test_submit_with_missing_credentials_warns_without_network(tmp_path: Path) -
     assert result.credentials_inspected is True
     assert result.public_server_time_request_used is False
     assert result.test_order_request_transmitted is False
+
+
+def test_engaged_durable_kill_switch_blocks_order_test_post_before_transport(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls: list[object] = []
+
+    def forbidden(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("engaged kill switch must block before Binance transport")
+
+    result = _engine(
+        tmp_path,
+        env=_env("ENGAGED"),
+        http_get=forbidden,
+        authenticated_post=forbidden,
+    ).submit_test_order(
+        "smcbot-test-engaged-001",
+        "BUY",
+        "MARKET",
+        0.001,
+        confirmation="CONFIRM_TESTNET_ORDER_TEST",
+        config_path=str(path),
+    )
+
+    assert result.status == "FAIL"
+    assert result.test_order_request_transmitted is False
+    assert calls == []
 
 
 def test_confirmed_mock_test_order_is_accepted_without_actual_order_flags(tmp_path: Path) -> None:

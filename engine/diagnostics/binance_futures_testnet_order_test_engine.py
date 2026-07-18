@@ -18,6 +18,7 @@ from infrastructure.exchanges.binance_futures_testnet_order_test_client import (
     BinanceFuturesTestnetOrderOperationBlocked,
     BinanceFuturesTestnetOrderTestClient,
 )
+from infrastructure.persistence.kill_switch_gate import DurableKillSwitchGate, KillSwitchGateError
 from models.binance_futures_testnet_order_test import (
     BinanceFuturesTestnetExchangeFilterSummary,
     BinanceFuturesTestnetOrderTestAction,
@@ -50,6 +51,7 @@ class BinanceFuturesTestnetOrderTestEngine:
         env: dict[str, str] | None = None,
         now_ms_provider=None,
         now_provider=None,
+        kill_switch_gate=None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.runtime_config_engine = runtime_config_engine or BTCPaperRuntimeConfigEngine(repo_root=self.repo_root)
@@ -65,6 +67,13 @@ class BinanceFuturesTestnetOrderTestEngine:
         self.env = {} if env is None else env
         self.now_ms_provider = now_ms_provider
         self.now_provider = now_provider
+        self.kill_switch_gate = kill_switch_gate or DurableKillSwitchGate(env=self.env)
+
+    def _require_mutation_permission(self) -> None:
+        try:
+            self.kill_switch_gate.require_released()
+        except KillSwitchGateError as exc:
+            raise RuntimeError(exc.code) from exc
 
     def validate(self, config_path: str = "configs/binance_futures_testnet_order_test.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetOrderTestValidationReport:
         issues: list[BinanceFuturesTestnetOrderTestIssue] = []
@@ -156,6 +165,7 @@ class BinanceFuturesTestnetOrderTestEngine:
             decision = BinanceFuturesTestnetOrderTestDecision.CREDENTIALS_INCOMPLETE.value if metadata.api_key_present or metadata.api_secret_present else BinanceFuturesTestnetOrderTestDecision.CREDENTIALS_NOT_CONFIGURED.value
             return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "WARNING", decision, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, credentials_inspected=True)
         try:
+            self._require_mutation_permission()
             filters = client.fetch_exchange_filters()
             mark_price = client.fetch_mark_price(config.exchange_symbol) if str(order_type).upper() == "MARKET" else None
             preview = client.build_order_test_preview(client_order_id, side, order_type, quantity, price, time_in_force, reduce_only, exchange_filters=filters, mark_price=mark_price)

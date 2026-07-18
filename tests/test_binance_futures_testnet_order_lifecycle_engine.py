@@ -9,6 +9,7 @@ import pytest
 from engine.diagnostics.binance_futures_testnet_order_lifecycle_engine import BinanceFuturesTestnetOrderLifecycleEngine
 from infrastructure.exchanges.binance_futures_testnet_order_lifecycle_client import BinanceLifecycleHTTPResponse
 from models.binance_futures_testnet_order_lifecycle import BinanceFuturesTestnetOrderLifecycleConfig
+from tests.kill_switch_test_support import durable_state_env
 
 
 class _PassReport:
@@ -56,8 +57,8 @@ def _runtime_file(tmp_path: Path, name: str) -> Path:
     return tmp_path / "data" / "runtime" / "binance_futures_testnet_order_lifecycle" / name
 
 
-def _env() -> dict[str, str]:
-    return {"BINANCE_FUTURES_TESTNET_API_KEY": "unit-test-key", "BINANCE_FUTURES_TESTNET_API_SECRET": "unit-test-secret"}
+def _env(state: str = "RELEASED") -> dict[str, str]:
+    return durable_state_env(state)
 
 
 def _exchange_info() -> dict:
@@ -227,6 +228,50 @@ def test_lock_token_is_sanitized_and_contains_no_secret_material(tmp_path: Path)
     assert "unit-test-secret" not in token
     assert "signature" not in token.lower()
     assert "http" not in token.lower()
+
+
+def test_engaged_durable_kill_switch_blocks_lifecycle_create_before_transport(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls: list[object] = []
+
+    def forbidden_get(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("engaged kill switch must block before Binance transport")
+
+    def forbidden_transport(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("engaged kill switch must block before Binance transport")
+
+    result = _engine(tmp_path, env=_env("ENGAGED"), http_get=forbidden_get, authenticated_request=forbidden_transport).run_lifecycle(
+        "lifecycle-engaged", "smcbot-lifecycle-engaged", "BUY", 0.001,
+        confirmation="CONFIRM_TESTNET_POST_ONLY_LIFECYCLE", config_path=str(path),
+    )
+
+    assert result.status == "FAIL"
+    assert result.decision == "OPERATION_BLOCKED"
+    assert calls == []
+    assert not _runtime_file(tmp_path, "lifecycle.lock").exists()
+
+
+def test_engaged_durable_kill_switch_blocks_lifecycle_cancel_before_transport(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls: list[object] = []
+
+    def forbidden_get(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("engaged kill switch must block before Binance transport")
+
+    def forbidden_transport(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("engaged kill switch must block before Binance transport")
+
+    result = _engine(tmp_path, env=_env("ENGAGED"), http_get=forbidden_get, authenticated_request=forbidden_transport).recovery_cancel(
+        "smcbot-lifecycle-engaged", confirmation="CONFIRM_TESTNET_CANCEL_ORDER", config_path=str(path),
+    )
+
+    assert result.status == "FAIL"
+    assert result.decision == "OPERATION_BLOCKED"
+    assert calls == []
 
 
 def test_mocked_new_order_is_queried_cancelled_and_completed(tmp_path: Path) -> None:

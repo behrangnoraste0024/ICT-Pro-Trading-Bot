@@ -13,6 +13,7 @@ from infrastructure.exchanges.binance_futures_testnet_order_lifecycle_client imp
 from infrastructure.exchanges.binance_futures_testnet_protective_orders_client import BinanceFuturesTestnetProtectiveAPIError, BinanceFuturesTestnetProtectiveOrdersClient
 from models.binance_futures_testnet_protective_orders import BinanceFuturesTestnetProtectiveOrdersConfig
 from reporting.binance_futures_testnet_protective_orders_report import format_binance_futures_testnet_protective_orders_result
+from tests.kill_switch_test_support import durable_state_env
 
 
 class _LegacyProtectivePersistence:
@@ -46,8 +47,8 @@ def _isolate_legacy_protective_tests(monkeypatch) -> None:
     )
 
 
-def _env() -> dict[str, str]:
-    return {"BINANCE_FUTURES_TESTNET_API_KEY": "unit-test-key", "BINANCE_FUTURES_TESTNET_API_SECRET": "unit-test-secret"}
+def _env(state: str = "RELEASED") -> dict[str, str]:
+    return durable_state_env(state)
 
 
 def _write_config(tmp_path: Path, **overrides) -> Path:
@@ -543,6 +544,40 @@ def test_structured_api_error_preserves_sanitized_code_without_secrets(tmp_path:
     assert error.method == "GET"
     assert "signature=" not in error.sanitized_message
     assert "X-MBX-APIKEY" not in error.sanitized_message
+
+
+def test_engaged_durable_kill_switch_blocks_protective_lifecycle_before_transport(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls: list[object] = []
+
+    def forbidden_get(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("engaged kill switch must block before Binance transport")
+
+    def forbidden_transport(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("engaged kill switch must block before Binance transport")
+
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(
+        repo_root=tmp_path,
+        env=_env("ENGAGED"),
+        http_get=forbidden_get,
+        authenticated_request=forbidden_transport,
+    ).run_protective_lifecycle(
+        "pair-engaged",
+        "smcbot-protect-sl-engaged",
+        "smcbot-protect-tp-engaged",
+        confirmation="CONFIRM_TESTNET_PROTECTIVE_PAIR_LIFECYCLE",
+        config_path=str(path),
+    )
+
+    assert result.status == "FAIL"
+    assert result.decision == "KILL_SWITCH_ENGAGED"
+    assert result.recovery_required is False
+    assert result.journal is None
+    assert calls == []
+    assert not _runtime_file(tmp_path, "protective.lock").exists()
+    assert not _runtime_file(tmp_path, "protective.json").exists()
 
 
 def test_lifecycle_sequence_cancel_order_and_position_unchanged(tmp_path: Path) -> None:

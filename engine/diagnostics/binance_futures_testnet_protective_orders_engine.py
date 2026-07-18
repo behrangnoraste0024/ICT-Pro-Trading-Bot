@@ -15,6 +15,7 @@ from infrastructure.persistence.protective_lifecycle_persistence import (
     ProtectivePersistenceError,
     ProtectivePersistenceState,
 )
+from infrastructure.persistence.kill_switch_gate import DurableKillSwitchGate, KillSwitchGateError
 from models.binance_futures_testnet_protective_orders import (
     BinanceFuturesTestnetProtectiveAlgoSummary,
     BinanceFuturesTestnetProtectiveCredentialMetadata,
@@ -57,6 +58,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         now_ms_provider=None,
         now_provider=None,
         persistence_factory=None,
+        kill_switch_gate=None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.http_get = http_get
@@ -65,6 +67,13 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         self.now_ms_provider = now_ms_provider
         self.now_provider = now_provider
         self.persistence_factory = persistence_factory or ProtectiveLifecyclePersistence
+        self.kill_switch_gate = kill_switch_gate or DurableKillSwitchGate(env=self.env)
+
+    def _require_mutation_permission(self) -> None:
+        try:
+            self.kill_switch_gate.require_released()
+        except KillSwitchGateError as exc:
+            raise ProtectiveAbort(exc.code, "Durable kill switch blocks exchange mutation.") from exc
 
     def validate(self, config_path: str = "configs/binance_futures_testnet_protective_orders.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetProtectiveValidationReport:
         issues: list[BinanceFuturesTestnetProtectiveIssue] = []
@@ -138,6 +147,11 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         metadata = client.inspect_credentials()
         if not metadata.credentials_complete:
             return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "WARNING", "CREDENTIALS_NOT_CONFIGURED", "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
+        try:
+            self._require_mutation_permission()
+        except ProtectiveAbort as exc:
+            issues.append(self._issue(exc.decision.lower(), "FAIL", exc.reason))
+            return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "FAIL", exc.decision, exc.reason, credential_metadata=metadata, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
         persistence = self.persistence_factory(env=self.env)
         try:
             persistence.ensure_available()
@@ -266,15 +280,20 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "FAIL", "RECOVERY_REQUIRED" if recovery else exc.code, "Protective persistence transition failed safely.", credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, reconciliation_results=reconciliation_results, journal=journal if journal.entries else None, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_REQUIRED" if recovery else "FAILED", recovery_required=recovery)
         except ProtectiveAbort as exc:
             issues.append(self._issue(exc.decision.lower(), "CRITICAL" if exc.critical else "FAIL", exc.reason))
-            journal.recovery_required = bool(exc.recovery or exc.critical)
-            if persistence_state is not None and (exc.recovery or exc.critical):
+            delete_recovery = cancel_started or any(
+                intent.mutation_kind == ProtectiveMutationKind.DELETE.value and not intent.resolved
+                for intent in journal.mutation_intents
+            )
+            recovery = bool(exc.recovery or exc.critical or delete_recovery)
+            journal.recovery_required = recovery
+            if persistence_state is not None and recovery:
                 try:
-                    persistence.mark_recovery_required(persistence_state, "DELETE" if cancel_started else "CREATE", exc.decision)
+                    persistence.mark_recovery_required(persistence_state, "DELETE" if delete_recovery else "CREATE", exc.decision)
                 except ProtectivePersistenceError:
                     pass
             if exc.decision != "JOURNAL_ARCHIVE_FAILED":
-                self._write_journal(config, journal, "RECOVERY_REQUIRED" if exc.recovery or exc.critical else "FAILED", {"reason": exc.reason})
-            return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "CRITICAL" if exc.critical else "FAIL", exc.decision, exc.reason, credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, reconciliation_results=reconciliation_results, journal=journal, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_REQUIRED" if exc.decision == "JOURNAL_ARCHIVE_FAILED" else journal.phase, recovery_required=exc.recovery or exc.critical, unexpected_trigger=exc.critical, unexpected_position_change=exc.decision == "UNEXPECTED_POSITION_CHANGE")
+                self._write_journal(config, journal, "RECOVERY_REQUIRED" if recovery else "FAILED", {"reason": exc.reason})
+            return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "CRITICAL" if exc.critical else "FAIL", exc.decision, exc.reason, credential_metadata=metadata, exchange_filters=filters, position=position, final_position=final_position, preview=preview, stop_order=stop_order, take_profit_order=take_order, final_stop_order=final_stop, final_take_profit_order=final_take, create_requests=create_requests, query_requests=query_requests, cancel_requests=cancel_requests, reconciliation_results=reconciliation_results, journal=journal, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id, phase="RECOVERY_REQUIRED" if exc.decision == "JOURNAL_ARCHIVE_FAILED" else journal.phase, recovery_required=recovery, unexpected_trigger=exc.critical, unexpected_position_change=exc.decision == "UNEXPECTED_POSITION_CHANGE")
         except BinanceFuturesTestnetProtectiveAPIError as exc:
             message = self._sanitize_api_error(exc)
             recovery = bool((stop_create_started or take_create_started or cancel_started) and exc.request_transmitted)
@@ -1011,6 +1030,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         reconciliation_results.append(pre_create)
         try:
             client.synchronize_server_time(force=True)
+            self._require_mutation_permission()
             order, meta = client.create_stop_order(preview) if label == "STOP" else client.create_take_profit_order(preview)
             create_requests.append(meta)
             if persistence is not None and persistence_state is not None:
@@ -1094,6 +1114,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         self._persist_intent(config, journal, intent, f"{label}_DELETE_INTENT_PERSISTED")
         try:
             client.synchronize_server_time(force=True)
+            self._require_mutation_permission()
             order, meta = client.cancel_algo_order_exact(client_algo_id)
             cancel_requests.append(meta)
             if persistence is not None and persistence_state is not None:

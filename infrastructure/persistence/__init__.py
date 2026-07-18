@@ -3,6 +3,7 @@ from infrastructure.persistence.execution_repositories import (
     SqlAlchemyAuditEventRepository,
     SqlAlchemyExchangeOrderIdentityRepository,
     SqlAlchemyExecutionIntentRepository,
+    SqlAlchemyKillSwitchStateRepository,
     SqlAlchemyProtectivePairRepository,
     SqlAlchemyRecoveryEventRepository,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "SqlAlchemyAuditEventRepository",
     "SqlAlchemyExchangeOrderIdentityRepository",
     "SqlAlchemyExecutionIntentRepository",
+    "SqlAlchemyKillSwitchStateRepository",
     "SqlAlchemyProtectivePairRepository",
     "SqlAlchemyRecoveryEventRepository",
 ]
