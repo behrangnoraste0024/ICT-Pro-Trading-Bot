@@ -15,7 +15,8 @@ from infrastructure.persistence.protective_lifecycle_persistence import (
     ProtectivePersistenceError,
     ProtectivePersistenceState,
 )
-from infrastructure.persistence.kill_switch_gate import DurableKillSwitchGate, KillSwitchGateError
+from infrastructure.persistence.live_execution_authorization_policy import LiveExecutionAuthorizationPolicy
+from models.live_execution_authorization import LiveExecutionOperation
 from models.binance_futures_testnet_protective_orders import (
     BinanceFuturesTestnetProtectiveAlgoSummary,
     BinanceFuturesTestnetProtectiveCredentialMetadata,
@@ -59,6 +60,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         now_provider=None,
         persistence_factory=None,
         kill_switch_gate=None,
+        authorization_policy=None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.http_get = http_get
@@ -67,13 +69,38 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         self.now_ms_provider = now_ms_provider
         self.now_provider = now_provider
         self.persistence_factory = persistence_factory or ProtectiveLifecyclePersistence
-        self.kill_switch_gate = kill_switch_gate or DurableKillSwitchGate(env=self.env)
+        self.authorization_policy = authorization_policy or LiveExecutionAuthorizationPolicy(
+            repo_root=self.repo_root,
+            env=self.env,
+            kill_switch_gate=kill_switch_gate,
+        )
 
-    def _require_mutation_permission(self) -> None:
-        try:
-            self.kill_switch_gate.require_released()
-        except KillSwitchGateError as exc:
-            raise ProtectiveAbort(exc.code, "Durable kill switch blocks exchange mutation.") from exc
+    def _require_mutation_permission(self, operation: LiveExecutionOperation, current_pair_id: str | None = None) -> None:
+        decision = self.authorization_policy.authorize(
+            operation,
+            environment="TESTNET",
+            symbol="BTCUSDT",
+            confirmation_verified=True,
+            credentials_configured=True,
+            current_pair_id=current_pair_id,
+        )
+        if not decision.allowed:
+            raise ProtectiveAbort(
+                decision.code,
+                decision.message,
+                recovery=current_pair_id is not None,
+            )
+
+    def _require_preflight_permission(self) -> None:
+        decision = self.authorization_policy.authorize_preflight(
+            LiveExecutionOperation.PROTECTIVE_CREATE,
+            environment="TESTNET",
+            symbol="BTCUSDT",
+            confirmation_verified=True,
+            credentials_configured=True,
+        )
+        if not decision.allowed:
+            raise ProtectiveAbort(decision.code, decision.message)
 
     def validate(self, config_path: str = "configs/binance_futures_testnet_protective_orders.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetProtectiveValidationReport:
         issues: list[BinanceFuturesTestnetProtectiveIssue] = []
@@ -144,11 +171,14 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         if confirmation != config.pair_confirmation_phrase:
             return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "WARNING", "CONFIRMATION_REQUIRED", "Explicit protective pair confirmation is required.", issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
         client = self._client(config)
-        metadata = client.inspect_credentials()
+        try:
+            metadata = client.inspect_credentials()
+        except Exception:
+            return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "FAIL", "CREDENTIALS_UNAVAILABLE", "Testnet credential readiness is unavailable.", issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
         if not metadata.credentials_complete:
             return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "WARNING", "CREDENTIALS_NOT_CONFIGURED", "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
         try:
-            self._require_mutation_permission()
+            self._require_preflight_permission()
         except ProtectiveAbort as exc:
             issues.append(self._issue(exc.decision.lower(), "FAIL", exc.reason))
             return self._result(config, "RUN_PROTECTIVE_LIFECYCLE", "FAIL", exc.decision, exc.reason, credential_metadata=metadata, issues=issues, pair_id=pair_id, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
@@ -330,7 +360,10 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         config = report.config or BinanceFuturesTestnetProtectiveOrdersConfig()
         issues = list(report.issues)
         client = self._client(config)
-        metadata = client.inspect_credentials()
+        try:
+            metadata = client.inspect_credentials()
+        except Exception:
+            return self._result(config, "QUERY_PROTECTIVE_PAIR", "FAIL", "CREDENTIALS_UNAVAILABLE", "Testnet credential readiness is unavailable.", issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
         if report.status == "FAIL" or not metadata.credentials_complete:
             return self._result(config, "QUERY_PROTECTIVE_PAIR", "WARNING" if not metadata.credentials_complete else "FAIL", "CREDENTIALS_NOT_CONFIGURED" if not metadata.credentials_complete else "OPERATION_BLOCKED", "Query requires valid config and credentials.", credential_metadata=metadata, issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
         self._server_time_or_issue(client, config, issues)
@@ -359,7 +392,10 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         if confirmation != config.recovery_confirmation_phrase:
             return self._result(config, "RECOVER_PROTECTIVE_PAIR", "WARNING", "CONFIRMATION_REQUIRED", "Explicit protective recovery confirmation is required.", issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
         client = self._client(config)
-        metadata = client.inspect_credentials()
+        try:
+            metadata = client.inspect_credentials()
+        except Exception:
+            return self._result(config, "RECOVER_PROTECTIVE_PAIR", "FAIL", "CREDENTIALS_UNAVAILABLE", "Testnet credential readiness is unavailable.", issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
         if not metadata.credentials_complete:
             return self._result(config, "RECOVER_PROTECTIVE_PAIR", "WARNING", "CREDENTIALS_NOT_CONFIGURED", "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, stop_client_algo_id=stop_client_algo_id, take_profit_client_algo_id=take_profit_client_algo_id)
         persistence = self.persistence_factory(env=self.env)
@@ -1030,7 +1066,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         reconciliation_results.append(pre_create)
         try:
             client.synchronize_server_time(force=True)
-            self._require_mutation_permission()
+            self._require_mutation_permission(LiveExecutionOperation.PROTECTIVE_CREATE, journal.pair_id)
             order, meta = client.create_stop_order(preview) if label == "STOP" else client.create_take_profit_order(preview)
             create_requests.append(meta)
             if persistence is not None and persistence_state is not None:
@@ -1114,7 +1150,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         self._persist_intent(config, journal, intent, f"{label}_DELETE_INTENT_PERSISTED")
         try:
             client.synchronize_server_time(force=True)
-            self._require_mutation_permission()
+            self._require_mutation_permission(LiveExecutionOperation.PROTECTIVE_CANCEL, journal.pair_id)
             order, meta = client.cancel_algo_order_exact(client_algo_id)
             cancel_requests.append(meta)
             if persistence is not None and persistence_state is not None:

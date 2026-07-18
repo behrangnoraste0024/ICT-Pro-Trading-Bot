@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import pytest
 from fastapi.testclient import TestClient
@@ -37,8 +37,14 @@ from infrastructure.persistence.execution_orm import (
 from infrastructure.persistence.kill_switch_persistence import KillSwitchPersistence
 from infrastructure.persistence.kill_switch_persistence import KillSwitchPersistenceError
 from infrastructure.persistence.kill_switch_gate import DurableKillSwitchGate, KillSwitchGateError
+from infrastructure.persistence.protective_lifecycle_persistence import ProtectiveLifecyclePersistence
 from infrastructure.persistence.schema_contract import PERSISTENCE_REVISION
-from models.binance_futures_testnet_protective_orders import BinanceFuturesTestnetProtectiveOrdersConfig
+from models.binance_futures_testnet_protective_orders import (
+    BinanceFuturesTestnetProtectiveAlgoSummary,
+    BinanceFuturesTestnetProtectiveOrdersConfig,
+    BinanceFuturesTestnetProtectivePosition,
+    BinanceFuturesTestnetProtectivePreview,
+)
 from tests import kill_switch_test_support
 from tests.kill_switch_test_support import durable_state_env
 
@@ -73,6 +79,84 @@ def _database(tmp_path: Path) -> tuple[dict[str, str], Any]:
     with engine.begin() as connection:
         connection.execute(revision.insert().values(version_num=PERSISTENCE_REVISION))
     return {"ICT_DATABASE_URL": database_url}, engine
+
+
+def _seed_protective_recovery(
+    env: dict[str, str],
+    engine: Engine,
+    *,
+    pair_id: str,
+    terminal: bool,
+) -> None:
+    coordinator = ProtectiveLifecyclePersistence(env=env)
+    coordinator.ensure_available()
+    token = uuid5(NAMESPACE_URL, pair_id).hex[:8]
+    position = BinanceFuturesTestnetProtectivePosition(
+        position_amt=Decimal("0.001"),
+        mark_price=Decimal("60000"),
+        direction="LONG",
+        position_side="BOTH",
+    )
+    preview = BinanceFuturesTestnetProtectivePreview(
+        pair_id=pair_id,
+        position_amount=position.position_amt,
+        mark_price=position.mark_price,
+        position_direction=position.direction,
+        protective_side="SELL",
+        stop_client_algo_id=f"smcbot-protect-sl-{token}",
+        take_profit_client_algo_id=f"smcbot-protect-tp-{token}",
+        stop_trigger=Decimal("54000"),
+        take_profit_trigger=Decimal("66000"),
+    )
+    state = coordinator.prepare_lifecycle(
+        pair_id,
+        preview.stop_client_algo_id,
+        preview.take_profit_client_algo_id,
+        position,
+        preview,
+    )
+    if not terminal:
+        coordinator.mark_recovery_required(state, "CREATE", "TEST_RECOVERY_REQUIRED")
+        coordinator.close()
+        return
+
+    coordinator.mark_create_transmitted(state)
+    coordinator.confirm_create(
+        state,
+        "STOP",
+        BinanceFuturesTestnetProtectiveAlgoSummary(
+            symbol="BTCUSDT",
+            client_algo_id=preview.stop_client_algo_id,
+            algo_id=f"{token}1",
+            actual_order_id=f"{token}01",
+            trigger_price=preview.stop_trigger,
+            algo_status="NEW",
+        ),
+    )
+    coordinator.confirm_create(
+        state,
+        "TAKE_PROFIT",
+        BinanceFuturesTestnetProtectiveAlgoSummary(
+            symbol="BTCUSDT",
+            client_algo_id=preview.take_profit_client_algo_id,
+            algo_id=f"{token}2",
+            actual_order_id=f"{token}02",
+            trigger_price=preview.take_profit_trigger,
+            algo_status="NEW",
+        ),
+    )
+    coordinator.prepare_cancel(state, "TAKE_PROFIT", position.position_amt, position.mark_price)
+    coordinator.mark_cancel_transmitted(state, "TAKE_PROFIT")
+    coordinator.confirm_delete(state, "TAKE_PROFIT", "ABSENT", complete=False)
+    coordinator.prepare_cancel(state, "STOP", position.position_amt, position.mark_price)
+    coordinator.mark_cancel_transmitted(state, "STOP")
+    coordinator.confirm_delete(state, "STOP", "ABSENT", complete=True)
+    coordinator.close()
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE protective_pairs SET recovery_required=1 WHERE pair_id=?",
+            (pair_id,),
+        )
 
 
 def _migration(path: str, name: str):
@@ -400,20 +484,12 @@ def test_release_blocks_unresolved_protective_lifecycle_without_mutating_it(tmp_
     transport = RecordingTransport()
     client = _client(tmp_path, env, transport)
     assert client.post("/api/v1/live/kill-switch/engage", json=_request(ENGAGE_CONFIRMATION)).status_code == 200
-    intent_id = uuid4()
-    now = datetime.now(UTC)
-    with Session(engine) as session, session.begin():
-        session.add(ExecutionIntentORM(
-            id=intent_id, correlation_id=uuid4(), environment="BINANCE_FUTURES_TESTNET", symbol="BTCUSDT",
-            intent_type="PROTECTIVE_PAIR_CREATE", state="PERSISTED", requested_quantity=Decimal("0.001"),
-            requested_price=Decimal("60000"), failure_code=None, created_at=now, updated_at=now, version=1,
-        ))
-        session.add(ProtectivePairORM(
-            id=uuid4(), pair_id="unresolved-kill-switch-test", correlation_id=uuid4(), execution_intent_id=intent_id,
-            environment="BINANCE_FUTURES_TESTNET", symbol="BTCUSDT", position_side="BOTH", direction="LONG",
-            quantity=Decimal("0.001"), state="RECOVERY_REQUIRED", recovery_required=True, blocking_reason=None,
-            created_at=now, updated_at=now, version=1,
-        ))
+    _seed_protective_recovery(
+        env,
+        engine,
+        pair_id="unresolved-kill-switch-test",
+        terminal=False,
+    )
     before = _snapshot(engine)
 
     response = client.post("/api/v1/live/kill-switch/release", json=_request(RELEASE_CONFIRMATION))
@@ -477,11 +553,12 @@ def test_release_blocks_terminal_pair_with_recovery_required_without_journal(tmp
     transport = RecordingTransport()
     client = _client(tmp_path, env, transport)
     assert client.post("/api/v1/live/kill-switch/engage", json=_request(ENGAGE_CONFIRMATION)).status_code == 200
-    intent_id = uuid4()
-    now = datetime.now(UTC)
-    with Session(engine) as session, session.begin():
-        session.add(ExecutionIntentORM(id=intent_id, correlation_id=uuid4(), environment="BINANCE_FUTURES_TESTNET", symbol="BTCUSDT", intent_type="PROTECTIVE_PAIR_CREATE", state="PERSISTED", requested_quantity=Decimal("0.001"), requested_price=Decimal("60000"), failure_code=None, created_at=now, updated_at=now, version=1))
-        session.add(ProtectivePairORM(id=uuid4(), pair_id="terminal-recovery-required", correlation_id=uuid4(), execution_intent_id=intent_id, environment="BINANCE_FUTURES_TESTNET", symbol="BTCUSDT", position_side="BOTH", direction="LONG", quantity=Decimal("0.001"), state="COMPLETED", recovery_required=True, blocking_reason=None, created_at=now, updated_at=now, version=1))
+    _seed_protective_recovery(
+        env,
+        engine,
+        pair_id="terminal-recovery-required",
+        terminal=True,
+    )
     before = _snapshot(engine)
 
     response = client.post("/api/v1/live/kill-switch/release", json=_request(RELEASE_CONFIRMATION))

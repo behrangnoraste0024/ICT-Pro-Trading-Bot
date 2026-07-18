@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import weakref
 from pathlib import Path
@@ -13,6 +14,20 @@ from infrastructure.persistence.schema_contract import PERSISTENCE_REVISION
 
 class _DurableStateEnvironment(dict[str, str]):
     __slots__ = ("__weakref__",)
+
+
+def authorized_runtime_env(values: dict[str, str] | None = None) -> dict[str, str]:
+    """Attach an explicit typed, temporary mutation runtime config for one test."""
+    temporary_directory = tempfile.TemporaryDirectory(prefix="ict_live_execution_")
+    runtime_path = Path(temporary_directory.name) / "runtime.json"
+    runtime_path.write_text(
+        json.dumps({"live_trading_enabled": True, "dry_run": False}),
+        encoding="utf-8",
+    )
+    env = _DurableStateEnvironment(values or {})
+    env["ICT_LIVE_EXECUTION_RUNTIME_CONFIG"] = str(runtime_path)
+    weakref.finalize(env, temporary_directory.cleanup)
+    return env
 
 
 def durable_state_env(state: str = "RELEASED") -> dict[str, str]:
@@ -36,6 +51,12 @@ def durable_state_env(state: str = "RELEASED") -> dict[str, str]:
             BINANCE_FUTURES_TESTNET_API_KEY="unit-test-key",
             BINANCE_FUTURES_TESTNET_API_SECRET="unit-test-secret",
         )
+        runtime_path = Path(temporary_directory.name) / "live_execution_runtime.json"
+        runtime_path.write_text(
+            json.dumps({"live_trading_enabled": True, "dry_run": False}),
+            encoding="utf-8",
+        )
+        env["ICT_LIVE_EXECUTION_RUNTIME_CONFIG"] = str(runtime_path)
         persistence = KillSwitchPersistence(env=env)
         persistence.ensure_available()
         persistence.engage()

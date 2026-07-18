@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -8,6 +9,13 @@ import pytest
 
 from engine.diagnostics.binance_futures_testnet_order_lifecycle_engine import BinanceFuturesTestnetOrderLifecycleEngine
 from infrastructure.exchanges.binance_futures_testnet_order_lifecycle_client import BinanceLifecycleHTTPResponse
+from infrastructure.persistence.kill_switch_persistence import KillSwitchPersistence
+from infrastructure.persistence.live_execution_authorization_policy import LiveExecutionAuthorizationPolicy
+from infrastructure.persistence.protective_lifecycle_persistence import ProtectiveLifecyclePersistence
+from models.binance_futures_testnet_protective_orders import (
+    BinanceFuturesTestnetProtectivePosition,
+    BinanceFuturesTestnetProtectivePreview,
+)
 from models.binance_futures_testnet_order_lifecycle import BinanceFuturesTestnetOrderLifecycleConfig
 from tests.kill_switch_test_support import durable_state_env
 
@@ -248,7 +256,7 @@ def test_engaged_durable_kill_switch_blocks_lifecycle_create_before_transport(tm
     )
 
     assert result.status == "FAIL"
-    assert result.decision == "OPERATION_BLOCKED"
+    assert result.decision == "KILL_SWITCH_ENGAGED"
     assert calls == []
     assert not _runtime_file(tmp_path, "lifecycle.lock").exists()
 
@@ -270,8 +278,126 @@ def test_engaged_durable_kill_switch_blocks_lifecycle_cancel_before_transport(tm
     )
 
     assert result.status == "FAIL"
-    assert result.decision == "OPERATION_BLOCKED"
+    assert result.decision == "KILL_SWITCH_ENGAGED"
     assert calls == []
+
+
+def _seed_unresolved_protective_pair(env: dict[str, str]) -> None:
+    position = BinanceFuturesTestnetProtectivePosition(
+        position_amt=Decimal("0.001"), mark_price=Decimal("50000"), direction="LONG", position_side="BOTH"
+    )
+    preview = BinanceFuturesTestnetProtectivePreview(
+        pair_id="pair-policy-recovery",
+        position_amount=position.position_amt,
+        mark_price=position.mark_price,
+        position_direction="LONG",
+        protective_side="SELL",
+        stop_client_algo_id="smcbot-protect-policy-sl",
+        take_profit_client_algo_id="smcbot-protect-policy-tp",
+        stop_trigger=Decimal("45000"),
+        take_profit_trigger=Decimal("55000"),
+    )
+    persistence = ProtectiveLifecyclePersistence(env=env)
+    persistence.ensure_available()
+    persistence.prepare_lifecycle(
+        preview.pair_id,
+        preview.stop_client_algo_id,
+        preview.take_profit_client_algo_id,
+        position,
+        preview,
+    )
+    persistence.close()
+
+
+def _assert_recovery_cancel_boundary_denial(tmp_path: Path, env: dict[str, str], transition, expected_code: str) -> None:
+    path = _write_config(tmp_path)
+    transport_calls: list[object] = []
+
+    def changing_time(url, timeout):
+        transition()
+        return _http_get(url, timeout)
+
+    def forbidden_transport(*args, **kwargs):
+        transport_calls.append((args, kwargs))
+        raise AssertionError("boundary authorization must block DELETE")
+
+    result = _engine(
+        tmp_path,
+        env=env,
+        http_get=changing_time,
+        authenticated_request=forbidden_transport,
+        now_ms_provider=lambda: 123,
+    ).recovery_cancel(
+        "smcbot-lifecycle-boundary",
+        confirmation="CONFIRM_TESTNET_CANCEL_ORDER",
+        config_path=str(path),
+    )
+
+    assert result.status == "FAIL"
+    assert result.decision == expected_code
+    assert result.reason == LiveExecutionAuthorizationPolicy.SAFE_MESSAGES[expected_code]
+    assert not result.reason.startswith(f"{expected_code}:")
+    assert result.order_cancelled is False
+    assert result.cancel_request_transmitted is False
+    assert transport_calls == []
+    assert not _runtime_file(tmp_path, "lifecycle.lock").exists()
+
+
+def test_recovery_cancel_handles_kill_switch_change_at_delete_boundary(tmp_path: Path) -> None:
+    env = _env()
+
+    def engage() -> None:
+        persistence = KillSwitchPersistence(env=env)
+        persistence.ensure_available()
+        persistence.engage()
+        persistence.close()
+
+    _assert_recovery_cancel_boundary_denial(tmp_path, env, engage, "KILL_SWITCH_ENGAGED")
+
+
+def test_recovery_cancel_handles_runtime_disable_at_delete_boundary(tmp_path: Path) -> None:
+    env = _env()
+
+    def disable_runtime() -> None:
+        Path(env["ICT_LIVE_EXECUTION_RUNTIME_CONFIG"]).write_text(
+            json.dumps({"live_trading_enabled": False, "dry_run": False}), encoding="utf-8"
+        )
+
+    _assert_recovery_cancel_boundary_denial(tmp_path, env, disable_runtime, "LIVE_TRADING_DISABLED")
+
+
+def test_recovery_cancel_handles_new_recovery_evidence_at_delete_boundary(tmp_path: Path) -> None:
+    env = _env()
+    _assert_recovery_cancel_boundary_denial(
+        tmp_path,
+        env,
+        lambda: _seed_unresolved_protective_pair(env),
+        "RECOVERY_REQUIRED",
+    )
+
+
+def test_recovery_cancel_sanitizes_hostile_policy_provider_failure(tmp_path: Path) -> None:
+    markers = (
+        "postgresql://user:secret@ connectionString SELECT * FROM traceback X-MBX-APIKEY "
+        "signed-url rawResponse Authorization secret-token"
+    )
+
+    def hostile_factory(**kwargs):
+        raise RuntimeError(markers)
+
+    env = _env()
+    policy = LiveExecutionAuthorizationPolicy(env=env, persistence_factory=hostile_factory)
+    result = _engine(tmp_path, env=env, authorization_policy=policy).recovery_cancel(
+        "smcbot-lifecycle-hostile",
+        confirmation="CONFIRM_TESTNET_CANCEL_ORDER",
+        config_path=str(_write_config(tmp_path)),
+    )
+    rendered = str(result.to_dict())
+    assert result.status == "FAIL"
+    assert result.decision == "PERSISTENCE_UNAVAILABLE"
+    assert result.reason == LiveExecutionAuthorizationPolicy.SAFE_MESSAGES["PERSISTENCE_UNAVAILABLE"]
+    for marker in markers.split():
+        assert marker not in rendered
 
 
 def test_mocked_new_order_is_queried_cancelled_and_completed(tmp_path: Path) -> None:
@@ -288,6 +414,48 @@ def test_mocked_new_order_is_queried_cancelled_and_completed(tmp_path: Path) -> 
     assert [call[0] for call in transport.calls].count("POST") == 1
     assert [call[0] for call in transport.calls].count("DELETE") == 1
     assert "signature=" not in (tmp_path / "data" / "runtime" / "binance_futures_testnet_order_lifecycle" / "lifecycle.json").read_text(encoding="utf-8")
+    assert not _runtime_file(tmp_path, "lifecycle.lock").exists()
+
+
+def test_policy_rechecks_kill_switch_before_lifecycle_delete(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    env = _env()
+    calls: list[str] = []
+    kill_switch_changed = False
+
+    def transport(method, url, body, timeout, headers):
+        nonlocal kill_switch_changed
+        calls.append(method)
+        if "positionSide/dual" in url:
+            return BinanceLifecycleHTTPResponse(200, url, {"dualSidePosition": False}, 10)
+        if "positionRisk" in url:
+            return BinanceLifecycleHTTPResponse(200, url, [{"symbol": "BTCUSDT", "positionAmt": "0"}], 10)
+        order = {"symbol": "BTCUSDT", "clientOrderId": "smcbot-lifecycle-001", "orderId": 1, "side": "BUY", "type": "LIMIT", "timeInForce": "GTX", "price": "49500", "origQty": "0.001", "executedQty": "0", "status": "NEW"}
+        if method == "GET" and not kill_switch_changed:
+            persistence = KillSwitchPersistence(env=env)
+            persistence.ensure_available()
+            persistence.engage()
+            persistence.close()
+            kill_switch_changed = True
+        if method == "DELETE":
+            raise AssertionError("policy denial must prevent DELETE transport")
+        return BinanceLifecycleHTTPResponse(200, url, order, 10)
+
+    result = _engine(tmp_path, env=env, http_get=_http_get, authenticated_request=transport, now_ms_provider=lambda: 123).run_lifecycle(
+        "lifecycle-001",
+        "smcbot-lifecycle-001",
+        "BUY",
+        0.001,
+        confirmation="CONFIRM_TESTNET_POST_ONLY_LIFECYCLE",
+        config_path=str(path),
+    )
+
+    assert result.status == "FAIL"
+    assert result.decision == "KILL_SWITCH_ENGAGED"
+    assert result.recovery_required is True
+    assert result.phase == "RECOVERY_REQUIRED"
+    assert calls.count("POST") == 1
+    assert calls.count("DELETE") == 0
     assert not _runtime_file(tmp_path, "lifecycle.lock").exists()
 
 

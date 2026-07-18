@@ -7,7 +7,12 @@ from typing import Any, Callable, Iterator
 from sqlalchemy import create_engine, or_, select
 from sqlalchemy.orm import Session
 
-from infrastructure.persistence.execution_orm import ProtectivePairORM
+from infrastructure.persistence.execution_orm import ExecutionIntentORM, ExchangeOrderIdentityORM, ProtectivePairORM
+from infrastructure.persistence.protective_lifecycle_persistence import (
+    ProtectiveLifecyclePersistence,
+    TERMINAL_PAIR_STATES,
+    UNRESOLVED_PAIR_STATES,
+)
 from infrastructure.persistence.execution_repositories import (
     SqlAlchemyAuditEventRepository,
     SqlAlchemyKillSwitchStateRepository,
@@ -19,7 +24,8 @@ from models.kill_switch_state import KILL_SWITCH_SCOPE, KillSwitchState
 
 ENVIRONMENT = "BINANCE_FUTURES_TESTNET"
 SYMBOL = "BTCUSDT"
-UNRESOLVED_PAIR_STATES = {"PENDING", "STOP_ACTIVE", "PAIR_ACTIVE", "CANCEL_PENDING", "RECOVERY_REQUIRED"}
+KNOWN_PAIR_STATES = UNRESOLVED_PAIR_STATES | TERMINAL_PAIR_STATES
+KNOWN_INTENT_STATES = {"PERSISTED", "TRANSMITTED", "COMPLETED", "FAILED_SAFE", "RECOVERY_REQUIRED"}
 
 
 class KillSwitchPersistenceError(RuntimeError):
@@ -119,10 +125,61 @@ class KillSwitchPersistence:
             raise KillSwitchPersistenceError("KILL_SWITCH_PERSIST_FAILED") from exc
 
     def has_unresolved_protective_pair(self) -> bool:
+        return self.has_unresolved_recovery()
+
+    def has_unresolved_recovery(self, current_pair_id: str | None = None) -> bool:
+        """Return whether recovery outside the exact active pair blocks mutation."""
         try:
             with self._session() as session:
-                row = session.scalar(
+                ProtectiveLifecyclePersistence(env=self.env).validate_durable_projection_integrity(session)
+                malformed_pair = session.scalar(
                     select(ProtectivePairORM.id)
+                    .where(
+                        or_(
+                            ProtectivePairORM.environment != ENVIRONMENT,
+                            ProtectivePairORM.symbol != SYMBOL,
+                            ~ProtectivePairORM.state.in_(KNOWN_PAIR_STATES),
+                        )
+                    )
+                    .limit(1)
+                )
+                malformed_intent = session.scalar(
+                    select(ExecutionIntentORM.id)
+                    .where(
+                        or_(
+                            ExecutionIntentORM.environment != ENVIRONMENT,
+                            ExecutionIntentORM.symbol != SYMBOL,
+                            ~ExecutionIntentORM.state.in_(KNOWN_INTENT_STATES),
+                        )
+                    )
+                    .limit(1)
+                )
+                malformed_identity = session.scalar(
+                    select(ExchangeOrderIdentityORM.id)
+                    .where(
+                        or_(
+                            ExchangeOrderIdentityORM.environment != ENVIRONMENT,
+                            ExchangeOrderIdentityORM.symbol != SYMBOL,
+                            ~ExchangeOrderIdentityORM.leg_type.in_({"STOP", "TAKE_PROFIT"}),
+                        )
+                    )
+                    .limit(1)
+                )
+                if malformed_pair is not None or malformed_intent is not None or malformed_identity is not None:
+                    raise KillSwitchPersistenceError("PERSISTENCE_STATE_INVALID")
+                recovery_intent = session.scalar(
+                    select(ExecutionIntentORM.id)
+                    .where(
+                        ExecutionIntentORM.environment == ENVIRONMENT,
+                        ExecutionIntentORM.symbol == SYMBOL,
+                        ExecutionIntentORM.state == "RECOVERY_REQUIRED",
+                    )
+                    .limit(1)
+                )
+                if recovery_intent is not None:
+                    return True
+                rows = session.scalars(
+                    select(ProtectivePairORM)
                     .where(
                         ProtectivePairORM.environment == ENVIRONMENT,
                         ProtectivePairORM.symbol == SYMBOL,
@@ -131,9 +188,15 @@ class KillSwitchPersistence:
                             ProtectivePairORM.recovery_required.is_(True),
                         ),
                     )
-                    .limit(1)
+                    .order_by(ProtectivePairORM.created_at.asc(), ProtectivePairORM.id.asc())
+                    .limit(3)
+                ).all()
+                return any(
+                    row.pair_id != current_pair_id
+                    or row.recovery_required
+                    or row.state == "RECOVERY_REQUIRED"
+                    for row in rows
                 )
-                return row is not None
         except Exception as exc:
             raise KillSwitchPersistenceError("PERSISTENCE_UNAVAILABLE") from exc
 

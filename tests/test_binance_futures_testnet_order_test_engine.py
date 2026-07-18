@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from engine.diagnostics.binance_futures_testnet_order_test_engine import BinanceFuturesTestnetOrderTestEngine
 from infrastructure.exchanges.binance_futures_testnet_order_test_client import BinanceOrderTestHTTPResponse
+from infrastructure.persistence.live_execution_authorization_policy import LiveExecutionAuthorizationPolicy
 from models.binance_futures_testnet_order_test import BinanceFuturesTestnetOrderTestConfig
 from tests.kill_switch_test_support import durable_state_env
 
@@ -234,6 +235,203 @@ def test_engaged_durable_kill_switch_blocks_order_test_post_before_transport(tmp
     assert result.status == "FAIL"
     assert result.test_order_request_transmitted is False
     assert calls == []
+
+
+@pytest.mark.parametrize("transition_name", ["kill_switch", "runtime"])
+def test_order_test_rechecks_authorization_immediately_before_signed_post(
+    tmp_path: Path,
+    transition_name: str,
+) -> None:
+    path = _write_config(tmp_path)
+    env = _env()
+    post_calls: list[object] = []
+
+    def transitioning_get(url, timeout):
+        if url.endswith("/fapi/v1/time"):
+            if transition_name == "kill_switch":
+                from infrastructure.persistence.kill_switch_persistence import KillSwitchPersistence
+
+                persistence = KillSwitchPersistence(env=env)
+                persistence.ensure_available()
+                persistence.engage()
+                persistence.close()
+            else:
+                Path(env["ICT_LIVE_EXECUTION_RUNTIME_CONFIG"]).write_text(
+                    json.dumps({"live_trading_enabled": False, "dry_run": False}), encoding="utf-8"
+                )
+        return _http_get(url, timeout)
+
+    def forbidden_post(*args, **kwargs):
+        post_calls.append((args, kwargs))
+        raise AssertionError("final authorization denial must precede signing and POST")
+
+    result = _engine(
+        tmp_path,
+        env=env,
+        http_get=transitioning_get,
+        authenticated_post=forbidden_post,
+        now_ms_provider=lambda: 123,
+    ).submit_test_order(
+        "smcbot-test-boundary-001",
+        "BUY",
+        "MARKET",
+        0.001,
+        confirmation="CONFIRM_TESTNET_ORDER_TEST",
+        config_path=str(path),
+    )
+
+    expected = "KILL_SWITCH_ENGAGED" if transition_name == "kill_switch" else "LIVE_TRADING_DISABLED"
+    assert result.status == "FAIL"
+    assert result.decision == expected
+    assert result.reason == LiveExecutionAuthorizationPolicy.SAFE_MESSAGES[expected]
+    assert any(issue.name == expected.lower() and issue.message == result.reason for issue in result.issues)
+    assert post_calls == []
+    assert result.signature_generated is False
+    assert result.test_order_request_transmitted is False
+    assert result.signed_url_exposed is False
+    assert result.api_key_exposed is False
+
+
+def test_order_test_sanitizes_hostile_policy_provider_failure(tmp_path: Path) -> None:
+    hostile = "postgresql://user:secret@ connectionString SELECT * FROM traceback X-MBX-APIKEY signed-url rawResponse Authorization secret-token"
+
+    def hostile_factory(**kwargs):
+        raise RuntimeError(hostile)
+
+    path = _write_config(tmp_path)
+    env = _env()
+    policy = LiveExecutionAuthorizationPolicy(env=env, persistence_factory=hostile_factory)
+    post_calls: list[object] = []
+    result = _engine(
+        tmp_path,
+        env=env,
+        authorization_policy=policy,
+        authenticated_post=lambda *args, **kwargs: post_calls.append((args, kwargs)),
+    ).submit_test_order(
+        "smcbot-test-hostile-001",
+        "BUY",
+        "MARKET",
+        0.001,
+        confirmation="CONFIRM_TESTNET_ORDER_TEST",
+        config_path=str(path),
+    )
+    rendered = str(result.to_dict())
+    assert result.status == "FAIL"
+    assert post_calls == []
+    for marker in hostile.split():
+        assert marker not in rendered
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("runtime", "EXECUTION_POLICY_UNAVAILABLE"),
+        ("factory", "PERSISTENCE_UNAVAILABLE"),
+        ("ensure", "PERSISTENCE_UNAVAILABLE"),
+        ("kill_switch", "KILL_SWITCH_STATE_UNAVAILABLE"),
+        ("recovery", "PERSISTENCE_UNAVAILABLE"),
+        ("close", "PERSISTENCE_UNAVAILABLE"),
+    ],
+)
+def test_actual_order_test_engine_sanitizes_policy_provider_failures(
+    tmp_path: Path,
+    caplog,
+    source: str,
+    expected: str,
+) -> None:
+    hostile = "postgresql://user:secret@ connectionString SELECT * FROM traceback X-MBX-APIKEY signed-url rawResponse Authorization secret-token"
+
+    class RuntimeProvider:
+        def load(self, config_path: str):
+            if source == "runtime":
+                raise RuntimeError(hostile)
+            return True, False
+
+    class Persistence:
+        def __init__(self, **kwargs):
+            if source == "factory":
+                raise RuntimeError(hostile)
+
+        def ensure_available(self):
+            if source == "ensure":
+                raise RuntimeError(hostile)
+
+        def has_unresolved_recovery(self, current_pair_id=None):
+            if source == "recovery":
+                raise RuntimeError(hostile)
+            return False
+
+        def close(self):
+            if source == "close":
+                raise RuntimeError(hostile)
+
+    class Gate:
+        def require_released(self):
+            if source == "kill_switch":
+                raise RuntimeError(hostile)
+
+    def factory(**kwargs):
+        return Persistence(**kwargs)
+
+    env = _env()
+    policy = LiveExecutionAuthorizationPolicy(
+        env=env,
+        runtime_provider=RuntimeProvider(),
+        kill_switch_gate=Gate(),
+        persistence_factory=factory,
+    )
+    post_calls: list[object] = []
+    result = _engine(
+        tmp_path,
+        env=env,
+        authorization_policy=policy,
+        authenticated_post=lambda *args, **kwargs: post_calls.append((args, kwargs)),
+    ).submit_test_order(
+        "smcbot-test-provider-001",
+        "BUY",
+        "MARKET",
+        0.001,
+        confirmation="CONFIRM_TESTNET_ORDER_TEST",
+        config_path=str(_write_config(tmp_path)),
+    )
+
+    rendered = json.dumps(result.to_dict(), sort_keys=True)
+    assert result.decision == expected
+    assert result.reason == LiveExecutionAuthorizationPolicy.SAFE_MESSAGES[expected]
+    assert post_calls == []
+    assert result.signature_generated is False
+    assert result.signed_url_exposed is False
+    assert result.api_key_exposed is False
+    assert hostile not in caplog.text
+    for marker in hostile.split():
+        assert marker not in rendered
+
+
+def test_actual_order_test_engine_sanitizes_credential_readiness_failure(tmp_path: Path, caplog) -> None:
+    hostile = "postgresql://user:secret@ connectionString SELECT * FROM traceback X-MBX-APIKEY signed-url rawResponse Authorization secret-token"
+
+    class CredentialFailureClient:
+        def inspect_credentials(self):
+            raise RuntimeError(hostile)
+
+    engine = _engine(tmp_path, env=_env(), authenticated_post=lambda *args, **kwargs: pytest.fail("POST forbidden"))
+    engine._client = lambda config: CredentialFailureClient()
+
+    result = engine.submit_test_order(
+        "smcbot-test-credential-001",
+        "BUY",
+        "MARKET",
+        0.001,
+        confirmation="CONFIRM_TESTNET_ORDER_TEST",
+        config_path=str(_write_config(tmp_path)),
+    )
+
+    rendered = json.dumps(result.to_dict(), sort_keys=True)
+    assert result.decision == "CREDENTIALS_UNAVAILABLE"
+    assert result.reason == "Testnet credential readiness is unavailable."
+    assert hostile not in caplog.text
+    for marker in hostile.split():
+        assert marker not in rendered
 
 
 def test_confirmed_mock_test_order_is_accepted_without_actual_order_flags(tmp_path: Path) -> None:
