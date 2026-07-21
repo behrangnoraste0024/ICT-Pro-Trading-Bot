@@ -18,7 +18,8 @@ from infrastructure.exchanges.binance_futures_testnet_order_test_client import (
     BinanceFuturesTestnetOrderOperationBlocked,
     BinanceFuturesTestnetOrderTestClient,
 )
-from infrastructure.persistence.kill_switch_gate import DurableKillSwitchGate, KillSwitchGateError
+from infrastructure.persistence.live_execution_authorization_policy import LiveExecutionAuthorizationPolicy
+from models.live_execution_authorization import LiveExecutionOperation
 from models.binance_futures_testnet_order_test import (
     BinanceFuturesTestnetExchangeFilterSummary,
     BinanceFuturesTestnetOrderTestAction,
@@ -32,6 +33,13 @@ from models.binance_futures_testnet_order_test import (
     BinanceFuturesTestnetOrderTestValidationReport,
     OrderTestReferencePriceSource,
 )
+
+
+class OrderTestAuthorizationAbort(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(code)
+        self.code = code
+        self.message = message
 
 
 class BinanceFuturesTestnetOrderTestEngine:
@@ -52,6 +60,7 @@ class BinanceFuturesTestnetOrderTestEngine:
         now_ms_provider=None,
         now_provider=None,
         kill_switch_gate=None,
+        authorization_policy=None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.runtime_config_engine = runtime_config_engine or BTCPaperRuntimeConfigEngine(repo_root=self.repo_root)
@@ -67,13 +76,22 @@ class BinanceFuturesTestnetOrderTestEngine:
         self.env = {} if env is None else env
         self.now_ms_provider = now_ms_provider
         self.now_provider = now_provider
-        self.kill_switch_gate = kill_switch_gate or DurableKillSwitchGate(env=self.env)
+        self.authorization_policy = authorization_policy or LiveExecutionAuthorizationPolicy(
+            repo_root=self.repo_root,
+            env=self.env,
+            kill_switch_gate=kill_switch_gate,
+        )
 
     def _require_mutation_permission(self) -> None:
-        try:
-            self.kill_switch_gate.require_released()
-        except KillSwitchGateError as exc:
-            raise RuntimeError(exc.code) from exc
+        decision = self.authorization_policy.authorize(
+            LiveExecutionOperation.SIGNED_ORDER_TEST_CREATE,
+            environment="TESTNET",
+            symbol="BTCUSDT",
+            confirmation_verified=True,
+            credentials_configured=True,
+        )
+        if not decision.allowed:
+            raise OrderTestAuthorizationAbort(decision.code, decision.message)
 
     def validate(self, config_path: str = "configs/binance_futures_testnet_order_test.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetOrderTestValidationReport:
         issues: list[BinanceFuturesTestnetOrderTestIssue] = []
@@ -160,7 +178,10 @@ class BinanceFuturesTestnetOrderTestEngine:
         if config.require_explicit_network_confirmation and confirmation != config.network_confirmation_phrase:
             return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "WARNING", BinanceFuturesTestnetOrderTestDecision.NETWORK_CONFIRMATION_REQUIRED.value, "Explicit testnet order-test confirmation is required.", issues=issues)
         client = self._client(config)
-        metadata = client.inspect_credentials()
+        try:
+            metadata = client.inspect_credentials()
+        except Exception:
+            return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", "CREDENTIALS_UNAVAILABLE", "Testnet credential readiness is unavailable.", issues=issues)
         if not metadata.credentials_complete:
             decision = BinanceFuturesTestnetOrderTestDecision.CREDENTIALS_INCOMPLETE.value if metadata.api_key_present or metadata.api_secret_present else BinanceFuturesTestnetOrderTestDecision.CREDENTIALS_NOT_CONFIGURED.value
             return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "WARNING", decision, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, credentials_inspected=True)
@@ -170,7 +191,11 @@ class BinanceFuturesTestnetOrderTestEngine:
             mark_price = client.fetch_mark_price(config.exchange_symbol) if str(order_type).upper() == "MARKET" else None
             preview = client.build_order_test_preview(client_order_id, side, order_type, quantity, price, time_in_force, reduce_only, exchange_filters=filters, mark_price=mark_price)
             server = self._server_time_or_issue(client, config, issues)
+            self._require_mutation_permission()
             request_metadata = client.submit_test_order(preview, server)
+        except OrderTestAuthorizationAbort as exc:
+            issues.append(self._issue(exc.code.lower(), "FAIL", exc.message))
+            return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", exc.code, exc.message, credential_metadata=metadata, issues=issues, credentials_inspected=True)
         except Exception as exc:
             issues.append(self._issue("order_test_request_failed", "FAIL", self._sanitize(str(exc))))
             return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", BinanceFuturesTestnetOrderTestDecision.ORDER_TEST_REJECTED.value, "Test Order request failed safely.", credential_metadata=metadata, issues=issues, credentials_inspected=True, public_exchange_info_request_used=True)

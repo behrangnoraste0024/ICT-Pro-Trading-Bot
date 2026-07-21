@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import parse_qs
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import pytest
 from sqlalchemy import Column, MetaData, String, Table, create_engine, event, select
@@ -26,13 +26,17 @@ from infrastructure.persistence.execution_orm import (
 from infrastructure.persistence.protective_lifecycle_persistence import ProtectiveLifecyclePersistence
 from infrastructure.persistence.protective_lifecycle_persistence import ProtectivePersistenceError
 from infrastructure.persistence.kill_switch_persistence import KillSwitchPersistence
+from infrastructure.persistence.live_execution_authorization_policy import LiveExecutionAuthorizationPolicy
 from infrastructure.persistence.schema_contract import PERSISTENCE_REVISION
 from models.binance_futures_testnet_protective_orders import (
+    BinanceFuturesTestnetProtectiveAlgoSummary,
     BinanceFuturesTestnetProtectiveJournal,
     BinanceFuturesTestnetProtectiveOrdersConfig,
     ProtectiveMutationIntent,
 )
 from models.execution_persistence import ExchangeOrderIdentity, ExecutionIntent, ProtectivePair
+from models.live_execution_authorization import LiveExecutionOperation
+from tests.kill_switch_test_support import authorized_runtime_env
 
 PAIR_ID = "pair-001"
 STOP_ID = "smcbot-protect-sl-001"
@@ -65,7 +69,7 @@ def _env(database_url: str | None) -> dict[str, str]:
     }
     if database_url is not None:
         env["ICT_DATABASE_URL"] = database_url
-    return env
+    return authorized_runtime_env(env)
 
 
 def _config(tmp_path: Path) -> Path:
@@ -164,6 +168,26 @@ def _run(tmp_path: Path, database_url: str | None, transport=None):
     return result, transport
 
 
+def _run_fresh(tmp_path: Path, database_url: str, pair_id: str, transport=None):
+    transport = LifecycleTransport() if transport is None else transport
+    token = uuid5(NAMESPACE_URL, pair_id).hex[:8]
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(
+        repo_root=tmp_path,
+        env=_env(database_url),
+        http_get=_http_get,
+        authenticated_request=transport,
+        now_ms_provider=lambda: 1000,
+        persistence_factory=ProtectiveLifecyclePersistence,
+    ).run_protective_lifecycle(
+        pair_id,
+        f"smcbot-protect-sl-{token}",
+        f"smcbot-protect-tp-{token}",
+        confirmation=CONFIRMATION,
+        config_path=str(_config(tmp_path)),
+    )
+    return result, transport
+
+
 def _db_snapshot(database_engine) -> dict[str, list[tuple]]:
     models = (ExecutionIntentORM, ProtectivePairORM, ExchangeOrderIdentityORM, AuditEventORM, RecoveryEventORM)
 
@@ -187,15 +211,85 @@ def _db_snapshot(database_engine) -> dict[str, list[tuple]]:
     return snapshot
 
 
+def _runtime_snapshot(tmp_path: Path) -> dict[str, bytes]:
+    runtime_dir = tmp_path / "data" / "runtime" / "binance_futures_testnet_protective_orders"
+    if not runtime_dir.exists():
+        return {}
+    return {
+        str(path.relative_to(runtime_dir)): path.read_bytes()
+        for path in sorted(runtime_dir.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _assert_global_integrity_blocks_fresh_lifecycle(
+    tmp_path: Path,
+    database_url: str,
+    database_engine,
+    *,
+    suffix: str,
+) -> None:
+    before_database = _db_snapshot(database_engine)
+    before_runtime = _runtime_snapshot(tmp_path)
+    transport = LifecycleTransport()
+
+    result, _ = _run_fresh(tmp_path, database_url, f"pair-global-integrity-{suffix}", transport)
+
+    assert result.decision == "PERSISTENCE_UNAVAILABLE"
+    assert [method for method, _ in transport.calls].count("POST") == 0
+    assert [method for method, _ in transport.calls].count("DELETE") == 0
+    assert _db_snapshot(database_engine) == before_database
+    assert _runtime_snapshot(tmp_path) == before_runtime
+    runtime_dir = tmp_path / "data" / "runtime" / "binance_futures_testnet_protective_orders"
+    assert not (runtime_dir / "protective.lock").exists()
+
+
 def test_persistence_unavailable_blocks_before_transport_journal_and_lock(tmp_path: Path) -> None:
     def no_transport(*args, **kwargs):
         raise AssertionError("persistence failure must precede authenticated transport")
 
     result, _ = _run(tmp_path, None, no_transport)
 
-    assert result.decision == "KILL_SWITCH_STATE_UNAVAILABLE"
+    assert result.decision == "PERSISTENCE_UNAVAILABLE"
     assert not (tmp_path / "data" / "runtime" / "binance_futures_testnet_protective_orders" / "protective.json").exists()
     assert not (tmp_path / "data" / "runtime" / "binance_futures_testnet_protective_orders" / "protective.lock").exists()
+
+
+def test_protective_create_sanitizes_hostile_policy_provider_failure(tmp_path: Path, caplog) -> None:
+    database_url, database_engine = _database(tmp_path)
+    env = _env(database_url)
+    hostile = "postgresql://user:secret@ connectionString SELECT * FROM traceback X-MBX-APIKEY signed-url rawResponse Authorization secret-token"
+
+    def hostile_factory(**kwargs):
+        raise RuntimeError(hostile)
+
+    transport = LifecycleTransport()
+    before = _db_snapshot(database_engine)
+    policy = LiveExecutionAuthorizationPolicy(env=env, persistence_factory=hostile_factory)
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(
+        repo_root=tmp_path,
+        env=env,
+        http_get=_http_get,
+        authenticated_request=transport,
+        authorization_policy=policy,
+        persistence_factory=ProtectiveLifecyclePersistence,
+    ).run_protective_lifecycle(
+        PAIR_ID,
+        STOP_ID,
+        TP_ID,
+        confirmation=CONFIRMATION,
+        config_path=str(_config(tmp_path)),
+    )
+    rendered = str(result.to_dict())
+    assert result.decision == "PERSISTENCE_UNAVAILABLE"
+    assert transport.calls == []
+    assert _db_snapshot(database_engine) == before
+    runtime_dir = tmp_path / "data/runtime/binance_futures_testnet_protective_orders"
+    assert not (runtime_dir / "protective.json").exists()
+    assert not (runtime_dir / "protective.lock").exists()
+    assert hostile not in caplog.text
+    for marker in hostile.split():
+        assert marker not in rendered
 
 
 def test_successful_lifecycle_persists_exact_state_transitions_and_identities(tmp_path: Path) -> None:
@@ -254,7 +348,7 @@ def test_db_only_unresolved_pair_blocks_without_exchange_or_journal_change(tmp_p
 
     result, _ = _run(tmp_path, database_url, transport)
 
-    assert result.decision == "PERSISTENCE_DB_ONLY_UNRESOLVED"
+    assert result.decision == "RECOVERY_REQUIRED"
     assert transport.calls == []
     assert not (tmp_path / "data" / "runtime" / "binance_futures_testnet_protective_orders" / "protective.json").exists()
     database_engine.dispose()
@@ -320,7 +414,7 @@ def test_schema_revision_mismatch_blocks_without_authenticated_transport(tmp_pat
 
     result, _ = _run(tmp_path, database_url, transport)
 
-    assert result.decision == "KILL_SWITCH_STATE_UNAVAILABLE"
+    assert result.decision == "PERSISTENCE_UNAVAILABLE"
     assert calls == []
 
 
@@ -561,8 +655,519 @@ def test_multiple_unresolved_pairs_block_fresh_lifecycle(tmp_path: Path) -> None
 
     result, _ = _run(tmp_path, database_url, transport)
 
-    assert result.decision == "PERSISTENCE_MULTIPLE_UNRESOLVED"
+    assert result.decision == "RECOVERY_REQUIRED"
     assert transport.calls == []
+
+
+def _seed_terminal_pair(
+    coordinator: ProtectiveLifecyclePersistence,
+    database_engine,
+    *,
+    pair_id: str,
+    recovery_required: bool,
+) -> None:
+    from models.binance_futures_testnet_protective_orders import BinanceFuturesTestnetProtectivePosition, BinanceFuturesTestnetProtectivePreview
+
+    position = BinanceFuturesTestnetProtectivePosition(
+        position_amt=Decimal("0.001"), mark_price=Decimal("50000"), direction="LONG", position_side="BOTH"
+    )
+    token = uuid5(NAMESPACE_URL, pair_id).hex[:8]
+    preview = BinanceFuturesTestnetProtectivePreview(
+        pair_id=pair_id,
+        position_amount=position.position_amt,
+        mark_price=position.mark_price,
+        position_direction="LONG",
+        protective_side="SELL",
+        stop_client_algo_id=f"smcbot-protect-sl-{token}",
+        take_profit_client_algo_id=f"smcbot-protect-tp-{token}",
+        stop_trigger=Decimal("45000"),
+        take_profit_trigger=Decimal("55000"),
+    )
+    state = coordinator.prepare_lifecycle(
+        preview.pair_id,
+        preview.stop_client_algo_id,
+        preview.take_profit_client_algo_id,
+        position,
+        preview,
+    )
+    coordinator.mark_create_transmitted(state)
+    coordinator.confirm_create(state, "STOP", BinanceFuturesTestnetProtectiveAlgoSummary(
+        symbol="BTCUSDT", client_algo_id=preview.stop_client_algo_id, algo_id=f"{token}1",
+        actual_order_id=f"{token}01", trigger_price=preview.stop_trigger, algo_status="NEW",
+    ))
+    coordinator.confirm_create(state, "TAKE_PROFIT", BinanceFuturesTestnetProtectiveAlgoSummary(
+        symbol="BTCUSDT", client_algo_id=preview.take_profit_client_algo_id, algo_id=f"{token}2",
+        actual_order_id=f"{token}02", trigger_price=preview.take_profit_trigger, algo_status="NEW",
+    ))
+    coordinator.prepare_cancel(state, "TAKE_PROFIT", position.position_amt, position.mark_price)
+    coordinator.mark_cancel_transmitted(state, "TAKE_PROFIT")
+    coordinator.confirm_delete(state, "TAKE_PROFIT", "ABSENT", complete=False)
+    coordinator.prepare_cancel(state, "STOP", position.position_amt, position.mark_price)
+    coordinator.mark_cancel_transmitted(state, "STOP")
+    coordinator.confirm_delete(state, "STOP", "ABSENT", complete=True)
+    if recovery_required:
+        with database_engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE protective_pairs SET recovery_required=1 WHERE pair_id=?",
+                (pair_id,),
+            )
+
+
+def _seed_pair_active(
+    coordinator: ProtectiveLifecyclePersistence,
+    *,
+    pair_id: str,
+) -> None:
+    from models.binance_futures_testnet_protective_orders import (
+        BinanceFuturesTestnetProtectivePosition,
+        BinanceFuturesTestnetProtectivePreview,
+    )
+
+    position = BinanceFuturesTestnetProtectivePosition(
+        position_amt=Decimal("0.001"), mark_price=Decimal("50000"), direction="LONG", position_side="BOTH"
+    )
+    token = uuid5(NAMESPACE_URL, pair_id).hex[:8]
+    preview = BinanceFuturesTestnetProtectivePreview(
+        pair_id=pair_id,
+        position_amount=position.position_amt,
+        mark_price=position.mark_price,
+        position_direction="LONG",
+        protective_side="SELL",
+        stop_client_algo_id=f"smcbot-protect-sl-{token}",
+        take_profit_client_algo_id=f"smcbot-protect-tp-{token}",
+        stop_trigger=Decimal("45000"),
+        take_profit_trigger=Decimal("55000"),
+    )
+    state = coordinator.prepare_lifecycle(
+        preview.pair_id,
+        preview.stop_client_algo_id,
+        preview.take_profit_client_algo_id,
+        position,
+        preview,
+    )
+    coordinator.mark_create_transmitted(state)
+    coordinator.confirm_create(
+        state,
+        "STOP",
+        BinanceFuturesTestnetProtectiveAlgoSummary(
+            symbol="BTCUSDT",
+            client_algo_id=preview.stop_client_algo_id,
+            algo_id=f"{token}1",
+            actual_order_id=f"{token}01",
+            trigger_price=preview.stop_trigger,
+            algo_status="NEW",
+        ),
+    )
+    coordinator.confirm_create(
+        state,
+        "TAKE_PROFIT",
+        BinanceFuturesTestnetProtectiveAlgoSummary(
+            symbol="BTCUSDT",
+            client_algo_id=preview.take_profit_client_algo_id,
+            algo_id=f"{token}2",
+            actual_order_id=f"{token}02",
+            trigger_price=preview.take_profit_trigger,
+            algo_status="NEW",
+        ),
+    )
+
+
+def test_fresh_protective_preflight_blocks_unrelated_terminal_recovery_required_pair_before_persistence(tmp_path: Path) -> None:
+    database_url, database_engine = _database(tmp_path)
+    coordinator = ProtectiveLifecyclePersistence(env=_env(database_url))
+    coordinator.ensure_available()
+    _seed_terminal_pair(coordinator, database_engine, pair_id="pair-terminal-recovery", recovery_required=True)
+    coordinator.close()
+    before = _db_snapshot(database_engine)
+    runtime_dir = tmp_path / "data/runtime/binance_futures_testnet_protective_orders"
+    directory_before = sorted(path.name for path in runtime_dir.glob("*")) if runtime_dir.exists() else []
+    transport = LifecycleTransport()
+
+    result, _ = _run(tmp_path, database_url, transport)
+
+    assert result.decision == "RECOVERY_REQUIRED"
+    assert result.journal is None
+    assert transport.calls == []
+    assert _db_snapshot(database_engine) == before
+    directory_after = sorted(path.name for path in runtime_dir.glob("*")) if runtime_dir.exists() else []
+    assert directory_after == directory_before
+    assert not (runtime_dir / "protective.json").exists()
+    assert not (runtime_dir / "protective.lock").exists()
+
+
+def test_clean_terminal_pair_does_not_block_fresh_mutation_preflight(tmp_path: Path) -> None:
+    database_url, database_engine = _database(tmp_path)
+    coordinator = ProtectiveLifecyclePersistence(env=_env(database_url))
+    coordinator.ensure_available()
+    _seed_terminal_pair(coordinator, database_engine, pair_id="pair-terminal-clean", recovery_required=False)
+    coordinator.close()
+
+    result, transport = _run(tmp_path, database_url)
+
+    assert result.status == "PASS"
+    assert [method for method, _ in transport.calls].count("POST") == 2
+
+
+def test_recovery_scope_blocks_current_pair_and_allows_clean_terminal_pair(tmp_path: Path) -> None:
+    database_url, database_engine = _database(tmp_path)
+    coordinator = ProtectiveLifecyclePersistence(env=_env(database_url))
+    coordinator.ensure_available()
+    _seed_terminal_pair(coordinator, database_engine, pair_id="pair-current-recovery", recovery_required=True)
+    coordinator.close()
+    policy_state = KillSwitchPersistence(env={"ICT_DATABASE_URL": database_url})
+    policy_state.ensure_available()
+    assert policy_state.has_unresolved_recovery("pair-current-recovery") is True
+    policy_state.close()
+
+    with database_engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE protective_pairs SET recovery_required=0 WHERE pair_id='pair-current-recovery'"
+        )
+    policy_state = KillSwitchPersistence(env={"ICT_DATABASE_URL": database_url})
+    policy_state.ensure_available()
+    assert policy_state.has_unresolved_recovery("pair-current-recovery") is False
+    assert policy_state.has_unresolved_recovery() is False
+    policy_state.close()
+
+
+def test_malformed_persisted_scope_fails_closed_before_fresh_mutation(tmp_path: Path) -> None:
+    database_url, database_engine = _database(tmp_path)
+    coordinator = ProtectiveLifecyclePersistence(env=_env(database_url))
+    coordinator.ensure_available()
+    _seed_terminal_pair(coordinator, database_engine, pair_id="pair-malformed-scope", recovery_required=False)
+    coordinator.close()
+    with database_engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE protective_pairs SET symbol='ETHUSDT' WHERE pair_id='pair-malformed-scope'"
+        )
+    before = _db_snapshot(database_engine)
+    transport = LifecycleTransport()
+
+    result, _ = _run(tmp_path, database_url, transport)
+
+    assert result.decision == "PERSISTENCE_UNAVAILABLE"
+    assert transport.calls == []
+    assert _db_snapshot(database_engine) == before
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ["pair_correlation", "wrong_execution_intent", "invalid_identity_status", "client_id_relationship"],
+)
+def test_fresh_preflight_rejects_malformed_durable_ownership_without_side_effects(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    database_url, database_engine = _database(tmp_path)
+    completed, _ = _run(tmp_path, database_url)
+    assert completed.status == "PASS"
+    if corruption == "wrong_execution_intent":
+        coordinator = ProtectiveLifecyclePersistence(env=_env(database_url))
+        coordinator.ensure_available()
+        _seed_terminal_pair(coordinator, database_engine, pair_id="pair-other-owner", recovery_required=False)
+        coordinator.close()
+    with database_engine.begin() as connection:
+        if corruption == "pair_correlation":
+            connection.exec_driver_sql(
+                "UPDATE protective_pairs SET correlation_id='00000000000000000000000000000001' WHERE pair_id=?",
+                (PAIR_ID,),
+            )
+        elif corruption == "wrong_execution_intent":
+            connection.exec_driver_sql(
+                "UPDATE protective_pairs SET execution_intent_id=(SELECT execution_intent_id FROM protective_pairs WHERE pair_id='pair-other-owner') WHERE pair_id=?",
+                (PAIR_ID,),
+            )
+        elif corruption == "invalid_identity_status":
+            connection.exec_driver_sql(
+                "UPDATE exchange_order_identities SET status='UNKNOWN_UNSAFE' WHERE leg_type='STOP' AND protective_pair_id=(SELECT id FROM protective_pairs WHERE pair_id=?)",
+                (PAIR_ID,),
+            )
+        else:
+            connection.exec_driver_sql(
+                "UPDATE exchange_order_identities SET client_algo_id='smcbot-protect-unrelated' WHERE leg_type='STOP' AND protective_pair_id=(SELECT id FROM protective_pairs WHERE pair_id=?)",
+                (PAIR_ID,),
+            )
+    before = _db_snapshot(database_engine)
+    runtime_dir = tmp_path / "data/runtime/binance_futures_testnet_protective_orders"
+    directory_before = sorted(path.name for path in runtime_dir.glob("*"))
+    transport = LifecycleTransport()
+
+    result, _ = _run_fresh(tmp_path, database_url, f"pair-fresh-{corruption}", transport)
+
+    assert result.decision == "PERSISTENCE_UNAVAILABLE"
+    assert transport.calls == []
+    assert _db_snapshot(database_engine) == before
+    assert sorted(path.name for path in runtime_dir.glob("*")) == directory_before
+    assert not (runtime_dir / "protective.lock").exists()
+
+
+def test_fresh_preflight_rejects_wrong_identity_owner_without_side_effects(tmp_path: Path) -> None:
+    database_url, database_engine = _database(tmp_path)
+    completed, _ = _run(tmp_path, database_url)
+    assert completed.status == "PASS"
+    coordinator = ProtectiveLifecyclePersistence(env=_env(database_url))
+    coordinator.ensure_available()
+    _seed_terminal_pair(coordinator, database_engine, pair_id="pair-identity-owner", recovery_required=False)
+    coordinator.close()
+    with database_engine.begin() as connection:
+        connection.exec_driver_sql(
+            "DELETE FROM exchange_order_identities WHERE leg_type='STOP' AND protective_pair_id=(SELECT id FROM protective_pairs WHERE pair_id='pair-identity-owner')"
+        )
+        connection.exec_driver_sql(
+            "UPDATE exchange_order_identities SET protective_pair_id=(SELECT id FROM protective_pairs WHERE pair_id='pair-identity-owner') WHERE leg_type='STOP' AND protective_pair_id=(SELECT id FROM protective_pairs WHERE pair_id=?)",
+            (PAIR_ID,),
+        )
+    before = _db_snapshot(database_engine)
+    transport = LifecycleTransport()
+
+    result, _ = _run_fresh(tmp_path, database_url, "pair-fresh-wrong-owner", transport)
+
+    assert result.decision == "PERSISTENCE_UNAVAILABLE"
+    assert transport.calls == []
+    assert _db_snapshot(database_engine) == before
+    assert not (tmp_path / "data/runtime/binance_futures_testnet_protective_orders/protective.lock").exists()
+
+
+def test_corrupted_current_pair_id_cannot_suppress_projection_validation(tmp_path: Path) -> None:
+    database_url, database_engine = _database(tmp_path)
+    completed, _ = _run(tmp_path, database_url)
+    assert completed.status == "PASS"
+    with database_engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE exchange_order_identities SET status='INVALID' WHERE leg_type='STOP'"
+        )
+    before = _db_snapshot(database_engine)
+    policy = LiveExecutionAuthorizationPolicy(env=_env(database_url))
+
+    decision = policy.authorize(
+        LiveExecutionOperation.PROTECTIVE_CANCEL,
+        environment="TESTNET",
+        symbol="BTCUSDT",
+        confirmation_verified=True,
+        credentials_configured=True,
+        current_pair_id=PAIR_ID,
+    )
+
+    assert decision.code == "PERSISTENCE_UNAVAILABLE"
+    assert _db_snapshot(database_engine) == before
+
+
+def _assert_completed_pair_missing_identity_blocks(
+    tmp_path: Path,
+    *,
+    leg_type: str,
+    suffix: str,
+) -> None:
+    database_url, database_engine = _database(tmp_path)
+    coordinator = ProtectiveLifecyclePersistence(env=_env(database_url))
+    coordinator.ensure_available()
+    _seed_terminal_pair(
+        coordinator,
+        database_engine,
+        pair_id=f"pair-{suffix}",
+        recovery_required=False,
+    )
+    coordinator.close()
+    with database_engine.begin() as connection:
+        connection.exec_driver_sql(
+            "DELETE FROM exchange_order_identities WHERE leg_type=? AND protective_pair_id=(SELECT id FROM protective_pairs WHERE pair_id=?)",
+            (leg_type, f"pair-{suffix}"),
+        )
+
+    _assert_global_integrity_blocks_fresh_lifecycle(
+        tmp_path,
+        database_url,
+        database_engine,
+        suffix=suffix,
+    )
+
+
+def test_global_integrity_rejects_completed_pair_missing_stop_identity_before_fresh_lifecycle(
+    tmp_path: Path,
+) -> None:
+    _assert_completed_pair_missing_identity_blocks(
+        tmp_path,
+        leg_type="STOP",
+        suffix="missing-stop",
+    )
+
+
+def test_global_integrity_rejects_completed_pair_missing_take_profit_identity_before_fresh_lifecycle(
+    tmp_path: Path,
+) -> None:
+    _assert_completed_pair_missing_identity_blocks(
+        tmp_path,
+        leg_type="TAKE_PROFIT",
+        suffix="missing-take-profit",
+    )
+
+
+def test_global_integrity_rejects_pair_active_missing_expected_identity(tmp_path: Path) -> None:
+    database_url, database_engine = _database(tmp_path)
+    coordinator = ProtectiveLifecyclePersistence(env=_env(database_url))
+    coordinator.ensure_available()
+    _seed_pair_active(coordinator, pair_id="pair-active-missing-stop")
+    coordinator.close()
+    with database_engine.begin() as connection:
+        connection.exec_driver_sql(
+            "DELETE FROM exchange_order_identities WHERE leg_type='STOP' AND protective_pair_id=(SELECT id FROM protective_pairs WHERE pair_id='pair-active-missing-stop')"
+        )
+
+    _assert_global_integrity_blocks_fresh_lifecycle(
+        tmp_path,
+        database_url,
+        database_engine,
+        suffix="active-missing-stop",
+    )
+
+
+def _assert_orphan_identity_blocks(
+    tmp_path: Path,
+    *,
+    status: str,
+    suffix: str,
+) -> None:
+    database_url, database_engine = _database(tmp_path)
+    now = datetime.now(UTC).isoformat()
+    with database_engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        connection.exec_driver_sql(
+            "INSERT INTO exchange_order_identities (id, protective_pair_id, environment, symbol, leg_type, client_algo_id, exchange_algo_id, exchange_order_id, status, trigger_price, created_at, updated_at, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                uuid4().hex,
+                uuid4().hex,
+                "BINANCE_FUTURES_TESTNET",
+                "BTCUSDT",
+                "STOP",
+                f"smcbot-protect-sl-{suffix}",
+                "orphan-algo",
+                "orphan-order",
+                status,
+                "45000",
+                now,
+                now,
+                1,
+            ),
+        )
+        connection.commit()
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+
+    _assert_global_integrity_blocks_fresh_lifecycle(
+        tmp_path,
+        database_url,
+        database_engine,
+        suffix=suffix,
+    )
+
+
+def test_global_integrity_rejects_orphan_identity_before_fresh_lifecycle(tmp_path: Path) -> None:
+    _assert_orphan_identity_blocks(tmp_path, status="NEW", suffix="orphan-valid")
+
+
+def test_global_integrity_rejects_orphan_identity_with_invalid_status(tmp_path: Path) -> None:
+    _assert_orphan_identity_blocks(tmp_path, status="UNKNOWN_UNSAFE", suffix="orphan-invalid-status")
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "dangling_execution_intent",
+        "pair_intent_environment",
+        "pair_intent_symbol",
+        "identity_environment",
+        "identity_symbol",
+        "swapped_client_ids",
+    ],
+)
+def test_global_integrity_rejects_each_relational_corruption_before_fresh_lifecycle(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    database_url, database_engine = _database(tmp_path)
+    coordinator = ProtectiveLifecyclePersistence(env=_env(database_url))
+    coordinator.ensure_available()
+    _seed_terminal_pair(coordinator, database_engine, pair_id="pair-relational-corruption", recovery_required=False)
+    coordinator.close()
+    with Session(database_engine) as session:
+        identities = list(
+            session.scalars(
+                select(ExchangeOrderIdentityORM)
+                .where(
+                    ExchangeOrderIdentityORM.protective_pair_id
+                    == session.scalar(select(ProtectivePairORM.id).where(ProtectivePairORM.pair_id == "pair-relational-corruption"))
+                )
+                .order_by(ExchangeOrderIdentityORM.leg_type.asc())
+            ).all()
+        )
+    stop_client_id = next(identity.client_algo_id for identity in identities if identity.leg_type == "STOP")
+    take_client_id = next(identity.client_algo_id for identity in identities if identity.leg_type == "TAKE_PROFIT")
+    with database_engine.connect() as connection:
+        if corruption == "dangling_execution_intent":
+            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            connection.exec_driver_sql(
+                "UPDATE protective_pairs SET execution_intent_id=? WHERE pair_id='pair-relational-corruption'",
+                (uuid4().hex,),
+            )
+            connection.commit()
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        elif corruption == "pair_intent_environment":
+            connection.exec_driver_sql(
+                "UPDATE execution_intents SET environment='PRODUCTION' WHERE id=(SELECT execution_intent_id FROM protective_pairs WHERE pair_id='pair-relational-corruption')"
+            )
+            connection.commit()
+        elif corruption == "pair_intent_symbol":
+            connection.exec_driver_sql(
+                "UPDATE execution_intents SET symbol='ETHUSDT' WHERE id=(SELECT execution_intent_id FROM protective_pairs WHERE pair_id='pair-relational-corruption')"
+            )
+            connection.commit()
+        elif corruption == "identity_environment":
+            connection.exec_driver_sql(
+                "UPDATE exchange_order_identities SET environment='PRODUCTION' WHERE leg_type='STOP' AND protective_pair_id=(SELECT id FROM protective_pairs WHERE pair_id='pair-relational-corruption')"
+            )
+            connection.commit()
+        elif corruption == "identity_symbol":
+            connection.exec_driver_sql(
+                "UPDATE exchange_order_identities SET symbol='ETHUSDT' WHERE leg_type='STOP' AND protective_pair_id=(SELECT id FROM protective_pairs WHERE pair_id='pair-relational-corruption')"
+            )
+            connection.commit()
+        else:
+            connection.exec_driver_sql(
+                "UPDATE exchange_order_identities SET client_algo_id='smcbot-protect-swap-temp' WHERE leg_type='STOP' AND protective_pair_id=(SELECT id FROM protective_pairs WHERE pair_id='pair-relational-corruption')"
+            )
+            connection.exec_driver_sql(
+                "UPDATE exchange_order_identities SET client_algo_id=? WHERE leg_type='TAKE_PROFIT' AND protective_pair_id=(SELECT id FROM protective_pairs WHERE pair_id='pair-relational-corruption')",
+                (stop_client_id,),
+            )
+            connection.exec_driver_sql(
+                "UPDATE exchange_order_identities SET client_algo_id=? WHERE leg_type='STOP' AND protective_pair_id=(SELECT id FROM protective_pairs WHERE pair_id='pair-relational-corruption')",
+                (take_client_id,),
+            )
+            connection.commit()
+
+    _assert_global_integrity_blocks_fresh_lifecycle(
+        tmp_path,
+        database_url,
+        database_engine,
+        suffix=corruption,
+    )
+
+
+def test_global_integrity_accepts_complete_two_leg_terminal_projection(tmp_path: Path) -> None:
+    database_url, database_engine = _database(tmp_path)
+    coordinator = ProtectiveLifecyclePersistence(env=_env(database_url))
+    coordinator.ensure_available()
+    _seed_terminal_pair(coordinator, database_engine, pair_id="pair-complete-control", recovery_required=False)
+    coordinator.close()
+
+    decision = LiveExecutionAuthorizationPolicy(env=_env(database_url)).authorize(
+        LiveExecutionOperation.PROTECTIVE_CREATE,
+        environment="TESTNET",
+        symbol="BTCUSDT",
+        confirmation_verified=True,
+        credentials_configured=True,
+    )
+
+    assert decision.allowed is True
 
 
 def test_pre_delete_version_conflict_blocks_delete_and_does_not_retry(tmp_path: Path) -> None:
@@ -590,10 +1195,10 @@ def test_pre_delete_version_conflict_blocks_delete_and_does_not_retry(tmp_path: 
 @pytest.mark.parametrize(
     "mutation,expected_decision",
     [
-        ("correlation", "PERSISTENCE_CORRELATION_MISMATCH"),
-        ("client_ids", "PERSISTENCE_CLIENT_ID_MISMATCH"),
-        ("state", "PERSISTENCE_STATE_MISMATCH"),
-        ("scope", "PERSISTENCE_SCOPE_INVALID"),
+        ("correlation", "PERSISTENCE_UNAVAILABLE"),
+        ("client_ids", "PERSISTENCE_UNAVAILABLE"),
+        ("state", "PERSISTENCE_UNAVAILABLE"),
+        ("scope", "PERSISTENCE_UNAVAILABLE"),
     ],
 )
 def test_database_identity_state_and_scope_mismatches_block_replay(tmp_path: Path, mutation: str, expected_decision: str) -> None:
@@ -855,6 +1460,101 @@ def test_durable_kill_switch_engaged_immediately_before_protective_delete_blocks
     assert consistency.status == "RECOVERY"
     assert consistency.pair_state == "RECOVERY_REQUIRED"
     assert consistency.pair_recovery_required is True
+
+
+def test_runtime_disable_immediately_before_protective_post_blocks_that_boundary(tmp_path: Path) -> None:
+    database_url, database_engine = _database(tmp_path)
+    env = _env(database_url)
+    runtime_path = Path(env["ICT_LIVE_EXECUTION_RUNTIME_CONFIG"])
+    time_calls = 0
+
+    def changing_time(url, timeout):
+        nonlocal time_calls
+        if url.endswith("/fapi/v1/time"):
+            time_calls += 1
+            if time_calls == 2:
+                runtime_path.write_text(
+                    json.dumps({"live_trading_enabled": False, "dry_run": False}), encoding="utf-8"
+                )
+        return _http_get(url, timeout)
+
+    transport = LifecycleTransport()
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(
+        repo_root=tmp_path,
+        env=env,
+        http_get=changing_time,
+        authenticated_request=transport,
+        now_ms_provider=lambda: 1000,
+        persistence_factory=ProtectiveLifecyclePersistence,
+    ).run_protective_lifecycle(
+        PAIR_ID,
+        STOP_ID,
+        TP_ID,
+        confirmation=CONFIRMATION,
+        config_path=str(_config(tmp_path)),
+    )
+
+    assert result.decision == "LIVE_TRADING_DISABLED"
+    assert [method for method, _ in transport.calls].count("POST") == 0
+    assert [method for method, _ in transport.calls].count("DELETE") == 0
+    with Session(database_engine) as session:
+        pair = session.scalar(select(ProtectivePairORM).where(ProtectivePairORM.pair_id == PAIR_ID))
+        identities = list(session.scalars(select(ExchangeOrderIdentityORM)).all())
+    assert pair is not None and pair.state == "RECOVERY_REQUIRED" and pair.recovery_required is True
+    assert identities == []
+
+
+def test_new_unrelated_recovery_evidence_before_protective_delete_blocks_delete_and_keeps_consistency(tmp_path: Path) -> None:
+    database_url, database_engine = _database(tmp_path)
+    env = _env(database_url)
+
+    class RecoveryBeforeDeleteTransport(LifecycleTransport):
+        seeded = False
+
+        def __call__(self, method, url, body, timeout, headers):
+            response = super().__call__(method, url, body, timeout, headers)
+            if "positionRisk" in url and len(self.created) == 2 and not self.seeded:
+                coordinator = ProtectiveLifecyclePersistence(env=env)
+                coordinator.ensure_available()
+                _seed_terminal_pair(
+                    coordinator,
+                    database_engine,
+                    pair_id="pair-unrelated-recovery",
+                    recovery_required=True,
+                )
+                coordinator.close()
+                self.seeded = True
+            return response
+
+    transport = RecoveryBeforeDeleteTransport()
+    result = BinanceFuturesTestnetProtectiveOrdersEngine(
+        repo_root=tmp_path,
+        env=env,
+        http_get=_http_get,
+        authenticated_request=transport,
+        now_ms_provider=lambda: 1000,
+        persistence_factory=ProtectiveLifecyclePersistence,
+    ).run_protective_lifecycle(
+        PAIR_ID,
+        STOP_ID,
+        TP_ID,
+        confirmation=CONFIRMATION,
+        config_path=str(_config(tmp_path)),
+    )
+
+    assert result.decision == "RECOVERY_REQUIRED"
+    assert [method for method, _ in transport.calls].count("POST") == 2
+    assert [method for method, _ in transport.calls].count("DELETE") == 0
+    assert result.journal is not None and result.journal.recovery_required is True
+    persistence = ProtectiveLifecyclePersistence(env=env)
+    persistence.ensure_available()
+    loaded = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path)._load_existing_journal_strict(
+        BinanceFuturesTestnetProtectiveOrdersConfig(), PAIR_ID, STOP_ID, TP_ID
+    )
+    consistency = persistence.check_consistency(loaded, PAIR_ID, STOP_ID, TP_ID)
+    persistence.close()
+    assert consistency.status == "RECOVERY"
+    assert not (tmp_path / "data/runtime/binance_futures_testnet_protective_orders/protective.lock").exists()
     serialized = json.dumps(result.to_dict()).casefold()
     assert all(marker not in serialized for marker in ("unit-test-key", "unit-test-secret", "sqlite://", "postgresql://", "traceback"))
 

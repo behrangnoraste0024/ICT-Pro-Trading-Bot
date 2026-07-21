@@ -627,7 +627,12 @@ def _projection_gap_service(tmp_path: Path, failure_kind: str):
     config_path = tmp_path / "configs/binance_futures_testnet_protective_orders.json"
     config_path.parent.mkdir(parents=True)
     config_path.write_text(json.dumps(config.to_dict()), encoding="utf-8")
-    (config_path.parent / "btc_paper_runtime.json").write_text(json.dumps({"kill_switch_enabled": True}), encoding="utf-8")
+    runtime_path = config_path.parent / "btc_paper_runtime.json"
+    runtime_path.write_text(
+        json.dumps({"kill_switch_enabled": True, "live_trading_enabled": True, "dry_run": False}),
+        encoding="utf-8",
+    )
+    env["ICT_LIVE_EXECUTION_RUNTIME_CONFIG"] = str(runtime_path)
 
     setup_gate = KillSwitchPersistence(env={"ICT_DATABASE_URL": database_url})
     setup_gate.ensure_available()

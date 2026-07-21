@@ -7,10 +7,10 @@ from decimal import Decimal
 from typing import Any, Callable, Iterator
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, or_, select
 from sqlalchemy.orm import Session
 
-from infrastructure.persistence.execution_orm import AuditEventORM, ProtectivePairORM
+from infrastructure.persistence.execution_orm import AuditEventORM, ExchangeOrderIdentityORM, ProtectivePairORM
 from infrastructure.persistence.execution_repositories import (
     SqlAlchemyAuditEventRepository,
     SqlAlchemyExchangeOrderIdentityRepository,
@@ -41,6 +41,8 @@ ENVIRONMENT = "BINANCE_FUTURES_TESTNET"
 SYMBOL = "BTCUSDT"
 UNRESOLVED_PAIR_STATES = {"PENDING", "STOP_ACTIVE", "PAIR_ACTIVE", "CANCEL_PENDING", "RECOVERY_REQUIRED"}
 TERMINAL_PAIR_STATES = {"RECOVERED", "COMPLETED", "FAILED_SAFE"}
+PROTECTIVE_CLIENT_ID_PREFIX = "smcbot-protect-"
+PROTECTIVE_IDENTITY_STATUSES = {"NEW", "ABSENT", "CANCELED", "EXPIRED", "REJECTED"}
 
 
 class ProtectivePersistenceError(RuntimeError):
@@ -170,6 +172,92 @@ class ProtectiveLifecyclePersistence:
             raise
         except Exception as exc:
             raise ProtectivePersistenceError("PERSISTENCE_CONSISTENCY_UNAVAILABLE") from exc
+
+    def validate_durable_projection_integrity(self, session: Session) -> None:
+        """Validate every protective projection without changing durable state."""
+        last_id = None
+        while True:
+            statement = select(ProtectivePairORM).order_by(ProtectivePairORM.id.asc()).limit(50)
+            if last_id is not None:
+                statement = statement.where(ProtectivePairORM.id > last_id)
+            rows = session.scalars(statement).all()
+            if not rows:
+                self._validate_global_identity_owners(session)
+                return
+            for row in rows:
+                pair = SqlAlchemyProtectivePairRepository(session).get_by_id(row.id)
+                if pair is None:
+                    raise ProtectivePersistenceError("PERSISTENCE_PAIR_MISSING")
+                self._validate_pair_scope(pair)
+                audits = session.scalars(
+                    select(AuditEventORM)
+                    .where(
+                        AuditEventORM.correlation_id == pair.correlation_id,
+                        AuditEventORM.action == "INTENT_PERSISTED",
+                    )
+                    .order_by(AuditEventORM.created_at.asc(), AuditEventORM.id.asc())
+                    .limit(2)
+                ).all()
+                if len(audits) != 1 or not isinstance(audits[0].metadata_json, dict):
+                    raise ProtectivePersistenceError("PERSISTENCE_IDENTITY_MISSING")
+                metadata = audits[0].metadata_json
+                stop_id = metadata.get("stop_client_algo_id")
+                take_id = metadata.get("take_profit_client_algo_id")
+                self._validate_protective_client_id(stop_id)
+                self._validate_protective_client_id(take_id)
+                if stop_id == take_id:
+                    raise ProtectivePersistenceError("PERSISTENCE_CLIENT_ID_MISMATCH")
+                self._validate_persisted_ids(
+                    session,
+                    pair,
+                    stop_id,
+                    take_id,
+                    None,
+                    validate_state_matrix=False,
+                    exact_identity_status=False,
+                    validate_cancel_projection=False,
+                )
+            last_id = rows[-1].id
+
+    def _validate_global_identity_owners(self, session: Session) -> None:
+        orphan = session.scalar(
+            select(ExchangeOrderIdentityORM.id)
+            .outerjoin(
+                ProtectivePairORM,
+                ExchangeOrderIdentityORM.protective_pair_id == ProtectivePairORM.id,
+            )
+            .where(ProtectivePairORM.id.is_(None))
+            .limit(1)
+        )
+        if orphan is not None:
+            raise ProtectivePersistenceError("PERSISTENCE_IDENTITY_ORPHANED")
+
+        malformed = session.scalar(
+            select(ExchangeOrderIdentityORM.id)
+            .where(
+                or_(
+                    ExchangeOrderIdentityORM.environment != ENVIRONMENT,
+                    ExchangeOrderIdentityORM.symbol != SYMBOL,
+                    ~ExchangeOrderIdentityORM.leg_type.in_({"STOP", "TAKE_PROFIT"}),
+                    ~ExchangeOrderIdentityORM.status.in_(PROTECTIVE_IDENTITY_STATUSES),
+                )
+            )
+            .limit(1)
+        )
+        if malformed is not None:
+            raise ProtectivePersistenceError("PERSISTENCE_IDENTITY_MISMATCH")
+
+        last_id = None
+        while True:
+            statement = select(ExchangeOrderIdentityORM).order_by(ExchangeOrderIdentityORM.id.asc()).limit(50)
+            if last_id is not None:
+                statement = statement.where(ExchangeOrderIdentityORM.id > last_id)
+            rows = session.scalars(statement).all()
+            if not rows:
+                return
+            for identity in rows:
+                self._validate_protective_client_id(identity.client_algo_id)
+            last_id = rows[-1].id
 
     def prepare_lifecycle(
         self,
@@ -534,6 +622,10 @@ class ProtectiveLifecyclePersistence:
         stop_id: str,
         take_id: str,
         journal: BinanceFuturesTestnetProtectiveJournal | None,
+        *,
+        validate_state_matrix: bool = True,
+        exact_identity_status: bool = True,
+        validate_cancel_projection: bool = True,
     ) -> None:
         state = self._state(pair, stop_id, take_id)
         intent_repo = SqlAlchemyExecutionIntentRepository(session)
@@ -587,8 +679,11 @@ class ProtectiveLifecyclePersistence:
                 select(AuditEventORM)
                 .where(AuditEventORM.correlation_id == pair.correlation_id, AuditEventORM.action == "CREATE_CONFIRMED")
                 .order_by(AuditEventORM.created_at.asc(), AuditEventORM.id.asc())
+                .limit(3)
             ).all()
         )
+        if len(confirmed_rows) > 2:
+            raise ProtectivePersistenceError("PERSISTENCE_IDENTITY_MISMATCH")
         confirmed_by_leg: dict[str, dict[str, Any]] = {}
         for row in confirmed_rows:
             confirmed = row.metadata_json
@@ -607,7 +702,11 @@ class ProtectiveLifecyclePersistence:
             confirmed = confirmed_by_leg.get(identity.leg_type)
             if not isinstance(confirmed, dict):
                 raise ProtectivePersistenceError("PERSISTENCE_IDENTITY_MISSING")
-            expected_status = self._journal_identity_status(journal, identity.leg_type) or confirmed.get("status")
+            expected_status = (
+                self._journal_identity_status(journal, identity.leg_type) or confirmed.get("status")
+                if exact_identity_status
+                else identity.status
+            )
             self._validate_identity(
                 identity,
                 pair.id,
@@ -621,15 +720,18 @@ class ProtectiveLifecyclePersistence:
             )
             if confirmed.get("pair_id") != pair.pair_id or confirmed.get("client_algo_id") != expected or self._required_positive_decimal(confirmed.get("trigger_price")) != trigger:
                 raise ProtectivePersistenceError("PERSISTENCE_IDENTITY_MISMATCH")
-            if not identity.exchange_algo_id or identity.status not in {"NEW", "ABSENT", "CANCELED", "EXPIRED", "REJECTED"}:
+            self._validate_protective_client_id(identity.client_algo_id)
+            if not identity.exchange_algo_id or identity.status not in PROTECTIVE_IDENTITY_STATUSES:
                 raise ProtectivePersistenceError("PERSISTENCE_IDENTITY_MISMATCH")
             by_leg[identity.leg_type] = identity
+
+        self._validate_global_identity_leg_projection(pair, confirmed_by_leg, by_leg)
 
         cancel_intents: dict[str, ExecutionIntent | None] = {}
         for label in ("STOP", "TAKE_PROFIT"):
             cancel_id, _ = self._cancel_identity(state, label)
             cancel_intents[label] = intent_repo.get_by_id(cancel_id)
-            if cancel_intents[label] is not None:
+            if validate_cancel_projection and cancel_intents[label] is not None:
                 cancel_intent = cancel_intents[label]
                 self._validate_cancel_intent(cancel_intent, state, label, pair.quantity, cancel_intent.requested_price)
                 if cancel_intent.requested_price not in {None, create_intent.requested_price}:
@@ -651,7 +753,55 @@ class ProtectiveLifecyclePersistence:
                     raise ProtectivePersistenceError("PERSISTENCE_REPLAY_MISMATCH")
 
         self._validate_journal_projection(journal, pair, state, stop_trigger, take_trigger)
-        self._validate_allowed_state_matrix(journal, pair, create_intent, cancel_intents, by_leg)
+        if validate_state_matrix:
+            self._validate_allowed_state_matrix(journal, pair, create_intent, cancel_intents, by_leg)
+
+    @staticmethod
+    def _validate_global_identity_leg_projection(
+        pair: ProtectivePair,
+        confirmed_by_leg: dict[str, dict[str, Any]],
+        identities_by_leg: dict[str, ExchangeOrderIdentity],
+    ) -> None:
+        confirmed_legs = set(confirmed_by_leg)
+        persisted_legs = set(identities_by_leg)
+        if confirmed_legs != persisted_legs:
+            raise ProtectivePersistenceError("PERSISTENCE_IDENTITY_MISSING")
+
+        terminal_statuses = {"ABSENT", "CANCELED", "EXPIRED", "REJECTED"}
+        expected_both = {"STOP", "TAKE_PROFIT"}
+        if pair.state == "PENDING":
+            valid = not confirmed_legs and not persisted_legs
+        elif pair.state == "STOP_ACTIVE":
+            valid = confirmed_legs == {"STOP"} and identities_by_leg["STOP"].status == "NEW"
+        elif pair.state == "PAIR_ACTIVE":
+            valid = (
+                confirmed_legs == expected_both
+                and all(identities_by_leg[label].status == "NEW" for label in expected_both)
+            )
+        elif pair.state == "CANCEL_PENDING":
+            # A recovery may be cancelling the sole STOP leg after an ambiguous
+            # partial create; fresh mutation is still blocked by this state.
+            valid = confirmed_legs == persisted_legs and persisted_legs in ({"STOP"}, expected_both)
+        elif pair.state == "COMPLETED":
+            valid = (
+                confirmed_legs == expected_both
+                and all(identities_by_leg[label].status in terminal_statuses for label in expected_both)
+            )
+        elif pair.state == "RECOVERY_REQUIRED":
+            valid = pair.recovery_required
+        elif pair.state == "FAILED_SAFE":
+            valid = not confirmed_legs and not persisted_legs
+        else:
+            valid = False
+        if not valid:
+            raise ProtectivePersistenceError("PERSISTENCE_IDENTITY_MISMATCH")
+
+    @staticmethod
+    def _validate_protective_client_id(value: object) -> None:
+        if not isinstance(value, str) or not value.startswith(PROTECTIVE_CLIENT_ID_PREFIX) or len(value) > 36:
+            raise ProtectivePersistenceError("PERSISTENCE_CLIENT_ID_MISMATCH")
+        if any(char.isspace() or not (char.isalnum() or char in ".:/_-") for char in value):
+            raise ProtectivePersistenceError("PERSISTENCE_CLIENT_ID_MISMATCH")
 
     @staticmethod
     def _required_positive_decimal(value: Any) -> Decimal:
