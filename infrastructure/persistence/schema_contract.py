@@ -4,7 +4,7 @@ from typing import Any
 
 from sqlalchemy import MetaData, Table, inspect, select
 
-PERSISTENCE_REVISION = "20260717_0290"
+PERSISTENCE_REVISION = "20260722_0292"
 REQUIRED_PERSISTENCE_TABLES = {
     "kill_switch_states",
     "execution_intents",
@@ -12,6 +12,7 @@ REQUIRED_PERSISTENCE_TABLES = {
     "exchange_order_identities",
     "recovery_events",
     "audit_events",
+    "live_execution_permits",
 }
 
 
