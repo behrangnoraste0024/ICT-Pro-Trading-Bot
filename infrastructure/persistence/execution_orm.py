@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator, Uuid
@@ -83,6 +83,65 @@ class KillSwitchStateORM(ExecutionPersistenceBase):
     __table_args__ = (
         Index("ix_kill_switch_states_scope", "scope"),
         Index("ix_kill_switch_states_updated_at", "updated_at"),
+    )
+
+
+class LiveExecutionPermitORM(ExecutionPersistenceBase):
+    __tablename__ = "live_execution_permits"
+
+    id: Mapped[Any] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    permit_id: Mapped[str] = mapped_column(String(96), nullable=False)
+    operation: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(AwareDateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(AwareDateTime, nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(AwareDateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(AwareDateTime, nullable=True)
+    expired_at: Mapped[datetime | None] = mapped_column(AwareDateTime, nullable=True)
+    issued_by: Mapped[str] = mapped_column(String(96), nullable=False)
+    revocation_reason_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    consumption_correlation_id: Mapped[Any | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(AwareDateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(AwareDateTime, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __table_args__ = (
+        UniqueConstraint("permit_id", name="uq_live_execution_permits_permit_id"),
+        UniqueConstraint("consumption_correlation_id", name="uq_live_execution_permits_consumption_correlation_id"),
+        CheckConstraint("state IN ('ISSUED', 'CONSUMED', 'REVOKED', 'EXPIRED')", name="ck_live_execution_permits_state"),
+        CheckConstraint("expires_at > issued_at", name="ck_live_execution_permits_expiry_order"),
+        CheckConstraint("version >= 1", name="ck_live_execution_permits_version"),
+        CheckConstraint(
+            "((state = 'ISSUED' AND consumed_at IS NULL AND revoked_at IS NULL AND expired_at IS NULL AND consumption_correlation_id IS NULL AND revocation_reason_code IS NULL) "
+            "OR (state = 'CONSUMED' AND consumed_at IS NOT NULL AND consumption_correlation_id IS NOT NULL AND revoked_at IS NULL AND expired_at IS NULL AND revocation_reason_code IS NULL) "
+            "OR (state = 'REVOKED' AND revoked_at IS NOT NULL AND revocation_reason_code IS NOT NULL AND consumed_at IS NULL AND expired_at IS NULL AND consumption_correlation_id IS NULL) "
+            "OR (state = 'EXPIRED' AND expired_at IS NOT NULL AND consumed_at IS NULL AND revoked_at IS NULL AND consumption_correlation_id IS NULL AND revocation_reason_code IS NULL))",
+            name="ck_live_execution_permits_state_timestamps",
+        ),
+        Index("ix_live_execution_permits_permit_id", "permit_id"),
+        Index("ix_live_execution_permits_request_fingerprint", "request_fingerprint"),
+        Index("ix_live_execution_permits_state", "state"),
+        Index("ix_live_execution_permits_expires_at", "expires_at"),
+        Index("ix_live_execution_permits_subject", "subject_type", "subject_id"),
+        Index("ix_live_execution_permits_operation_scope", "operation", "environment", "symbol"),
+        Index("ix_live_execution_permits_consumption_correlation_id", "consumption_correlation_id"),
+        Index(
+            "uq_live_execution_permits_active_match",
+            "environment",
+            "symbol",
+            "operation",
+            "subject_type",
+            "subject_id",
+            "request_fingerprint",
+            unique=True,
+            sqlite_where=text("state = 'ISSUED'"),
+            postgresql_where=text("state = 'ISSUED'"),
+        ),
     )
 
 

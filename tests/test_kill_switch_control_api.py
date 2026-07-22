@@ -198,6 +198,10 @@ def test_kill_switch_alembic_upgrade_downgrade_reupgrade_preserves_286_data(tmp_
         "alembic/versions/20260717_0290_kill_switch_state.py",
         "release_0290_kill_switch_state",
     )
+    release_292 = _migration(
+        "alembic/versions/20260722_0292_live_execution_permits.py",
+        "release_0292_live_execution_permits",
+    )
     audit_id = uuid4().hex
     correlation_id = uuid4().hex
 
@@ -227,9 +231,11 @@ def test_kill_switch_alembic_upgrade_downgrade_reupgrade_preserves_286_data(tmp_
         assert row["metadata_json"] == {"preserved": True}
 
     _run_migration(engine, release_290, "upgrade")
+    _run_migration(engine, release_292, "upgrade")
     _set_migration_revision(engine, PERSISTENCE_REVISION)
     inspector = inspect(engine)
     assert "kill_switch_states" in inspector.get_table_names()
+    assert "live_execution_permits" in inspector.get_table_names()
     columns = {column["name"]: column for column in inspector.get_columns("kill_switch_states")}
     assert set(columns) == {"id", "scope", "environment", "symbol", "state", "created_at", "updated_at", "version"}
     assert columns["scope"]["nullable"] is False
@@ -282,14 +288,18 @@ def test_kill_switch_alembic_upgrade_downgrade_reupgrade_preserves_286_data(tmp_
     persistence.close()
     gate.require_released()
 
+    _run_migration(engine, release_292, "downgrade")
+    assert "live_execution_permits" not in inspect(engine).get_table_names()
     _run_migration(engine, release_290, "downgrade")
     _set_migration_revision(engine, release_286.revision)
     assert "kill_switch_states" not in inspect(engine).get_table_names()
     assert_preexisting_row()
 
     _run_migration(engine, release_290, "upgrade")
+    _run_migration(engine, release_292, "upgrade")
     _set_migration_revision(engine, PERSISTENCE_REVISION)
     assert "kill_switch_states" in inspect(engine).get_table_names()
+    assert "live_execution_permits" in inspect(engine).get_table_names()
     assert_preexisting_row()
     final_persistence = KillSwitchPersistence(env=env)
     final_persistence.ensure_available()

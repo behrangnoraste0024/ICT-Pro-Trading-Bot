@@ -15,6 +15,7 @@ from infrastructure.persistence.execution_orm import (
     ExchangeOrderIdentityORM,
     ExecutionIntentORM,
     KillSwitchStateORM,
+    LiveExecutionPermitORM,
     ProtectivePairORM,
     RecoveryEventORM,
 )
@@ -36,6 +37,8 @@ from models.execution_persistence import (
     validate_state,
 )
 from models.kill_switch_state import KILL_SWITCH_STATES, KillSwitchState
+from models.live_execution_authorization import LiveExecutionOperation
+from models.live_execution_permit import LiveExecutionPermit, LiveExecutionPermitState
 
 FORBIDDEN_METADATA_KEYS = {
     "apikey",
@@ -171,6 +174,36 @@ class AuditEventRepository(ABC):
     def list_by_correlation_id(self, correlation_id: UUID, limit: int, offset: int = 0) -> list[AuditEvent]: ...
 
 
+
+
+class LiveExecutionPermitRepository(ABC):
+    @abstractmethod
+    def create_issued(self, permit: LiveExecutionPermit) -> LiveExecutionPermit: ...
+
+    @abstractmethod
+    def get_by_id(self, permit_id: UUID) -> LiveExecutionPermit | None: ...
+
+    @abstractmethod
+    def get_by_permit_id(self, permit_id: str) -> LiveExecutionPermit | None: ...
+
+    @abstractmethod
+    def find_consumed_by_correlation_id(self, consumption_correlation_id: UUID) -> LiveExecutionPermit | None: ...
+
+    @abstractmethod
+    def list_by_subject(self, environment: str, symbol: str, subject_type: str, subject_id: str, limit: int) -> list[LiveExecutionPermit]: ...
+
+    @abstractmethod
+    def expire_due_active_match(self, environment: str, symbol: str, operation: LiveExecutionOperation, subject_type: str, subject_id: str, request_fingerprint: str, now: datetime, limit: int = 100) -> list[LiveExecutionPermit]: ...
+
+    @abstractmethod
+    def consume_if_issued(self, permit_id: str, expected_version: int, operation: LiveExecutionOperation, environment: str, symbol: str, subject_type: str, subject_id: str, request_fingerprint: str, consumption_correlation_id: UUID, now: datetime) -> LiveExecutionPermit: ...
+
+    @abstractmethod
+    def revoke_if_issued(self, permit_id: str, expected_version: int, reason_code: str, now: datetime) -> LiveExecutionPermit: ...
+
+    @abstractmethod
+    def expire_if_issued(self, permit_id: str, expected_version: int, now: datetime) -> LiveExecutionPermit: ...
+
 class KillSwitchStateRepository(ABC):
     @abstractmethod
     def create(self, state: KillSwitchState) -> KillSwitchState: ...
@@ -208,6 +241,32 @@ def _recovery_event_from_orm(row: RecoveryEventORM) -> RecoveryEvent:
 def _audit_event_from_orm(row: AuditEventORM) -> AuditEvent:
     return AuditEvent(id=row.id, correlation_id=row.correlation_id, category=row.category, action=row.action, environment=row.environment, symbol=row.symbol, result=row.result, error_code=row.error_code, metadata_json=deepcopy(row.metadata_json), created_at=_utc(row.created_at))
 
+
+
+
+def _live_execution_permit_from_orm(row: LiveExecutionPermitORM) -> LiveExecutionPermit:
+    return LiveExecutionPermit(
+        id=row.id,
+        permit_id=row.permit_id,
+        operation=row.operation,
+        environment=row.environment,
+        symbol=row.symbol,
+        request_fingerprint=row.request_fingerprint,
+        subject_type=row.subject_type,
+        subject_id=row.subject_id,
+        state=row.state,
+        issued_at=_utc(row.issued_at),
+        expires_at=_utc(row.expires_at),
+        consumed_at=None if row.consumed_at is None else _utc(row.consumed_at),
+        revoked_at=None if row.revoked_at is None else _utc(row.revoked_at),
+        expired_at=None if row.expired_at is None else _utc(row.expired_at),
+        issued_by=row.issued_by,
+        revocation_reason_code=row.revocation_reason_code,
+        consumption_correlation_id=row.consumption_correlation_id,
+        created_at=_utc(row.created_at),
+        updated_at=_utc(row.updated_at),
+        version=row.version,
+    )
 
 def _kill_switch_state_from_orm(row: KillSwitchStateORM) -> KillSwitchState:
     return KillSwitchState(
@@ -256,6 +315,199 @@ class SqlAlchemyExecutionIntentRepository(ExecutionIntentRepository):
         if row is None:
             raise OptimisticLockError("execution intent refresh conflict")
         return _execution_intent_from_orm(row)
+
+
+
+
+class SqlAlchemyLiveExecutionPermitRepository(LiveExecutionPermitRepository):
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def create_issued(self, permit: LiveExecutionPermit) -> LiveExecutionPermit:
+        if permit.state != LiveExecutionPermitState.ISSUED:
+            raise PersistenceValidationError("permit create requires ISSUED state")
+        row = LiveExecutionPermitORM(
+            id=permit.id,
+            permit_id=permit.permit_id,
+            operation=permit.operation.value,
+            environment=permit.environment,
+            symbol=permit.symbol,
+            request_fingerprint=permit.request_fingerprint,
+            subject_type=permit.subject_type,
+            subject_id=permit.subject_id,
+            state=permit.state.value,
+            issued_at=permit.issued_at,
+            expires_at=permit.expires_at,
+            consumed_at=permit.consumed_at,
+            revoked_at=permit.revoked_at,
+            expired_at=permit.expired_at,
+            issued_by=permit.issued_by,
+            revocation_reason_code=permit.revocation_reason_code,
+            consumption_correlation_id=permit.consumption_correlation_id,
+            created_at=permit.created_at,
+            updated_at=permit.updated_at,
+            version=permit.version,
+        )
+        self.session.add(row)
+        _safe_flush(self.session)
+        return _live_execution_permit_from_orm(row)
+
+    def get_by_id(self, permit_id: UUID) -> LiveExecutionPermit | None:
+        row = self.session.get(LiveExecutionPermitORM, permit_id)
+        return None if row is None else _live_execution_permit_from_orm(row)
+
+    def get_by_permit_id(self, permit_id: str) -> LiveExecutionPermit | None:
+        row = self.session.scalar(select(LiveExecutionPermitORM).where(LiveExecutionPermitORM.permit_id == permit_id))
+        return None if row is None else _live_execution_permit_from_orm(row)
+
+    def find_consumed_by_correlation_id(self, consumption_correlation_id: UUID) -> LiveExecutionPermit | None:
+        row = self.session.scalar(
+            select(LiveExecutionPermitORM)
+            .where(
+                LiveExecutionPermitORM.consumption_correlation_id == consumption_correlation_id,
+                LiveExecutionPermitORM.state == LiveExecutionPermitState.CONSUMED.value,
+            )
+            .order_by(LiveExecutionPermitORM.consumed_at.asc(), LiveExecutionPermitORM.id.asc())
+            .limit(1)
+        )
+        return None if row is None else _live_execution_permit_from_orm(row)
+
+    def get_active_match(self, environment: str, symbol: str, operation: LiveExecutionOperation, subject_type: str, subject_id: str, request_fingerprint: str) -> LiveExecutionPermit | None:
+        row = self.session.scalar(
+            select(LiveExecutionPermitORM)
+            .where(
+                LiveExecutionPermitORM.environment == environment,
+                LiveExecutionPermitORM.symbol == symbol,
+                LiveExecutionPermitORM.operation == operation.value,
+                LiveExecutionPermitORM.subject_type == subject_type,
+                LiveExecutionPermitORM.subject_id == subject_id,
+                LiveExecutionPermitORM.request_fingerprint == request_fingerprint,
+                LiveExecutionPermitORM.state == LiveExecutionPermitState.ISSUED.value,
+            )
+            .order_by(LiveExecutionPermitORM.issued_at.asc(), LiveExecutionPermitORM.id.asc())
+        )
+        return None if row is None else _live_execution_permit_from_orm(row)
+
+    def list_by_subject(self, environment: str, symbol: str, subject_type: str, subject_id: str, limit: int) -> list[LiveExecutionPermit]:
+        _validate_pagination(limit, 0)
+        statement = (
+            select(LiveExecutionPermitORM)
+            .where(
+                LiveExecutionPermitORM.environment == environment,
+                LiveExecutionPermitORM.symbol == symbol,
+                LiveExecutionPermitORM.subject_type == subject_type,
+                LiveExecutionPermitORM.subject_id == subject_id,
+            )
+            .order_by(LiveExecutionPermitORM.created_at.asc(), LiveExecutionPermitORM.id.asc())
+            .limit(limit)
+        )
+        return [_live_execution_permit_from_orm(row) for row in self.session.scalars(statement).all()]
+
+    def expire_due_active_match(self, environment: str, symbol: str, operation: LiveExecutionOperation, subject_type: str, subject_id: str, request_fingerprint: str, now: datetime, limit: int = 100) -> list[LiveExecutionPermit]:
+        _validate_pagination(limit, 0)
+        rows = list(
+            self.session.scalars(
+                select(LiveExecutionPermitORM)
+                .where(
+                    LiveExecutionPermitORM.environment == environment,
+                    LiveExecutionPermitORM.symbol == symbol,
+                    LiveExecutionPermitORM.operation == operation.value,
+                    LiveExecutionPermitORM.subject_type == subject_type,
+                    LiveExecutionPermitORM.subject_id == subject_id,
+                    LiveExecutionPermitORM.request_fingerprint == request_fingerprint,
+                    LiveExecutionPermitORM.state == LiveExecutionPermitState.ISSUED.value,
+                    LiveExecutionPermitORM.expires_at <= now,
+                )
+                .order_by(LiveExecutionPermitORM.expires_at.asc(), LiveExecutionPermitORM.id.asc())
+                .limit(limit)
+            ).all()
+        )
+        expired: list[LiveExecutionPermit] = []
+        for row in rows:
+            expired.append(self.expire_if_issued(row.permit_id, row.version, now))
+        return expired
+
+    def consume_if_issued(self, permit_id: str, expected_version: int, operation: LiveExecutionOperation, environment: str, symbol: str, subject_type: str, subject_id: str, request_fingerprint: str, consumption_correlation_id: UUID, now: datetime) -> LiveExecutionPermit:
+        result = self.session.execute(
+            update(LiveExecutionPermitORM)
+            .where(
+                LiveExecutionPermitORM.permit_id == permit_id,
+                LiveExecutionPermitORM.version == expected_version,
+                LiveExecutionPermitORM.state == LiveExecutionPermitState.ISSUED.value,
+                LiveExecutionPermitORM.expires_at > now,
+                LiveExecutionPermitORM.operation == operation.value,
+                LiveExecutionPermitORM.environment == environment,
+                LiveExecutionPermitORM.symbol == symbol,
+                LiveExecutionPermitORM.subject_type == subject_type,
+                LiveExecutionPermitORM.subject_id == subject_id,
+                LiveExecutionPermitORM.request_fingerprint == request_fingerprint,
+                LiveExecutionPermitORM.consumption_correlation_id.is_(None),
+            )
+            .values(
+                state=LiveExecutionPermitState.CONSUMED.value,
+                consumed_at=now,
+                consumption_correlation_id=consumption_correlation_id,
+                updated_at=now,
+                version=LiveExecutionPermitORM.version + 1,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise OptimisticLockError("live execution permit consume conflict")
+        self.session.expire_all()
+        row = self.session.scalar(select(LiveExecutionPermitORM).where(LiveExecutionPermitORM.permit_id == permit_id).execution_options(populate_existing=True))
+        if row is None:
+            raise OptimisticLockError("live execution permit refresh conflict")
+        return _live_execution_permit_from_orm(row)
+
+    def revoke_if_issued(self, permit_id: str, expected_version: int, reason_code: str, now: datetime) -> LiveExecutionPermit:
+        result = self.session.execute(
+            update(LiveExecutionPermitORM)
+            .where(
+                LiveExecutionPermitORM.permit_id == permit_id,
+                LiveExecutionPermitORM.version == expected_version,
+                LiveExecutionPermitORM.state == LiveExecutionPermitState.ISSUED.value,
+            )
+            .values(
+                state=LiveExecutionPermitState.REVOKED.value,
+                revoked_at=now,
+                revocation_reason_code=reason_code,
+                updated_at=now,
+                version=LiveExecutionPermitORM.version + 1,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise OptimisticLockError("live execution permit revoke conflict")
+        self.session.expire_all()
+        row = self.session.scalar(select(LiveExecutionPermitORM).where(LiveExecutionPermitORM.permit_id == permit_id).execution_options(populate_existing=True))
+        if row is None:
+            raise OptimisticLockError("live execution permit refresh conflict")
+        return _live_execution_permit_from_orm(row)
+
+    def expire_if_issued(self, permit_id: str, expected_version: int, now: datetime) -> LiveExecutionPermit:
+        result = self.session.execute(
+            update(LiveExecutionPermitORM)
+            .where(
+                LiveExecutionPermitORM.permit_id == permit_id,
+                LiveExecutionPermitORM.version == expected_version,
+                LiveExecutionPermitORM.state == LiveExecutionPermitState.ISSUED.value,
+            )
+            .values(
+                state=LiveExecutionPermitState.EXPIRED.value,
+                expired_at=now,
+                updated_at=now,
+                version=LiveExecutionPermitORM.version + 1,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise OptimisticLockError("live execution permit expire conflict")
+        self.session.expire_all()
+        row = self.session.scalar(select(LiveExecutionPermitORM).where(LiveExecutionPermitORM.permit_id == permit_id).execution_options(populate_existing=True))
+        if row is None:
+            raise OptimisticLockError("live execution permit refresh conflict")
+        return _live_execution_permit_from_orm(row)
 
 
 class SqlAlchemyKillSwitchStateRepository(KillSwitchStateRepository):
