@@ -10,6 +10,97 @@ Release 2.80 introduces a manual BTCUSDT Binance USD-M Futures Testnet post-only
 
 The lifecycle is intentionally narrow: one LIMIT GTX order, derived away from the best bid/ask by a configured offset, query exact order, cancel exact order, final query, and zero-position verification. It must not use MARKET, stop-loss, take-profit, conditional, algo, batch, leverage, margin, position-mode, production, or broad order-list endpoints. Unknown network state requires manual exact-order query/cancel recovery. Never run the real authenticated lifecycle from Codex; use dedicated Testnet credentials only.
 
+## Release 2.93 One-Time Permit Mutation Enforcement
+
+Release 2.93 enforces durable one-time permit authorization at every approved authenticated Binance Futures Testnet mutation boundary. This is Binance Futures Testnet/Demo only, BTCUSDT only, Production disabled, and supervised/manual operation only. A signal, Dashboard action, CLI confirmation phrase, or operator intent is not by itself mutation authorization.
+
+### Scope and Purpose
+
+The permit gate applies only to the approved BTCUSDT Testnet mutation paths. Read-only GET diagnostics remain read-only, and this section does not enable live production execution, multi-symbol operation, automatic trading, or strategy-runner mutation.
+
+### Enforced Mutation Boundaries
+
+The five permit-gated mutation boundaries are:
+
+- protective create POST;
+- protective cancel DELETE;
+- lifecycle create POST;
+- lifecycle cancel DELETE;
+- signed Order-Test POST.
+
+### Exact Permit Contract
+
+A valid mutation requires an exact permit ID, permit version, environment, symbol, operation, subject, and mutation fingerprint. The operation values are `PROTECTIVE_CREATE`, `PROTECTIVE_CANCEL`, `ORDER_LIFECYCLE_CREATE`, `ORDER_LIFECYCLE_CANCEL`, and `SIGNED_ORDER_TEST_CREATE`.
+
+There is no permit bypass, automatic issue, automatic renewal, refund, replacement, or reuse. Malformed permit references fail closed, and mutation commands do not auto-issue permits.
+
+### Required Mutation Ordering
+
+The required order is:
+
+```text
+policy
+-> persistence
+-> consume
+-> commit
+-> close
+-> signing
+-> transport
+```
+
+Signing and authenticated transport must not occur before durable permit consumption, persistence commit, and persistence close. If the permit gate cannot prove the exact consumed permit state, the mutation is blocked.
+
+### Retry and Uncertainty Rules
+
+POST retry is zero. DELETE retry is zero. Uncertain mutation outcomes use exact read-only reconciliation, not blind mutation retry. Reconciliation must use the exact persisted mutation identity for the original client order or client algo ID.
+
+### Failed-Safe and Recovery-Required Outcomes
+
+A denial or failure before permit consumption is failed-safe and must not create false recovery. Uncertainty after permit consumption preserves the consumed permit and produces recovery-required behavior. A consumed permit is not refunded, renewed, replaced, or reused after uncertainty.
+
+### Recovery Idempotency
+
+Restart recovery must not duplicate a mutation. Repeated recovery checks are idempotent and use exact persisted mutation identity. A successful recovery rerun performs read-only reconciliation and must not consume another permit or issue another POST or DELETE.
+
+### Request Immutability and Sanitization
+
+Caller-owned mappings remain unchanged, unsigned mutation requests remain unchanged, authentication fields are added only to a fresh transport copy, and approved business parameters remain stable. Operator output and durable output must not expose secrets, API keys, signatures, authenticated URLs, sensitive SQL, tracebacks, exception chains, raw authenticated responses, or sensitive internal metadata.
+
+### Permit Operator Prerequisites
+
+Issue a permit only from an exact request-fingerprint payload and explicit operator confirmation:
+
+```powershell
+py scripts/issue_live_execution_permit.py --operation <OPERATION> --request-file <REQUEST_JSON> --issued-by <OPERATOR> --confirmation CONFIRM_TESTNET_ONE_TIME_EXECUTION_PERMIT
+```
+
+Show is read-only:
+
+```powershell
+py scripts/show_live_execution_permit.py --permit-id <PERMIT_ID>
+```
+
+Revoke requires the exact permit ID, expected version, reason code, and explicit operator confirmation:
+
+```powershell
+py scripts/revoke_live_execution_permit.py --permit-id <PERMIT_ID> --expected-version <VERSION> --reason-code OPERATOR_REVOKED --confirmation CONFIRM_TESTNET_REVOKE_EXECUTION_PERMIT
+```
+
+### Pre-Mutation Operator Checklist
+
+Before any authenticated mutation, verify the exact operation and pass the matching permit reference:
+
+- Protective create requires `--stop-create-permit-id`, `--stop-create-permit-version`, `--take-profit-create-permit-id`, and `--take-profit-create-permit-version`.
+- Protective cancel requires `--take-profit-cancel-permit-id`, `--take-profit-cancel-permit-version`, `--stop-cancel-permit-id`, and `--stop-cancel-permit-version`.
+- Lifecycle create requires `--create-permit-id` and `--create-permit-version`.
+- Lifecycle cancel requires `--cancel-permit-id` and `--cancel-permit-version`.
+- Signed Order-Test POST requires `--permit-id` and `--permit-version`.
+
+Confirmation phrases and credentials are still required where the older sections describe them, but they do not replace the one-time permit reference.
+
+### Post-Denial and Post-Uncertainty Actions
+
+For pre-consume denial, stop and correct the failed prerequisite; do not treat it as exchange uncertainty. For post-consume uncertainty or recovery-required output, do not retry POST or DELETE. Use only the exact read-only reconciliation or recovery path for the persisted mutation identity, and preserve the consumed permit record as final evidence.
 ## Current Official Profile
 
 - Recommended profile: `balanced_smc_decision_065`
@@ -681,4 +772,4 @@ py scripts/run_binance_futures_testnet_order_test.py --submit-test-order --clien
 py scripts/run_btc_paper_runner.py --validate-binance-futures-testnet-order-test-dry-run
 ```
 
-Submitting a Test Order request requires `--confirm-testnet-order-test CONFIRM_TESTNET_ORDER_TEST` and dedicated Testnet credentials from `BINANCE_FUTURES_TESTNET_API_KEY` and `BINANCE_FUTURES_TESTNET_API_SECRET`. Validation, readiness, runner dry-run, and local preview do not inspect credentials or use network. Reports must say "Test Order request accepted" rather than "order submitted" or "position opened", and must show actual order, matching-engine submission, exchange order creation, position creation, and exchange state mutation as false.
+Submitting a Test Order request requires `--confirm-testnet-order-test CONFIRM_TESTNET_ORDER_TEST`, a valid one-time permit reference supplied with `--permit-id` and `--permit-version`, and dedicated Testnet credentials from `BINANCE_FUTURES_TESTNET_API_KEY` and `BINANCE_FUTURES_TESTNET_API_SECRET`. Validation, readiness, runner dry-run, and local preview do not inspect credentials or use network. Reports must say "Test Order request accepted" rather than "order submitted" or "position opened", and must show actual order, matching-engine submission, exchange order creation, position creation, and exchange state mutation as false.
