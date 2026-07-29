@@ -19,7 +19,10 @@ from infrastructure.exchanges.binance_futures_testnet_order_test_client import (
     BinanceFuturesTestnetOrderTestClient,
 )
 from infrastructure.persistence.live_execution_authorization_policy import LiveExecutionAuthorizationPolicy
+from infrastructure.security.live_execution_mutation_fingerprint_adapter import build_signed_order_test_create_from_final_request
+from infrastructure.security.live_execution_permit_gate import LiveExecutionPermitGate
 from models.live_execution_authorization import LiveExecutionOperation
+from models.live_execution_permit_enforcement import LiveExecutionPermitGateError, LiveExecutionPermitReference
 from models.binance_futures_testnet_order_test import (
     BinanceFuturesTestnetExchangeFilterSummary,
     BinanceFuturesTestnetOrderTestAction,
@@ -36,10 +39,11 @@ from models.binance_futures_testnet_order_test import (
 
 
 class OrderTestAuthorizationAbort(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, permit_consumed: bool = False) -> None:
         super().__init__(code)
         self.code = code
         self.message = message
+        self.permit_consumed = permit_consumed
 
 
 class BinanceFuturesTestnetOrderTestEngine:
@@ -61,6 +65,7 @@ class BinanceFuturesTestnetOrderTestEngine:
         now_provider=None,
         kill_switch_gate=None,
         authorization_policy=None,
+        permit_gate=None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.runtime_config_engine = runtime_config_engine or BTCPaperRuntimeConfigEngine(repo_root=self.repo_root)
@@ -81,6 +86,10 @@ class BinanceFuturesTestnetOrderTestEngine:
             env=self.env,
             kill_switch_gate=kill_switch_gate,
         )
+        self.permit_gate = permit_gate or LiveExecutionPermitGate(
+            authorization_policy=self.authorization_policy,
+            env=self.env,
+        )
 
     def _require_mutation_permission(self) -> None:
         decision = self.authorization_policy.authorize(
@@ -92,6 +101,33 @@ class BinanceFuturesTestnetOrderTestEngine:
         )
         if not decision.allowed:
             raise OrderTestAuthorizationAbort(decision.code, decision.message)
+
+
+    @staticmethod
+    def _require_present_permit_reference(permit_reference: LiveExecutionPermitReference | None) -> None:
+        if permit_reference is None:
+            raise OrderTestAuthorizationAbort("PERMIT_REQUIRED", "A durable one-time live execution permit is required.")
+        if not isinstance(permit_reference, LiveExecutionPermitReference):
+            raise OrderTestAuthorizationAbort("PERMIT_REFERENCE_INVALID", "The live execution permit reference is invalid.")
+
+    def _require_permit_for_mutation(
+        self,
+        *,
+        fingerprint,
+        permit_reference: LiveExecutionPermitReference | None,
+        config: BinanceFuturesTestnetOrderTestConfig,
+    ) -> None:
+        try:
+            self.permit_gate.authorize_and_consume(
+                operation=LiveExecutionOperation.SIGNED_ORDER_TEST_CREATE,
+                fingerprint=fingerprint,
+                permit_reference=permit_reference,
+                confirmation_verified=True,
+                credentials_configured=True,
+                runtime_config_path=config.runtime_config_path,
+            )
+        except LiveExecutionPermitGateError as exc:
+            raise OrderTestAuthorizationAbort(exc.code, exc.message, permit_consumed=exc.permit_consumed) from None
 
     def validate(self, config_path: str = "configs/binance_futures_testnet_order_test.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetOrderTestValidationReport:
         issues: list[BinanceFuturesTestnetOrderTestIssue] = []
@@ -169,6 +205,7 @@ class BinanceFuturesTestnetOrderTestEngine:
         confirmation: str | None = None,
         config_path: str = "configs/binance_futures_testnet_order_test.json",
         expected_profile: str = "balanced_smc_decision_065",
+        permit: LiveExecutionPermitReference | None = None,
     ) -> BinanceFuturesTestnetOrderTestResult:
         report = self.validate(config_path, expected_profile)
         config = report.config or BinanceFuturesTestnetOrderTestConfig()
@@ -177,6 +214,11 @@ class BinanceFuturesTestnetOrderTestEngine:
             return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", BinanceFuturesTestnetOrderTestDecision.ACTUAL_ORDER_OPERATION_BLOCKED.value, "Order-test config failed validation.", issues=issues)
         if config.require_explicit_network_confirmation and confirmation != config.network_confirmation_phrase:
             return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "WARNING", BinanceFuturesTestnetOrderTestDecision.NETWORK_CONFIRMATION_REQUIRED.value, "Explicit testnet order-test confirmation is required.", issues=issues)
+        try:
+            self._require_present_permit_reference(permit)
+        except OrderTestAuthorizationAbort as exc:
+            issues.append(self._issue(exc.code.lower(), "FAIL", exc.message))
+            return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", exc.code, exc.message, issues=issues)
         client = self._client(config)
         try:
             metadata = client.inspect_credentials()
@@ -191,8 +233,10 @@ class BinanceFuturesTestnetOrderTestEngine:
             mark_price = client.fetch_mark_price(config.exchange_symbol) if str(order_type).upper() == "MARKET" else None
             preview = client.build_order_test_preview(client_order_id, side, order_type, quantity, price, time_in_force, reduce_only, exchange_filters=filters, mark_price=mark_price)
             server = self._server_time_or_issue(client, config, issues)
-            self._require_mutation_permission()
-            request_metadata = client.submit_test_order(preview, server)
+            unsigned_request = client.build_unsigned_business_request(preview)
+            fingerprint = build_signed_order_test_create_from_final_request(unsigned_request)
+            self._require_permit_for_mutation(fingerprint=fingerprint, permit_reference=permit, config=config)
+            request_metadata = client.submit_test_order(preview, server, unsigned_business_request=unsigned_request)
         except OrderTestAuthorizationAbort as exc:
             issues.append(self._issue(exc.code.lower(), "FAIL", exc.message))
             return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", exc.code, exc.message, credential_metadata=metadata, issues=issues, credentials_inspected=True)

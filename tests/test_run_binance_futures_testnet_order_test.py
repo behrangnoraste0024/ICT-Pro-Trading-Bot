@@ -76,6 +76,10 @@ def test_submit_without_confirmation_does_not_use_credentials_or_network(capsys,
             "MARKET",
             "--quantity",
             "0.001",
+            "--permit-id",
+            "permit-66666666666666666666666666666666",
+            "--permit-version",
+            "7",
         ]
     )
 

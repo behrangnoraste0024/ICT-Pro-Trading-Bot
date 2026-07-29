@@ -22,6 +22,8 @@ from models.binance_futures_testnet_order_lifecycle import (
     BinanceFuturesTestnetOrderLifecycleConfig,
     BinanceFuturesTestnetOrderSummary,
 )
+from models.live_execution_authorization import LiveExecutionOperation
+from models.live_execution_permit_enforcement import LiveExecutionUnsignedMutationRequest
 
 
 class BinanceFuturesTestnetLifecycleOperationBlocked(RuntimeError):
@@ -256,10 +258,45 @@ class BinanceFuturesTestnetOrderLifecycleClient:
             raise ValueError("estimated notional exceeds configured maximum")
         return True
 
-    def create_order(self, preview: BinanceFuturesTestnetLifecyclePreview, server_time: int | None = None) -> tuple[BinanceFuturesTestnetOrderSummary, BinanceFuturesTestnetLifecycleRequestMetadata]:
+    def build_create_unsigned_business_request(self, preview: BinanceFuturesTestnetLifecyclePreview) -> LiveExecutionUnsignedMutationRequest:
         self._require_transmission_ready(preview)
         params = self._canonical_order_parameters(preview)
         params["newOrderRespType"] = self.config.new_order_response_type
+        return LiveExecutionUnsignedMutationRequest(
+            operation=LiveExecutionOperation.ORDER_LIFECYCLE_CREATE,
+            environment="TESTNET",
+            symbol=self.config.exchange_symbol,
+            subject_type="ORDER_LIFECYCLE",
+            subject_id=preview.client_order_id,
+            fingerprint_context={
+                "schema_version": "1.0", "operation": "ORDER_LIFECYCLE_CREATE", "environment": "TESTNET", "symbol": self.config.exchange_symbol,
+                "client_order_id": params["newClientOrderId"], "side": params["side"], "position_side": params["positionSide"],
+                "order_type": params["type"], "quantity": str(params["quantity"]), "price": str(params["price"]),
+                "time_in_force": params["timeInForce"], "reduce_only": str(params.get("reduceOnly", "false")).lower() == "true",
+            },
+            # newOrderRespType is a fixed config control, not caller input.
+            transport_business_parameters=params,
+        )
+
+    def build_cancel_unsigned_business_request(self, client_order_id: str) -> LiveExecutionUnsignedMutationRequest:
+        self._validate_client_order_id(client_order_id)
+        params = {"symbol": self.config.exchange_symbol, "origClientOrderId": client_order_id}
+        return LiveExecutionUnsignedMutationRequest(
+            operation=LiveExecutionOperation.ORDER_LIFECYCLE_CANCEL,
+            environment="TESTNET",
+            symbol=self.config.exchange_symbol,
+            subject_type="ORDER_LIFECYCLE",
+            subject_id=client_order_id,
+            fingerprint_context={
+                "schema_version": "1.0", "operation": "ORDER_LIFECYCLE_CANCEL", "environment": "TESTNET", "symbol": self.config.exchange_symbol,
+                "client_order_id": client_order_id,
+            },
+            transport_business_parameters=params,
+        )
+
+    def create_order(self, preview: BinanceFuturesTestnetLifecyclePreview, server_time: int | None = None, unsigned_business_request: dict[str, Any] | None = None) -> tuple[BinanceFuturesTestnetOrderSummary, BinanceFuturesTestnetLifecycleRequestMetadata]:
+        self._require_transmission_ready(preview)
+        params = self.build_create_unsigned_business_request(preview) if unsigned_business_request is None else dict(unsigned_business_request)
         payload, metadata = self._signed_request_with_metadata("POST", self.config.order_path, params)
         return self.sanitize_order_summary(payload, preview.client_order_id), metadata
 
@@ -277,9 +314,10 @@ class BinanceFuturesTestnetOrderLifecycleClient:
                     raise
         raise last_error or RuntimeError("query failed")
 
-    def cancel_order_exact(self, client_order_id: str, server_time: int | None = None) -> tuple[BinanceFuturesTestnetOrderSummary, BinanceFuturesTestnetLifecycleRequestMetadata]:
+    def cancel_order_exact(self, client_order_id: str, server_time: int | None = None, unsigned_business_request: dict[str, Any] | None = None) -> tuple[BinanceFuturesTestnetOrderSummary, BinanceFuturesTestnetLifecycleRequestMetadata]:
         self._validate_client_order_id(client_order_id)
-        payload, metadata = self._signed_request_with_metadata("DELETE", self.config.order_path, {"symbol": self.config.exchange_symbol, "origClientOrderId": client_order_id})
+        params = self.build_cancel_unsigned_business_request(client_order_id) if unsigned_business_request is None else dict(unsigned_business_request)
+        payload, metadata = self._signed_request_with_metadata("DELETE", self.config.order_path, params)
         return self.sanitize_order_summary(payload, client_order_id), metadata
 
     def sanitize_order_summary(self, payload: Any, client_order_id: str) -> BinanceFuturesTestnetOrderSummary:

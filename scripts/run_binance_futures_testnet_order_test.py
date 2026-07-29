@@ -11,6 +11,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from engine.diagnostics.binance_futures_testnet_order_test_engine import BinanceFuturesTestnetOrderTestEngine
+from models.live_execution_permit_enforcement import LiveExecutionPermitReference
 from models.binance_futures_testnet_order_test import (
     BinanceFuturesTestnetOrderTestAction,
     BinanceFuturesTestnetOrderTestDecision,
@@ -26,12 +27,15 @@ from reporting.binance_futures_testnet_order_test_report import (
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    engine = BinanceFuturesTestnetOrderTestEngine(repo_root=ROOT_DIR, env=os.environ)
     actions = _selected_actions(args)
     if len(actions) > 1:
         return _emit_result(_invalid_result("Choose only one Binance futures testnet order-test action."), args)
     action = actions[0] if actions else "validate"
     try:
+        permit = None
+        if action == "submit_test_order":
+            permit = _required_permit_reference(args.permit_id, args.permit_version)
+        engine = BinanceFuturesTestnetOrderTestEngine(repo_root=ROOT_DIR, env=os.environ)
         if action == "validate":
             report = engine.validate(args.config, expected_profile=args.expected_profile)
             _emit_payload(report.to_dict(), format_binance_futures_testnet_order_test_validation_report(report), args)
@@ -47,13 +51,24 @@ def main(argv: list[str] | None = None) -> int:
             )
         if action == "submit_test_order":
             return _emit_result(
-                engine.submit_test_order(args.client_order_id, args.side, args.order_type, args.quantity, args.price, args.time_in_force, args.reduce_only, args.confirm_testnet_order_test, args.config, args.expected_profile),
+                engine.submit_test_order(
+                    args.client_order_id,
+                    args.side,
+                    args.order_type,
+                    args.quantity,
+                    args.price,
+                    args.time_in_force,
+                    args.reduce_only,
+                    args.confirm_testnet_order_test,
+                    args.config,
+                    args.expected_profile,
+                    permit=permit,
+                ),
                 args,
             )
     except Exception as exc:
         return _emit_result(_invalid_result(f"Operation failed safely: {_sanitize_cli_error(str(exc))}"), args)
     return _emit_result(_invalid_result("Unsupported action."), args)
-
 
 def _emit_result(result: BinanceFuturesTestnetOrderTestResult, args: argparse.Namespace) -> int:
     _emit_payload(result.to_dict(), format_binance_futures_testnet_order_test_result(result), args)
@@ -110,8 +125,21 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--time-in-force", choices=["GTC", "IOC", "FOK"], default=None)
     parser.add_argument("--reduce-only", action="store_true")
     parser.add_argument("--confirm-testnet-order-test", default=None)
+    parser.add_argument("--permit-id", default=None)
+    parser.add_argument("--permit-version", type=int, default=None)
     return parser
 
+
+def _required_permit_reference(permit_id: str | None, expected_version: int | None) -> LiveExecutionPermitReference:
+    if permit_id is None or expected_version is None:
+        raise ValueError("permit ID and expected version must be provided together")
+    return LiveExecutionPermitReference(permit_id, expected_version)
+
+
+def _permit_reference(permit_id: str | None, expected_version: int | None) -> LiveExecutionPermitReference | None:
+    if permit_id is None and expected_version is None:
+        return None
+    return _required_permit_reference(permit_id, expected_version)
 
 def _atomic_write(path_text: str, content: str) -> None:
     path = Path(path_text)

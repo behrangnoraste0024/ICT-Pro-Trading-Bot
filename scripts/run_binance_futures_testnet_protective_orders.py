@@ -12,6 +12,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from engine.diagnostics.binance_futures_testnet_protective_orders_engine import BinanceFuturesTestnetProtectiveOrdersEngine
 from models.binance_futures_testnet_protective_orders import BinanceFuturesTestnetProtectiveIssue, BinanceFuturesTestnetProtectiveResult
+from models.live_execution_permit_enforcement import LiveExecutionPermitReference
 from reporting.binance_futures_testnet_protective_orders_report import (
     format_binance_futures_testnet_protective_orders_result,
     format_binance_futures_testnet_protective_orders_validation_report,
@@ -20,12 +21,21 @@ from reporting.binance_futures_testnet_protective_orders_report import (
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    engine = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=ROOT_DIR, env=os.environ)
     actions = _selected_actions(args)
     if len(actions) > 1:
         return _emit_result(_invalid_result("Choose only one Binance futures testnet protective action."), args)
     action = actions[0] if actions else "validate"
     try:
+        stop_create_permit = None
+        take_profit_create_permit = None
+        take_profit_cancel_permit = None
+        stop_cancel_permit = None
+        if action == "run_protective_lifecycle":
+            stop_create_permit = _required_permit_reference(args.stop_create_permit_id, args.stop_create_permit_version)
+            take_profit_create_permit = _required_permit_reference(args.take_profit_create_permit_id, args.take_profit_create_permit_version)
+            take_profit_cancel_permit = _required_permit_reference(args.take_profit_cancel_permit_id, args.take_profit_cancel_permit_version)
+            stop_cancel_permit = _required_permit_reference(args.stop_cancel_permit_id, args.stop_cancel_permit_version)
+        engine = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=ROOT_DIR, env=os.environ)
         if action == "validate":
             report = engine.validate(args.config, args.expected_profile)
             _emit_payload(report.to_dict(), format_binance_futures_testnet_protective_orders_validation_report(report), args)
@@ -52,15 +62,41 @@ def main(argv: list[str] | None = None) -> int:
                 args,
             )
         if action == "run_protective_lifecycle":
-            return _emit_result(engine.run_protective_lifecycle(args.pair_id, args.stop_client_algo_id, args.take_profit_client_algo_id, args.stop_offset_bps, args.take_profit_offset_bps, args.confirm_testnet_protective_pair, args.config, args.expected_profile), args)
+            return _emit_result(
+                engine.run_protective_lifecycle(
+                    args.pair_id,
+                    args.stop_client_algo_id,
+                    args.take_profit_client_algo_id,
+                    args.stop_offset_bps,
+                    args.take_profit_offset_bps,
+                    args.confirm_testnet_protective_pair,
+                    args.config,
+                    args.expected_profile,
+                    stop_create_permit=stop_create_permit,
+                    take_profit_create_permit=take_profit_create_permit,
+                    take_profit_cancel_permit=take_profit_cancel_permit,
+                    stop_cancel_permit=stop_cancel_permit,
+                ),
+                args,
+            )
         if action == "query_protective_pair":
             return _emit_result(engine.query_protective_pair(args.stop_client_algo_id, args.take_profit_client_algo_id, args.config, args.expected_profile), args)
         if action == "recover_protective_pair":
-            return _emit_result(engine.recover_protective_pair(args.stop_client_algo_id, args.take_profit_client_algo_id, args.confirm_testnet_protective_recovery, args.config, args.expected_profile), args)
+            return _emit_result(
+                engine.recover_protective_pair(
+                    args.stop_client_algo_id,
+                    args.take_profit_client_algo_id,
+                    args.confirm_testnet_protective_recovery,
+                    args.config,
+                    args.expected_profile,
+                    stop_cancel_permit=_permit_reference(args.stop_cancel_permit_id, args.stop_cancel_permit_version),
+                    take_profit_cancel_permit=_permit_reference(args.take_profit_cancel_permit_id, args.take_profit_cancel_permit_version),
+                ),
+                args,
+            )
     except Exception as exc:
         return _emit_result(_invalid_result(f"Operation failed safely: {_sanitize_cli_error(str(exc))}"), args)
     return _emit_result(_invalid_result("Unsupported action."), args)
-
 
 def _emit_result(result: BinanceFuturesTestnetProtectiveResult, args: argparse.Namespace) -> int:
     _emit_payload(result.to_dict(), format_binance_futures_testnet_protective_orders_result(result), args)
@@ -122,8 +158,27 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--preview-mark-price", default="50000")
     parser.add_argument("--preview-entry-price", default="49000")
     parser.add_argument("--preview-tick-size", default="0.10")
+    parser.add_argument("--stop-create-permit-id", default=None)
+    parser.add_argument("--stop-create-permit-version", type=int, default=None)
+    parser.add_argument("--take-profit-create-permit-id", default=None)
+    parser.add_argument("--take-profit-create-permit-version", type=int, default=None)
+    parser.add_argument("--take-profit-cancel-permit-id", default=None)
+    parser.add_argument("--take-profit-cancel-permit-version", type=int, default=None)
+    parser.add_argument("--stop-cancel-permit-id", default=None)
+    parser.add_argument("--stop-cancel-permit-version", type=int, default=None)
     return parser
 
+
+def _required_permit_reference(permit_id: str | None, expected_version: int | None) -> LiveExecutionPermitReference:
+    if permit_id is None or expected_version is None:
+        raise ValueError("permit ID and expected version must be provided together")
+    return LiveExecutionPermitReference(permit_id, expected_version)
+
+
+def _permit_reference(permit_id: str | None, expected_version: int | None) -> LiveExecutionPermitReference | None:
+    if permit_id is None and expected_version is None:
+        return None
+    return _required_permit_reference(permit_id, expected_version)
 
 def _atomic_write(path_text: str, content: str) -> None:
     path = Path(path_text)

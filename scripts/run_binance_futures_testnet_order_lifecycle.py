@@ -11,6 +11,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from engine.diagnostics.binance_futures_testnet_order_lifecycle_engine import BinanceFuturesTestnetOrderLifecycleEngine
+from models.live_execution_permit_enforcement import LiveExecutionPermitReference
 from models.binance_futures_testnet_order_lifecycle import (
     BinanceFuturesTestnetLifecycleIssue,
     BinanceFuturesTestnetLifecycleResult,
@@ -25,12 +26,17 @@ from reporting.binance_futures_testnet_order_lifecycle_report import (
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    engine = BinanceFuturesTestnetOrderLifecycleEngine(repo_root=ROOT_DIR, env=os.environ)
     actions = _selected_actions(args)
     if len(actions) > 1:
         return _emit_result(_invalid_result("Choose only one Binance futures testnet lifecycle action."), args)
     action = actions[0] if actions else "validate"
     try:
+        create_permit = None
+        cancel_permit = None
+        if action == "run_lifecycle":
+            create_permit = _required_permit_reference(args.create_permit_id, args.create_permit_version)
+            cancel_permit = _required_permit_reference(args.cancel_permit_id, args.cancel_permit_version)
+        engine = BinanceFuturesTestnetOrderLifecycleEngine(repo_root=ROOT_DIR, env=os.environ)
         if action == "validate":
             report = engine.validate(args.config, expected_profile=args.expected_profile)
             _emit_payload(report.to_dict(), format_binance_futures_testnet_order_lifecycle_validation_report(report), args)
@@ -42,17 +48,48 @@ def main(argv: list[str] | None = None) -> int:
         if action == "build_preview":
             return _emit_result(engine.build_preview(args.lifecycle_id, args.client_order_id, args.side, args.quantity, args.price_offset_bps, args.config, args.expected_profile), args)
         if action == "run_lifecycle":
-            return _emit_result(engine.run_lifecycle(args.lifecycle_id, args.client_order_id, args.side, args.quantity, args.price_offset_bps, args.confirm_testnet_lifecycle, args.config, args.expected_profile), args)
+            return _emit_result(
+                engine.run_lifecycle(
+                    args.lifecycle_id,
+                    args.client_order_id,
+                    args.side,
+                    args.quantity,
+                    args.price_offset_bps,
+                    args.confirm_testnet_lifecycle,
+                    args.config,
+                    args.expected_profile,
+                    create_permit=create_permit,
+                    cancel_permit=cancel_permit,
+                ),
+                args,
+            )
         if action == "query_order":
             return _emit_result(engine.query_order(args.client_order_id, args.confirm_testnet_query, args.config, args.expected_profile), args)
         if action == "recovery_cancel":
-            return _emit_result(engine.recovery_cancel(args.client_order_id, args.confirm_testnet_cancel, args.config, args.expected_profile), args)
+            return _emit_result(
+                engine.recovery_cancel(
+                    args.client_order_id,
+                    args.confirm_testnet_cancel,
+                    args.config,
+                    args.expected_profile,
+                    cancel_permit=_permit_reference(args.cancel_permit_id, args.cancel_permit_version),
+                ),
+                args,
+            )
         if action == "recover_lifecycle":
-            return _emit_result(engine.recover_lifecycle(args.client_order_id, args.confirm_testnet_recovery, args.config, args.expected_profile), args)
+            return _emit_result(
+                engine.recover_lifecycle(
+                    args.client_order_id,
+                    args.confirm_testnet_recovery,
+                    args.config,
+                    args.expected_profile,
+                    cancel_permit=_permit_reference(args.cancel_permit_id, args.cancel_permit_version),
+                ),
+                args,
+            )
     except Exception as exc:
         return _emit_result(_invalid_result(f"Operation failed safely: {_sanitize_cli_error(str(exc))}"), args)
     return _emit_result(_invalid_result("Unsupported action."), args)
-
 
 def _emit_result(result: BinanceFuturesTestnetLifecycleResult, args: argparse.Namespace) -> int:
     _emit_payload(result.to_dict(), format_binance_futures_testnet_order_lifecycle_result(result), args)
@@ -113,8 +150,23 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--confirm-testnet-query", default=None)
     parser.add_argument("--confirm-testnet-cancel", default=None)
     parser.add_argument("--confirm-testnet-recovery", default=None)
+    parser.add_argument("--create-permit-id", default=None)
+    parser.add_argument("--create-permit-version", type=int, default=None)
+    parser.add_argument("--cancel-permit-id", default=None)
+    parser.add_argument("--cancel-permit-version", type=int, default=None)
     return parser
 
+
+def _required_permit_reference(permit_id: str | None, expected_version: int | None) -> LiveExecutionPermitReference:
+    if permit_id is None or expected_version is None:
+        raise ValueError("permit ID and expected version must be provided together")
+    return LiveExecutionPermitReference(permit_id, expected_version)
+
+
+def _permit_reference(permit_id: str | None, expected_version: int | None) -> LiveExecutionPermitReference | None:
+    if permit_id is None and expected_version is None:
+        return None
+    return _required_permit_reference(permit_id, expected_version)
 
 def _atomic_write(path_text: str, content: str) -> None:
     path = Path(path_text)
