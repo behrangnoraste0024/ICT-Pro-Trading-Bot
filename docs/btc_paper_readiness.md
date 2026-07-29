@@ -8,10 +8,68 @@ It does not execute trades, place orders, enable live trading, or activate paper
 
 Release 2.80 adds a manual Binance USD-M Futures Testnet post-only LIMIT lifecycle readiness check. This is the first release that can create an actual Testnet exchange order, but only through the standalone lifecycle CLI with explicit confirmation. It is Testnet-only, BTCUSDT-only, LIMIT-only, GTX post-only, one order per lifecycle, and disabled by default.
 
-The lifecycle has no standalone create-only action. A confirmed lifecycle derives a deliberately non-marketable price from the BTCUSDT book ticker, requires One-way Mode, verifies zero BTCUSDT position before creation, creates exactly one LIMIT GTX order, queries it, immediately cancels it if still `NEW`, queries final status, verifies zero position again, and writes only a sanitized local journal.
+The lifecycle has no standalone create-only action. A confirmed lifecycle derives a deliberately non-marketable price from the BTCUSDT book ticker, requires One-way Mode, verifies zero BTCUSDT position before creation, creates exactly one LIMIT GTX order, queries it, immediately cancels it if still `NEW`, queries final status, verifies zero position again, and writes only a sanitized local journal. After Release 2.93, lifecycle create also requires `--create-permit-id` and `--create-permit-version`; lifecycle cancel requires `--cancel-permit-id` and `--cancel-permit-version`.
 
 MARKET orders, stop loss, take profit, algo orders, leverage changes, margin changes, position-mode changes, production endpoints, strategy execution, runner order submission, and paper-state mutation remain forbidden. If network state is uncertain after create or cancel, use the exact-order query and exact-order recovery-cancel commands with the known client order ID. Do not run the real authenticated lifecycle from Codex; use dedicated Testnet credentials only in an operator-controlled shell.
 
+## Release 2.93 Authenticated Mutation Prerequisites
+
+### Canonical Safety Contract
+
+The detailed Release 2.93 mutation-safety contract is maintained in [validation_gate_runbook.md](validation_gate_runbook.md), section `Release 2.93 One-Time Permit Mutation Enforcement`. This BTC readiness document summarizes the operator prerequisites only; it does not replace the canonical runbook.
+
+Binance Futures authenticated mutation remains Binance Futures Testnet/Demo only, BTCUSDT only, Production disabled, and supervised/manual only. A signal, Dashboard action, CLI confirmation phrase, or operator intent is not mutation authorization.
+
+### Permit Requirements by Mutation Path
+
+Lifecycle Create:
+
+```text
+--create-permit-id
+--create-permit-version
+```
+
+Lifecycle Cancel:
+
+```text
+--cancel-permit-id
+--cancel-permit-version
+```
+
+Signed Order-Test:
+
+```text
+--permit-id
+--permit-version
+```
+
+Protective Create:
+
+```text
+--stop-create-permit-id
+--stop-create-permit-version
+--take-profit-create-permit-id
+--take-profit-create-permit-version
+```
+
+Protective Cancel:
+
+```text
+--stop-cancel-permit-id
+--stop-cancel-permit-version
+--take-profit-cancel-permit-id
+--take-profit-cancel-permit-version
+```
+
+### Mutation Safety Summary
+
+Permits are exact and one-time. The permit must match the environment, symbol, operation, subject, and mutation fingerprint. Mutation commands do not auto-issue permits. There is no automatic renewal, refund, replacement, or reuse. Permit consumption, persistence commit, and persistence close happen before signing and authenticated transport.
+
+POST retry is zero. DELETE retry is zero. Blind mutation retry is not allowed. Uncertainty uses exact read-only reconciliation for the persisted mutation identity.
+
+### Operator Response to Denial or Uncertainty
+
+Pre-consume denial remains failed-safe and must not create false recovery. Post-consume uncertainty remains recovery-required, and the consumed permit remains consumed. Restart recovery must be idempotent. Operators must follow the canonical runbook instead of issuing a second mutation blindly.
 ## Commands
 
 Official BTC validation gate:
@@ -415,4 +473,4 @@ py scripts/run_btc_paper_runner.py --validate-binance-futures-testnet-order-test
 
 Readiness and runner validation build a local MARKET preview only. They do not inspect credentials, fetch server time, fetch exchange info, generate a signature, transmit a Test Order request, or mutate runner, paper, execution, or exchange state.
 
-An authenticated Test Order request requires the exact phrase `CONFIRM_TESTNET_ORDER_TEST` and the dedicated variables `BINANCE_FUTURES_TESTNET_API_KEY` and `BINANCE_FUTURES_TESTNET_API_SECRET`. The actual order endpoint `POST /fapi/v1/order`, cancellation, modification, order/trade queries, conditional/algo orders, leverage or margin changes, user streams, WebSockets, production endpoints, and raw request/response persistence remain forbidden.
+An authenticated Test Order request requires the exact phrase `CONFIRM_TESTNET_ORDER_TEST`, the one-time permit flags `--permit-id` and `--permit-version`, and the dedicated variables `BINANCE_FUTURES_TESTNET_API_KEY` and `BINANCE_FUTURES_TESTNET_API_SECRET`. The actual order endpoint `POST /fapi/v1/order`, cancellation, modification, order/trade queries, conditional/algo orders, leverage or margin changes, user streams, WebSockets, production endpoints, and raw request/response persistence remain forbidden.
