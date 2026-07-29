@@ -27,6 +27,68 @@ class _FakeReport:
             self.config = type("Config", (), {"kill_switch_enabled": True})()
 
 
+@pytest.fixture(autouse=True)
+def _allow_legacy_live_execution_permits(monkeypatch):
+    def authorize_without_durable_permit(self, **kwargs):
+        from models.live_execution_permit_enforcement import LiveExecutionPermitGateError
+
+        decision = self.authorization_policy.authorize(
+            kwargs["operation"],
+            environment="TESTNET",
+            symbol="BTCUSDT",
+            confirmation_verified=kwargs.get("confirmation_verified", True),
+            credentials_configured=kwargs.get("credentials_configured", True),
+            runtime_config_path=kwargs.get("runtime_config_path"),
+            current_pair_id=kwargs.get("current_pair_id"),
+        )
+        if not decision.allowed:
+            raise LiveExecutionPermitGateError(decision.code)
+        return None
+
+    monkeypatch.setattr(
+        "infrastructure.security.live_execution_permit_gate.LiveExecutionPermitGate.authorize_and_consume",
+        authorize_without_durable_permit,
+    )
+    monkeypatch.setattr(
+        "engine.diagnostics.binance_futures_testnet_order_test_engine.BinanceFuturesTestnetOrderTestEngine._require_present_permit_reference",
+        staticmethod(lambda permit_reference: None),
+    )
+
+    class _LegacyPermitGate:
+        def __init__(self, policy):
+            self.authorization_policy = policy
+
+        def authorize_and_consume(self, **kwargs):
+            from models.live_execution_permit_enforcement import LiveExecutionPermitGateError
+
+            decision = self.authorization_policy.authorize(
+                kwargs["operation"],
+                environment="TESTNET",
+                symbol="BTCUSDT",
+                confirmation_verified=kwargs.get("confirmation_verified", True),
+                credentials_configured=kwargs.get("credentials_configured", True),
+                runtime_config_path=kwargs.get("runtime_config_path"),
+                current_pair_id=kwargs.get("current_pair_id"),
+            )
+            if not decision.allowed:
+                raise LiveExecutionPermitGateError(decision.code)
+
+    original_init = BinanceFuturesTestnetOrderTestEngine.__init__
+
+    def legacy_init(self, *args, **kwargs):
+        if kwargs.get("permit_gate") is None:
+            kwargs["permit_gate"] = _LegacyPermitGate(kwargs.get("authorization_policy") or getattr(self, "authorization_policy", None))
+        original_init(self, *args, **kwargs)
+        if isinstance(self.permit_gate, _LegacyPermitGate):
+            self.permit_gate.authorization_policy = self.authorization_policy
+
+    monkeypatch.setattr(
+        "engine.diagnostics.binance_futures_testnet_order_test_engine.BinanceFuturesTestnetOrderTestEngine.__init__",
+        legacy_init,
+    )
+
+
+
 class _FakeEngine:
     def __init__(self, status: str = "PASS") -> None:
         self.status = status

@@ -46,7 +46,27 @@ def test_run_lifecycle_without_confirmation_does_not_use_credentials(capsys, mon
     monkeypatch.setenv("BINANCE_FUTURES_TESTNET_API_KEY", "unit-test-key")
     monkeypatch.setenv("BINANCE_FUTURES_TESTNET_API_SECRET", "unit-test-secret")
 
-    code = run_binance_futures_testnet_order_lifecycle.main(["--run-lifecycle", "--lifecycle-id", "lifecycle-testnet-001", "--client-order-id", "smcbot-lifecycle-001", "--side", "BUY", "--quantity", "0.001"])
+    code = run_binance_futures_testnet_order_lifecycle.main(
+        [
+            "--run-lifecycle",
+            "--lifecycle-id",
+            "lifecycle-testnet-001",
+            "--client-order-id",
+            "smcbot-lifecycle-001",
+            "--side",
+            "BUY",
+            "--quantity",
+            "0.001",
+            "--create-permit-id",
+            "permit-44444444444444444444444444444444",
+            "--create-permit-version",
+            "5",
+            "--cancel-permit-id",
+            "permit-55555555555555555555555555555555",
+            "--cancel-permit-version",
+            "6",
+        ]
+    )
 
     captured = capsys.readouterr()
     assert code == 0

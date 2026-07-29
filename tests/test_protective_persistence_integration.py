@@ -115,6 +115,68 @@ def _http_get(url, timeout):
     raise AssertionError(f"unexpected public request: {url}")
 
 
+@pytest.fixture(autouse=True)
+def _allow_legacy_live_execution_permits(monkeypatch):
+    def authorize_without_durable_permit(self, **kwargs):
+        from models.live_execution_permit_enforcement import LiveExecutionPermitGateError
+
+        decision = self.authorization_policy.authorize(
+            kwargs["operation"],
+            environment="TESTNET",
+            symbol="BTCUSDT",
+            confirmation_verified=kwargs.get("confirmation_verified", True),
+            credentials_configured=kwargs.get("credentials_configured", True),
+            runtime_config_path=kwargs.get("runtime_config_path"),
+            current_pair_id=kwargs.get("current_pair_id"),
+        )
+        if not decision.allowed:
+            raise LiveExecutionPermitGateError(decision.code)
+        return None
+
+    monkeypatch.setattr(
+        "infrastructure.security.live_execution_permit_gate.LiveExecutionPermitGate.authorize_and_consume",
+        authorize_without_durable_permit,
+    )
+    monkeypatch.setattr(
+        "engine.diagnostics.binance_futures_testnet_protective_orders_engine.BinanceFuturesTestnetProtectiveOrdersEngine._require_distinct_permit_references",
+        staticmethod(lambda *args, **kwargs: None),
+    )
+
+    class _LegacyPermitGate:
+        def __init__(self, policy):
+            self.authorization_policy = policy
+
+        def authorize_and_consume(self, **kwargs):
+            from models.live_execution_permit_enforcement import LiveExecutionPermitGateError
+
+            decision = self.authorization_policy.authorize(
+                kwargs["operation"],
+                environment="TESTNET",
+                symbol="BTCUSDT",
+                confirmation_verified=kwargs.get("confirmation_verified", True),
+                credentials_configured=kwargs.get("credentials_configured", True),
+                runtime_config_path=kwargs.get("runtime_config_path"),
+                current_pair_id=kwargs.get("current_pair_id"),
+            )
+            if not decision.allowed:
+                raise LiveExecutionPermitGateError(decision.code)
+
+    original_init = BinanceFuturesTestnetProtectiveOrdersEngine.__init__
+
+    def legacy_init(self, *args, **kwargs):
+        if kwargs.get("permit_gate") is None:
+            kwargs["permit_gate"] = _LegacyPermitGate(kwargs.get("authorization_policy") or getattr(self, "authorization_policy", None))
+        original_init(self, *args, **kwargs)
+        if isinstance(self.permit_gate, _LegacyPermitGate):
+            self.permit_gate.authorization_policy = self.authorization_policy
+
+    monkeypatch.setattr(
+        "engine.diagnostics.binance_futures_testnet_protective_orders_engine.BinanceFuturesTestnetProtectiveOrdersEngine.__init__",
+        legacy_init,
+    )
+
+
+
 class LifecycleTransport:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
@@ -1495,13 +1557,31 @@ def test_runtime_disable_immediately_before_protective_post_blocks_that_boundary
     )
 
     assert result.decision == "LIVE_TRADING_DISABLED"
+    assert result.recovery_required is False
+    assert result.create_request_transmitted is False
+    assert result.cancel_request_transmitted is False
+    assert result.create_requests == []
+    assert result.cancel_requests == []
+    assert result.stop_order is None
+    assert result.take_profit_order is None
     assert [method for method, _ in transport.calls].count("POST") == 0
     assert [method for method, _ in transport.calls].count("DELETE") == 0
     with Session(database_engine) as session:
         pair = session.scalar(select(ProtectivePairORM).where(ProtectivePairORM.pair_id == PAIR_ID))
+        intent = session.scalar(select(ExecutionIntentORM).where(ExecutionIntentORM.intent_type == "PROTECTIVE_PAIR_CREATE"))
         identities = list(session.scalars(select(ExchangeOrderIdentityORM)).all())
-    assert pair is not None and pair.state == "RECOVERY_REQUIRED" and pair.recovery_required is True
+        audit_actions = list(session.scalars(select(AuditEventORM.action)).all())
+    assert pair is not None and pair.state == "FAILED_SAFE" and pair.recovery_required is False
+    assert intent is not None and intent.state == "FAILED_SAFE"
     assert identities == []
+    assert "PERMIT_CONSUMED" not in audit_actions
+    assert result.journal is not None
+    assert result.journal.recovery_required is False
+    assert any(
+        item.interpreted_mutation_result == "CREATE_NOT_APPLIED"
+        and item.recovery_required is False
+        for item in result.reconciliation_results
+    )
 
 
 def test_new_unrelated_recovery_evidence_before_protective_delete_blocks_delete_and_keeps_consistency(tmp_path: Path) -> None:

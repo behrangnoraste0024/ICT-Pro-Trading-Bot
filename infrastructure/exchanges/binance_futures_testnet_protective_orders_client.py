@@ -23,6 +23,8 @@ from models.binance_futures_testnet_protective_orders import (
     BinanceFuturesTestnetProtectivePreview,
     BinanceFuturesTestnetProtectiveRequestMetadata,
 )
+from models.live_execution_authorization import LiveExecutionOperation
+from models.live_execution_permit_enforcement import LiveExecutionUnsignedMutationRequest
 
 
 class BinanceFuturesTestnetProtectiveOperationBlocked(RuntimeError):
@@ -259,11 +261,66 @@ class BinanceFuturesTestnetProtectiveOrdersClient:
             raise ValueError("SHORT protective triggers would immediately activate")
         return True
 
-    def create_stop_order(self, preview: BinanceFuturesTestnetProtectivePreview) -> tuple[BinanceFuturesTestnetProtectiveAlgoSummary, BinanceFuturesTestnetProtectiveRequestMetadata]:
-        return self._create_algo_order(preview, "STOP_MARKET", preview.stop_trigger, preview.stop_client_algo_id)
+    def build_create_unsigned_business_request(self, preview: BinanceFuturesTestnetProtectivePreview, label: str) -> LiveExecutionUnsignedMutationRequest:
+        order_type = "STOP_MARKET" if label == "STOP" else "TAKE_PROFIT_MARKET"
+        trigger_price = preview.stop_trigger if label == "STOP" else preview.take_profit_trigger
+        client_algo_id = preview.stop_client_algo_id if label == "STOP" else preview.take_profit_client_algo_id
+        if not preview.transmission_ready or trigger_price is None:
+            raise ValueError("protective preview is not transmission ready")
+        if order_type not in self.config.allowed_order_types:
+            raise ValueError("protective order type is not allowed")
+        quantity = _format_decimal(abs(preview.position_amount))
+        parameters = {
+            "algoType": self.config.allowed_algo_type,
+            "symbol": self.config.exchange_symbol,
+            "side": preview.protective_side,
+            "type": order_type,
+            "triggerPrice": _format_decimal(trigger_price),
+            "workingType": self.config.working_type,
+            "closePosition": "true",
+            "priceProtect": "true",
+            "positionSide": self.config.required_position_side,
+            "clientAlgoId": client_algo_id,
+            "newOrderRespType": self.config.new_order_response_type,
+        }
+        return LiveExecutionUnsignedMutationRequest(
+            operation=LiveExecutionOperation.PROTECTIVE_CREATE,
+            environment="TESTNET",
+            symbol=self.config.exchange_symbol,
+            subject_type="PROTECTIVE_PAIR",
+            subject_id=preview.pair_id,
+            fingerprint_context={
+                "schema_version": "1.0", "operation": "PROTECTIVE_CREATE", "environment": "TESTNET", "symbol": self.config.exchange_symbol,
+                "pair_id": preview.pair_id, "leg_type": label, "side": preview.protective_side,
+                "position_side": self.config.required_position_side, "quantity": quantity,
+                "trigger_price": parameters["triggerPrice"], "close_position": True, "reduce_only": None,
+                "client_algo_id": client_algo_id, "order_type": order_type, "working_type": self.config.working_type, "price_protect": True,
+            },
+            transport_business_parameters=parameters,
+        )
 
-    def create_take_profit_order(self, preview: BinanceFuturesTestnetProtectivePreview) -> tuple[BinanceFuturesTestnetProtectiveAlgoSummary, BinanceFuturesTestnetProtectiveRequestMetadata]:
-        return self._create_algo_order(preview, "TAKE_PROFIT_MARKET", preview.take_profit_trigger, preview.take_profit_client_algo_id)
+    def build_cancel_unsigned_business_request(self, preview: BinanceFuturesTestnetProtectivePreview, label: str) -> LiveExecutionUnsignedMutationRequest:
+        client_algo_id = preview.stop_client_algo_id if label == "STOP" else preview.take_profit_client_algo_id
+        self._validate_client_algo_id(client_algo_id)
+        parameters = {"symbol": self.config.exchange_symbol, "clientAlgoId": client_algo_id}
+        return LiveExecutionUnsignedMutationRequest(
+            operation=LiveExecutionOperation.PROTECTIVE_CANCEL,
+            environment="TESTNET",
+            symbol=self.config.exchange_symbol,
+            subject_type="PROTECTIVE_PAIR",
+            subject_id=preview.pair_id,
+            fingerprint_context={
+                "schema_version": "1.0", "operation": "PROTECTIVE_CANCEL", "environment": "TESTNET", "symbol": self.config.exchange_symbol,
+                "pair_id": preview.pair_id, "leg_type": label, "client_algo_id": client_algo_id,
+            },
+            transport_business_parameters=parameters,
+        )
+
+    def create_stop_order(self, preview: BinanceFuturesTestnetProtectivePreview, unsigned_business_request: dict[str, Any] | None = None) -> tuple[BinanceFuturesTestnetProtectiveAlgoSummary, BinanceFuturesTestnetProtectiveRequestMetadata]:
+        return self._create_algo_order(preview, "STOP_MARKET", preview.stop_trigger, preview.stop_client_algo_id, unsigned_business_request)
+
+    def create_take_profit_order(self, preview: BinanceFuturesTestnetProtectivePreview, unsigned_business_request: dict[str, Any] | None = None) -> tuple[BinanceFuturesTestnetProtectiveAlgoSummary, BinanceFuturesTestnetProtectiveRequestMetadata]:
+        return self._create_algo_order(preview, "TAKE_PROFIT_MARKET", preview.take_profit_trigger, preview.take_profit_client_algo_id, unsigned_business_request)
 
     def query_algo_order(self, client_algo_id: str) -> tuple[BinanceFuturesTestnetProtectiveAlgoSummary, BinanceFuturesTestnetProtectiveRequestMetadata]:
         self._validate_client_algo_id(client_algo_id)
@@ -290,9 +347,10 @@ class BinanceFuturesTestnetProtectiveOrdersClient:
                 raise
         raise last_error or RuntimeError("query failed")
 
-    def cancel_algo_order_exact(self, client_algo_id: str) -> tuple[BinanceFuturesTestnetProtectiveAlgoSummary, BinanceFuturesTestnetProtectiveRequestMetadata]:
+    def cancel_algo_order_exact(self, client_algo_id: str, unsigned_business_request: dict[str, Any] | None = None) -> tuple[BinanceFuturesTestnetProtectiveAlgoSummary, BinanceFuturesTestnetProtectiveRequestMetadata]:
         self._validate_client_algo_id(client_algo_id)
-        payload, metadata = self._signed_request_with_metadata("DELETE", self.config.algo_order_path, {"clientAlgoId": client_algo_id})
+        params = {"clientAlgoId": client_algo_id} if unsigned_business_request is None else dict(unsigned_business_request)
+        payload, metadata = self._signed_request_with_metadata("DELETE", self.config.algo_order_path, params)
         return self.sanitize_algo_summary(payload, client_algo_id), metadata
 
     def sanitize_algo_summary(self, payload: Any, client_algo_id: str) -> BinanceFuturesTestnetProtectiveAlgoSummary:
@@ -349,29 +407,18 @@ class BinanceFuturesTestnetProtectiveOrdersClient:
         order_type: str,
         trigger_price: Decimal | None,
         client_algo_id: str,
+        unsigned_business_request: dict[str, Any] | None = None,
     ) -> tuple[BinanceFuturesTestnetProtectiveAlgoSummary, BinanceFuturesTestnetProtectiveRequestMetadata]:
-        if not preview.transmission_ready or trigger_price is None:
-            raise ValueError("protective preview is not transmission ready")
-        if order_type not in self.config.allowed_order_types:
-            raise ValueError("protective order type is not allowed")
-        params = {
-            "algoType": self.config.allowed_algo_type,
-            "symbol": self.config.exchange_symbol,
-            "side": preview.protective_side,
-            "type": order_type,
-            "triggerPrice": _format_decimal(trigger_price),
-            "workingType": self.config.working_type,
-            "closePosition": "true",
-            "priceProtect": "true",
-            "positionSide": self.config.required_position_side,
-            "clientAlgoId": client_algo_id,
-            "newOrderRespType": self.config.new_order_response_type,
-        }
-        forbidden = {"quantity", "reduceOnly", "price", "priceMatch", "timeInForce", "callbackRate", "activatePrice", "goodTillDate", "selfTradePreventionMode"}
+        params = self.build_create_unsigned_business_request(preview, "STOP" if order_type == "STOP_MARKET" else "TAKE_PROFIT") if unsigned_business_request is None else dict(unsigned_business_request)
+        forbidden = {"pair_id", "leg", "quantity", "reduceOnly", "price", "priceMatch", "timeInForce", "callbackRate", "activatePrice", "goodTillDate", "selfTradePreventionMode"}
         if forbidden.intersection(params):
             raise ValueError("forbidden closePosition algo parameter present")
         payload, metadata = self._signed_request_with_metadata("POST", self.config.algo_order_path, params)
         return self.sanitize_algo_summary(payload, client_algo_id), metadata
+
+    @staticmethod
+    def _protective_exchange_params(unsigned_business_request: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in unsigned_business_request.items() if key not in {"pair_id", "leg", "quantity"}}
 
     def _public_get(self, path: str, parameters: dict[str, Any] | None = None) -> BinanceLifecycleHTTPResponse:
         if path not in (self.SERVER_TIME_PATH, self.EXCHANGE_INFO_PATH):

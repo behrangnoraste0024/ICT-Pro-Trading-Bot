@@ -846,7 +846,12 @@ class ProtectiveLifecyclePersistence:
         if journal is None:
             return None
         phase = f"{label}_CANCELED"
+        recovery_key = "stop_status" if label == "STOP" else "take_profit_status"
         for entry in reversed(journal.entries):
+            if entry.get("phase") == "RECOVERY_COMPLETE" and isinstance(entry.get("details"), dict):
+                status = entry["details"].get(recovery_key)
+                if isinstance(status, str) and status:
+                    return status
             if entry.get("phase") != phase or not isinstance(entry.get("details"), dict):
                 continue
             status = entry["details"].get("status")

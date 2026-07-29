@@ -21,7 +21,13 @@ from infrastructure.exchanges.binance_futures_testnet_order_lifecycle_client imp
     BinanceFuturesTestnetOrderLifecycleClient,
 )
 from infrastructure.persistence.live_execution_authorization_policy import LiveExecutionAuthorizationPolicy
+from infrastructure.security.live_execution_mutation_fingerprint_adapter import (
+    build_lifecycle_cancel_from_final_request,
+    build_lifecycle_create_from_final_request,
+)
+from infrastructure.security.live_execution_permit_gate import LiveExecutionPermitGate
 from models.live_execution_authorization import LiveExecutionOperation
+from models.live_execution_permit_enforcement import LiveExecutionPermitGateError, LiveExecutionPermitReference
 from models.binance_futures_testnet_order_lifecycle import (
     BinanceFuturesTestnetBookTicker,
     BinanceFuturesTestnetLifecycleCredentialMetadata,
@@ -60,6 +66,7 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         now_provider=None,
         kill_switch_gate=None,
         authorization_policy=None,
+        permit_gate=None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.runtime_config_engine = runtime_config_engine or BTCPaperRuntimeConfigEngine(repo_root=self.repo_root)
@@ -81,6 +88,10 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             env=self.env,
             kill_switch_gate=kill_switch_gate,
         )
+        self.permit_gate = permit_gate or LiveExecutionPermitGate(
+            authorization_policy=self.authorization_policy,
+            env=self.env,
+        )
 
     def _require_mutation_permission(self, operation: LiveExecutionOperation) -> None:
         decision = self.authorization_policy.authorize(
@@ -95,6 +106,40 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
                 decision.code,
                 decision.message,
             )
+
+    def _require_permit_for_mutation(
+        self,
+        *,
+        operation: LiveExecutionOperation,
+        fingerprint,
+        permit_reference: LiveExecutionPermitReference | None,
+        config: BinanceFuturesTestnetOrderLifecycleConfig,
+    ) -> None:
+        try:
+            self.permit_gate.authorize_and_consume(
+                operation=operation,
+                fingerprint=fingerprint,
+                permit_reference=permit_reference,
+                confirmation_verified=True,
+                credentials_configured=True,
+                runtime_config_path=config.runtime_config_path,
+            )
+        except LiveExecutionPermitGateError as exc:
+            raise LifecycleAbort(exc.code, exc.message, recovery=exc.permit_consumed, permit_consumed=exc.permit_consumed) from None
+
+    @staticmethod
+    def _require_distinct_permit_references(*references: LiveExecutionPermitReference | None, require_all: bool = False) -> None:
+        seen: set[str] = set()
+        for reference in references:
+            if reference is None:
+                if require_all:
+                    raise LifecycleAbort("PERMIT_REQUIRED", "A durable one-time live execution permit is required.")
+                continue
+            if not isinstance(reference, LiveExecutionPermitReference):
+                raise LifecycleAbort("PERMIT_REFERENCE_INVALID", "The live execution permit reference is invalid.")
+            if reference.permit_id in seen:
+                raise LifecycleAbort("PERMIT_REFERENCE_INVALID", "Each mutation boundary requires a distinct permit.")
+            seen.add(reference.permit_id)
 
     def validate(self, config_path: str = "configs/binance_futures_testnet_order_lifecycle.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetLifecycleValidationReport:
         issues: list[BinanceFuturesTestnetLifecycleIssue] = []
@@ -156,6 +201,8 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         confirmation: str | None = None,
         config_path: str = "configs/binance_futures_testnet_order_lifecycle.json",
         expected_profile: str = "balanced_smc_decision_065",
+        create_permit: LiveExecutionPermitReference | None = None,
+        cancel_permit: LiveExecutionPermitReference | None = None,
     ) -> BinanceFuturesTestnetLifecycleResult:
         report = self.validate(config_path, expected_profile)
         config = report.config or BinanceFuturesTestnetOrderLifecycleConfig()
@@ -164,6 +211,11 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             return self._result(config, LifecycleAction.RUN_LIFECYCLE.value, "FAIL", LifecycleDecision.OPERATION_BLOCKED.value, "Lifecycle config failed validation.", issues=issues, lifecycle_id=lifecycle_id, client_order_id=client_order_id)
         if config.require_explicit_lifecycle_confirmation and confirmation != config.lifecycle_confirmation_phrase:
             return self._result(config, LifecycleAction.RUN_LIFECYCLE.value, "WARNING", LifecycleDecision.CONFIRMATION_REQUIRED.value, "Explicit testnet lifecycle confirmation is required.", issues=issues, lifecycle_id=lifecycle_id, client_order_id=client_order_id)
+        try:
+            self._require_distinct_permit_references(create_permit, cancel_permit, require_all=True)
+        except LifecycleAbort as exc:
+            issues.append(self._issue(exc.decision.lower(), "FAIL", exc.reason))
+            return self._result(config, LifecycleAction.RUN_LIFECYCLE.value, "FAIL", exc.decision, exc.reason, issues=issues, lifecycle_id=lifecycle_id, client_order_id=client_order_id)
         client = self._client(config)
         try:
             metadata = client.inspect_credentials()
@@ -207,20 +259,34 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             before_rows = client.fetch_position_risk()
             client.require_zero_position(before_rows)
             preview.zero_position_precheck_valid = True
+            create_unsigned_request = client.build_create_unsigned_business_request(preview)
             self._write_journal(config, journal, LifecyclePhase.CREATE_REQUEST_STARTED.value, {"client_order_id": client_order_id})
             create_started = True
-            self._require_mutation_permission(LiveExecutionOperation.ORDER_LIFECYCLE_CREATE)
-            created, create_meta = client.create_order(preview)
+            fingerprint = build_lifecycle_create_from_final_request(create_unsigned_request)
+            self._require_permit_for_mutation(
+                operation=LiveExecutionOperation.ORDER_LIFECYCLE_CREATE,
+                fingerprint=fingerprint,
+                permit_reference=create_permit,
+                config=config,
+            )
+            created, create_meta = client.create_order(preview, unsigned_business_request=create_unsigned_request)
             self._check_unexpected_fill(created)
             self._write_journal(config, journal, LifecyclePhase.ORDER_CREATED.value, created.to_dict())
             queried, query_meta = client.query_order(client_order_id)
             self._check_unexpected_fill(queried)
             self._write_journal(config, journal, LifecyclePhase.ORDER_QUERIED.value, queried.to_dict())
             if queried.status == "NEW":
+                cancel_unsigned_request = client.build_cancel_unsigned_business_request(client_order_id)
                 self._write_journal(config, journal, LifecyclePhase.CANCEL_REQUEST_STARTED.value, {"client_order_id": client_order_id})
                 cancel_started = True
-                self._require_mutation_permission(LiveExecutionOperation.ORDER_LIFECYCLE_CANCEL)
-                cancelled, cancel_meta = client.cancel_order_exact(client_order_id)
+                fingerprint = build_lifecycle_cancel_from_final_request(cancel_unsigned_request)
+                self._require_permit_for_mutation(
+                    operation=LiveExecutionOperation.ORDER_LIFECYCLE_CANCEL,
+                    fingerprint=fingerprint,
+                    permit_reference=cancel_permit,
+                    config=config,
+                )
+                cancelled, cancel_meta = client.cancel_order_exact(client_order_id, unsigned_business_request=cancel_unsigned_request)
                 self._write_journal(config, journal, LifecyclePhase.ORDER_CANCELLED.value, cancelled.to_dict())
             elif queried.status not in ("EXPIRED", "REJECTED"):
                 self._check_unexpected_fill(queried)
@@ -235,7 +301,7 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         except LifecycleAbort as exc:
             severity = "CRITICAL" if exc.decision in (LifecycleDecision.UNEXPECTED_FILL_DETECTED.value, LifecycleDecision.UNEXPECTED_POSITION_DETECTED.value) else "FAIL"
             issues.append(self._issue(exc.decision.lower(), severity, exc.reason))
-            recovery = bool(exc.recovery or create_started or cancel_started)
+            recovery = bool(exc.recovery or cancel_started or create_meta is not None)
             if recovery:
                 journal.recovery_required = True
                 self._write_journal(config, journal, LifecyclePhase.RECOVERY_REQUIRED.value, {"reason": exc.reason})
@@ -277,7 +343,7 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
         order, meta = client.query_order(client_order_id)
         return self._result(config, LifecycleAction.QUERY_ORDER.value, "PASS", LifecycleDecision.ORDER_QUERY_SUCCESS.value, "Exact lifecycle order query succeeded.", credential_metadata=metadata, final_order=order, query_request=meta, issues=issues, client_order_id=client_order_id, phase=LifecyclePhase.QUERY_COMPLETE.value, credentials_inspected=True, public_server_time_request_used=True, authenticated_transport_invoked=True, query_request_transmitted=True, signature_generated=True)
 
-    def recovery_cancel(self, client_order_id: str, confirmation: str | None = None, config_path: str = "configs/binance_futures_testnet_order_lifecycle.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetLifecycleResult:
+    def recovery_cancel(self, client_order_id: str, confirmation: str | None = None, config_path: str = "configs/binance_futures_testnet_order_lifecycle.json", expected_profile: str = "balanced_smc_decision_065", cancel_permit: LiveExecutionPermitReference | None = None) -> BinanceFuturesTestnetLifecycleResult:
         report = self.validate(config_path, expected_profile)
         config = report.config or BinanceFuturesTestnetOrderLifecycleConfig()
         issues = list(report.issues)
@@ -314,10 +380,17 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
                 credentials_inspected=True,
                 public_server_time_request_used=True,
             )
-        order, meta = client.cancel_order_exact(client_order_id)
+        cancel_unsigned_request = client.build_cancel_unsigned_business_request(client_order_id)
+        fingerprint = build_lifecycle_cancel_from_final_request(cancel_unsigned_request)
+        try:
+            self._require_permit_for_mutation(operation=LiveExecutionOperation.ORDER_LIFECYCLE_CANCEL, fingerprint=fingerprint, permit_reference=cancel_permit, config=config)
+        except LifecycleAbort as exc:
+            issues.append(self._issue(exc.decision.lower(), "FAIL", exc.reason))
+            return self._result(config, LifecycleAction.RECOVERY_CANCEL.value, "FAIL", exc.decision, exc.reason, credential_metadata=metadata, issues=issues, client_order_id=client_order_id, credentials_inspected=True, public_server_time_request_used=True)
+        order, meta = client.cancel_order_exact(client_order_id, unsigned_business_request=cancel_unsigned_request)
         return self._result(config, LifecycleAction.RECOVERY_CANCEL.value, "PASS", LifecycleDecision.ORDER_CANCEL_SUCCESS.value, "Exact lifecycle order recovery cancellation succeeded.", credential_metadata=metadata, cancel_order=order, cancel_request=meta, issues=issues, client_order_id=client_order_id, phase=LifecyclePhase.RECOVERY_CANCEL_COMPLETE.value, credentials_inspected=True, public_server_time_request_used=True, authenticated_transport_invoked=True, cancel_request_transmitted=True, signature_generated=True, order_cancelled=True)
 
-    def recover_lifecycle(self, client_order_id: str, confirmation: str | None = None, config_path: str = "configs/binance_futures_testnet_order_lifecycle.json", expected_profile: str = "balanced_smc_decision_065") -> BinanceFuturesTestnetLifecycleResult:
+    def recover_lifecycle(self, client_order_id: str, confirmation: str | None = None, config_path: str = "configs/binance_futures_testnet_order_lifecycle.json", expected_profile: str = "balanced_smc_decision_065", cancel_permit: LiveExecutionPermitReference | None = None) -> BinanceFuturesTestnetLifecycleResult:
         report = self.validate(config_path, expected_profile)
         config = report.config or BinanceFuturesTestnetOrderLifecycleConfig()
         issues = list(report.issues)
@@ -352,8 +425,15 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
             queried, query_meta = client.query_order(client_order_id)
             self._check_unexpected_fill(queried)
             if queried.status == "NEW":
-                self._require_mutation_permission(LiveExecutionOperation.ORDER_LIFECYCLE_CANCEL)
-                cancelled, cancel_meta = client.cancel_order_exact(client_order_id)
+                cancel_unsigned_request = client.build_cancel_unsigned_business_request(client_order_id)
+                fingerprint = build_lifecycle_cancel_from_final_request(cancel_unsigned_request)
+                self._require_permit_for_mutation(
+                    operation=LiveExecutionOperation.ORDER_LIFECYCLE_CANCEL,
+                    fingerprint=fingerprint,
+                    permit_reference=cancel_permit,
+                    config=config,
+                )
+                cancelled, cancel_meta = client.cancel_order_exact(client_order_id, unsigned_business_request=cancel_unsigned_request)
                 self._check_unexpected_fill(cancelled)
             elif queried.status not in ("CANCELED", "EXPIRED", "REJECTED"):
                 raise LifecycleAbort(LifecycleDecision.ORDER_STATE_UNKNOWN.value, f"Unexpected recovery order status: {queried.status}", recovery=True)
@@ -659,8 +739,9 @@ class BinanceFuturesTestnetOrderLifecycleEngine:
 
 
 class LifecycleAbort(RuntimeError):
-    def __init__(self, decision: str, reason: str, recovery: bool = False) -> None:
+    def __init__(self, decision: str, reason: str, recovery: bool = False, permit_consumed: bool = False) -> None:
         super().__init__(reason)
         self.decision = decision
         self.reason = reason
         self.recovery = recovery
+        self.permit_consumed = permit_consumed

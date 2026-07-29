@@ -8,6 +8,7 @@ import re
 import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from collections.abc import Mapping
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlparse
@@ -23,6 +24,8 @@ from models.binance_futures_testnet_order_test import (
     OrderTestNotionalValidationStatus,
     OrderTestReferencePriceSource,
 )
+from models.live_execution_authorization import LiveExecutionOperation
+from models.live_execution_permit_enforcement import LiveExecutionUnsignedMutationRequest
 
 
 class BinanceFuturesTestnetOrderOperationBlocked(RuntimeError):
@@ -213,17 +216,9 @@ class BinanceFuturesTestnetOrderTestClient:
             parameter_names=parameter_names,
         )
 
-    def submit_test_order(
-        self,
-        preview: BinanceFuturesTestnetOrderTestPreview,
-        server_time: int | None = None,
-    ) -> BinanceFuturesTestnetOrderTestRequestMetadata:
-        self._require_allowed_test_order_transport()
-        self._require_credentials()
+    def build_unsigned_business_request(self, preview: BinanceFuturesTestnetOrderTestPreview) -> LiveExecutionUnsignedMutationRequest:
         self._require_transmission_ready(preview)
-        timestamp = int(server_time if server_time is not None else self._now_ms())
-        recv_window = int(self.config.recv_window_ms)
-        parameters = self._canonical_order_parameters(
+        params = self._canonical_order_parameters(
             preview.client_order_id,
             preview.side,
             preview.order_type,
@@ -231,9 +226,44 @@ class BinanceFuturesTestnetOrderTestClient:
             preview.price,
             preview.time_in_force,
             preview.reduce_only,
-            timestamp=timestamp,
-            include_timestamp=True,
+            timestamp=0,
+            include_timestamp=False,
         )
+        params["positionSide"] = "BOTH"
+        return LiveExecutionUnsignedMutationRequest(
+            operation=LiveExecutionOperation.SIGNED_ORDER_TEST_CREATE,
+            environment="TESTNET",
+            symbol=self.config.exchange_symbol,
+            subject_type="ORDER_TEST",
+            subject_id=preview.client_order_id,
+            fingerprint_context={
+                "schema_version": "1.0", "operation": "SIGNED_ORDER_TEST_CREATE", "environment": "TESTNET", "symbol": self.config.exchange_symbol,
+                "client_order_id": params["newClientOrderId"], "side": params["side"], "position_side": params["positionSide"],
+                "order_type": params["type"], "quantity": str(params["quantity"]),
+                "price": None if "price" not in params else str(params["price"]),
+                "time_in_force": params.get("timeInForce"), "reduce_only": str(params.get("reduceOnly", "false")).lower() == "true",
+            },
+            transport_business_parameters=params,
+        )
+
+    def submit_test_order(
+        self,
+        preview: BinanceFuturesTestnetOrderTestPreview,
+        server_time: int | None = None,
+        unsigned_business_request: Mapping[str, Any] | LiveExecutionUnsignedMutationRequest | None = None,
+    ) -> BinanceFuturesTestnetOrderTestRequestMetadata:
+        self._require_allowed_test_order_transport()
+        self._require_credentials()
+        self._require_transmission_ready(preview)
+        timestamp = int(server_time if server_time is not None else self._now_ms())
+        recv_window = int(self.config.recv_window_ms)
+        if unsigned_business_request is None:
+            unsigned_business_request = self.build_unsigned_business_request(preview)
+        if isinstance(unsigned_business_request, LiveExecutionUnsignedMutationRequest):
+            parameters = dict(unsigned_business_request.transport_business_parameters)
+        else:
+            parameters = dict(unsigned_business_request)
+        parameters["timestamp"] = timestamp
         parameters["recvWindow"] = recv_window
         canonical = self._canonical_query(parameters)
         signature = self._signature(canonical)
