@@ -7,6 +7,7 @@ from urllib.parse import parse_qs
 from infrastructure.exchanges.binance_futures_testnet_order_test_client import (
     BinanceFuturesTestnetOrderOperationBlocked,
     BinanceFuturesTestnetOrderTestClient,
+    BinanceFuturesTestnetOrderTestResponseShapeError,
     BinanceOrderTestHTTPResponse,
 )
 from models.binance_futures_testnet_order_test import BinanceFuturesTestnetOrderTestConfig
@@ -142,6 +143,106 @@ def test_submit_test_order_uses_only_order_test_post_and_redacts_metadata() -> N
     assert "/fapi/v1/order?" not in calls[0][0]
     assert "signature=" in calls[0][1]
     assert calls[0][3]["X-MBX-APIKEY"] == "unit-test-key-token"
+
+
+def test_submit_test_order_accepts_none_payload_and_preserves_safe_metadata() -> None:
+    calls = []
+
+    def authenticated_post(url, body, timeout, headers):
+        calls.append((url, body.decode("utf-8"), headers))
+        return BinanceOrderTestHTTPResponse(200, "https://demo-fapi.binance.com/fapi/v1/order/test", None, 0, "application/json")
+
+    client = BinanceFuturesTestnetOrderTestClient(BinanceFuturesTestnetOrderTestConfig(), env=_env(), authenticated_post=authenticated_post, now_ms_provider=lambda: 123)
+    filters = client.parse_exchange_filters(_exchange_info())
+    preview = client.build_order_test_preview("smcbot-test-post-none", "BUY", "MARKET", 0.001, exchange_filters=filters, mark_price="50000")
+
+    metadata = client.submit_test_order(preview, server_time=123)
+
+    assert metadata.response_empty_object is True
+    assert metadata.response_body_type == "null"
+    assert metadata.response_byte_count_category == "empty"
+    assert metadata.response_content_type_category == "json"
+    assert metadata.response_status_code == 200
+    assert len(calls) == 1
+    assert metadata.retry_count == 0
+
+
+def test_submit_test_order_rejects_non_empty_object_after_preserving_safe_metadata() -> None:
+    calls = []
+
+    def authenticated_post(url, body, timeout, headers):
+        calls.append((url, body.decode("utf-8"), headers))
+        return BinanceOrderTestHTTPResponse(
+            200,
+            "https://demo-fapi.binance.com/fapi/v1/order/test",
+            {"unexpected": "API_KEY_SENTINEL", "nested": {"signature": "SIGNATURE_SENTINEL"}},
+            86,
+            "application/json; charset=utf-8",
+        )
+
+    client = BinanceFuturesTestnetOrderTestClient(BinanceFuturesTestnetOrderTestConfig(), env=_env(), authenticated_post=authenticated_post, now_ms_provider=lambda: 123)
+    filters = client.parse_exchange_filters(_exchange_info())
+    preview = client.build_order_test_preview("smcbot-test-post-shape", "BUY", "MARKET", 0.001, exchange_filters=filters, mark_price="50000")
+
+    with pytest.raises(BinanceFuturesTestnetOrderTestResponseShapeError) as exc_info:
+        client.submit_test_order(preview, server_time=123)
+
+    metadata = exc_info.value.metadata
+    assert metadata.request_transmitted is True
+    assert metadata.response_received is True
+    assert metadata.response_status_code == 200
+    assert metadata.final_host_validated is True
+    assert metadata.response_empty_object is False
+    assert metadata.response_body_type == "object"
+    assert metadata.response_byte_count_category == "small"
+    assert metadata.response_content_type_category == "json"
+    assert metadata.binance_error_code is None
+    assert metadata.binance_error_message is None
+    assert metadata.retry_count == 0
+    assert len(calls) == 1
+    serialized = str(metadata.to_dict())
+    assert "API_KEY_SENTINEL" not in serialized
+    assert "SIGNATURE_SENTINEL" not in serialized
+    assert "unexpected" not in serialized
+
+
+def test_submit_test_order_preserves_only_sanitized_binance_error_metadata() -> None:
+    calls = []
+
+    def authenticated_post(url, body, timeout, headers):
+        calls.append((url, body.decode("utf-8"), headers))
+        return BinanceOrderTestHTTPResponse(
+            400,
+            "https://demo-fapi.binance.com/fapi/v1/order/test",
+            {
+                "code": "-1021",
+                "msg": "Timestamp for this request was outside recvWindow.",
+                "rawResponse": "RAW_RESPONSE_SENTINEL",
+                "headers": "HEADER_SENTINEL",
+                "url": "SIGNED_URL_SENTINEL?signature=SIGNATURE_SENTINEL",
+            },
+            192,
+            "application/json",
+        )
+
+    client = BinanceFuturesTestnetOrderTestClient(BinanceFuturesTestnetOrderTestConfig(), env=_env(), authenticated_post=authenticated_post, now_ms_provider=lambda: 123)
+    filters = client.parse_exchange_filters(_exchange_info())
+    preview = client.build_order_test_preview("smcbot-test-post-error", "SELL", "MARKET", 0.001, exchange_filters=filters, mark_price="50000")
+
+    with pytest.raises(BinanceFuturesTestnetOrderTestResponseShapeError) as exc_info:
+        client.submit_test_order(preview, server_time=123)
+
+    metadata = exc_info.value.metadata
+    assert metadata.response_status_code == 400
+    assert metadata.binance_error_code == "-1021"
+    assert metadata.binance_error_message == "redacted authenticated test order error"
+    assert metadata.response_body_type == "object"
+    assert metadata.response_byte_count_category == "small"
+    assert metadata.retry_count == 0
+    assert len(calls) == 1
+    serialized = str(metadata.to_dict())
+    for sentinel in ("RAW_RESPONSE_SENTINEL", "HEADER_SENTINEL", "SIGNED_URL_SENTINEL", "SIGNATURE_SENTINEL"):
+        assert sentinel not in serialized
 
 
 def test_submit_test_order_omitted_unsigned_request_copies_business_params_before_signing() -> None:

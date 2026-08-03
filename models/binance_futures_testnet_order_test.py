@@ -265,6 +265,11 @@ class BinanceFuturesTestnetOrderTestRequestMetadata:
     response_status_code: int | None = None
     final_host_validated: bool = False
     response_empty_object: bool = False
+    response_body_type: str = "unknown"
+    response_byte_count_category: str = "unknown"
+    response_content_type_category: str = "unknown"
+    binance_error_code: str | None = None
+    binance_error_message: str | None = None
     retry_count: int = 0
     raw_url_exposed: bool = False
     raw_headers_exposed: bool = False

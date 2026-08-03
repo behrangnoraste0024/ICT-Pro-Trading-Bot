@@ -20,6 +20,26 @@ The detailed Release 2.93 mutation-safety contract is maintained in [validation_
 
 Binance Futures authenticated mutation remains Binance Futures Testnet/Demo only, BTCUSDT only, Production disabled, and supervised/manual only. A signal, Dashboard action, CLI confirmation phrase, or operator intent is not mutation authorization.
 
+### Phase C Supervised-Mutation Status Preflight
+
+The canonical read-only status procedure is maintained in [validation_gate_runbook.md](validation_gate_runbook.md), section `Phase C Read-Only Status Preflight`. Before preparing any separately authorized supervised mutation, the operator must use HTTP GET only:
+
+```text
+GET <CONTROL_PLANE_BASE_URL>/api/v1/live/kill-switch/status
+GET <CONTROL_PLANE_BASE_URL>/api/v1/live/recovery/status
+```
+
+The durable kill-switch status must report `state == "RELEASED"`. The recovery status must report `required == false`. The decision must fail closed: any `ENGAGED`, unavailable, malformed, ambiguous, failed, or untrusted result is `BLOCKED` and must not be interpreted as safe. `GET /api/v1/live/recovery/status` is the status check; `POST /api/v1/live/recovery/run` is a recovery action and is not part of pre-execution status verification.
+
+These checks are necessary but not sufficient. They do not issue, consume, or authorize a one-time permit; they do not replace the separate permit requirement; they do not replace the exact operator confirmation required by the selected scenario; and they do not broaden the Testnet/Demo-only, BTCUSDT-only scope. This document update does not authorize Demo/Testnet execution.
+
+### Phase C Signed Order-Test Runbook Gate
+
+The canonical documentation-only procedure is maintained in [validation_gate_runbook.md](validation_gate_runbook.md), section `Phase C Signed Order-Test Supervised Execution Runbook`. This readiness document does not authorize execution.
+
+Before any future Signed Order-Test, the operator must obtain separate approval for one exact attempt only. The scenario must remain Binance Futures Testnet/Demo only, BTCUSDT only, and Production disabled. Both read-only status checks are required: `GET /api/v1/live/kill-switch/status` must report `state == "RELEASED"`, and `GET /api/v1/live/recovery/status` must report `required == false`; every unavailable, malformed, ambiguous, failed, or untrusted result is blocked.
+
+The approved preview, request JSON, and fingerprint must be frozen before permit issuance. The one-time permit must exactly match `SIGNED_ORDER_TEST_CREATE`, the frozen request, the permit ID, and the exact permit version. The submit confirmation must be exactly `CONFIRM_TESTNET_ORDER_TEST`. One command, one process, one attempt, and POST retry zero are mandatory. Testnet credentials must be removed immediately after the attempt or abort. A complete sanitized evidence package is required. Passing readiness does not authorize execution.
 ### Permit Requirements by Mutation Path
 
 Lifecycle Create:

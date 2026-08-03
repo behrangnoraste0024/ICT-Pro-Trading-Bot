@@ -479,7 +479,7 @@ def test_lifecycle_cli_forwards_exact_permits_once_without_bypass_or_transport(m
 def test_order_test_cli_requires_exact_permit_reference(monkeypatch, permit_env):
     _patch_order_test(monkeypatch, _RejectingExecutionEngine)
     before_rows, before_actions = _execution_before(permit_env)
-    result = _run_cli(order_test_cli.main, ["--submit-test-order", "--confirm-testnet-order-test", "CONFIRM_BINANCE_FUTURES_TESTNET_ORDER_TEST"])
+    result = _run_cli(order_test_cli.main, ["--submit-test-order", "--confirm-testnet-order-test", "CONFIRM_TESTNET_ORDER_TEST"])
     _assert_execution_rejected(permit_env, before_rows, before_actions, result)
 
 
@@ -507,7 +507,7 @@ def test_order_test_cli_rejects_malformed_permit_reference_without_auto_issue(mo
 def test_order_test_cli_forwards_exact_permit_once_without_bypass_or_transport(monkeypatch, permit_env):
     _patch_order_test(monkeypatch, _RecordingExecutionEngine)
     before_rows, before_actions = _execution_before(permit_env)
-    result = _run_cli(order_test_cli.main, ["--submit-test-order", "--confirm-testnet-order-test", "CONFIRM_BINANCE_FUTURES_TESTNET_ORDER_TEST", "--permit-id", ORDER_TEST_PERMIT_ID, "--permit-version", "7"])
+    result = _run_cli(order_test_cli.main, ["--submit-test-order", "--confirm-testnet-order-test", "CONFIRM_TESTNET_ORDER_TEST", "--permit-id", ORDER_TEST_PERMIT_ID, "--permit-version", "7"])
     assert result.code == 1
     assert _RecordingExecutionEngine.constructor_count == 1
     assert len(_RecordingExecutionEngine.instances) == 1

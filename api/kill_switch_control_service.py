@@ -60,6 +60,21 @@ class KillSwitchControlService:
         finally:
             persistence.close()
 
+    def status(self) -> dict[str, Any]:
+        persistence = self.persistence_factory(env=self.env)
+        try:
+            persistence.ensure_available()
+            state = persistence.current()
+            if state is None or state.state not in {"ENGAGED", "RELEASED"}:
+                raise self._error(503, "KILL_SWITCH_STATE_UNAVAILABLE")
+            return self._response(state, changed=False)
+        except KillSwitchHTTPError:
+            raise
+        except KillSwitchPersistenceError as exc:
+            raise self._persistence_error(exc) from exc
+        finally:
+            persistence.close()
+
     def release(self) -> dict[str, Any]:
         persistence = self.persistence_factory(env=self.env)
         lock_path: Path | None = None
@@ -191,6 +206,7 @@ class KillSwitchControlService:
             "PERSISTENCE_UNAVAILABLE": "Kill switch persistence is unavailable.",
             "KILL_SWITCH_VERSION_CONFLICT": "Kill switch state changed concurrently.",
             "KILL_SWITCH_PERSIST_FAILED": "Kill switch state could not be persisted.",
+            "KILL_SWITCH_STATE_UNAVAILABLE": "Kill switch state is unavailable.",
             "KILL_SWITCH_UNAVAILABLE": "Kill switch control is unavailable.",
         }
         return KillSwitchHTTPError(status_code, code, messages[code])

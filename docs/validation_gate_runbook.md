@@ -18,7 +18,335 @@ Release 2.93 enforces durable one-time permit authorization at every approved au
 
 The permit gate applies only to the approved BTCUSDT Testnet mutation paths. Read-only GET diagnostics remain read-only, and this section does not enable live production execution, multi-symbol operation, automatic trading, or strategy-runner mutation.
 
-### Enforced Mutation Boundaries
+### Phase C Read-Only Status Preflight
+
+Before any separately authorized Phase C mutation scenario, the supervising operator must complete these read-only status checks against the control plane. The decision is fail closed: only the exact success values below allow the operator to continue to separate permit preparation. Use HTTP GET only:
+
+```text
+GET <CONTROL_PLANE_BASE_URL>/api/v1/live/kill-switch/status
+GET <CONTROL_PLANE_BASE_URL>/api/v1/live/recovery/status
+```
+
+1. Read durable kill-switch status from `GET /api/v1/live/kill-switch/status`.
+2. Require `state == "RELEASED"`, `changed == false`, and durable `version` and `updated_at` values in the `KillSwitchControlResponse`.
+3. Stop with `STOP - PHASE C MUTATION BLOCKED` when `state == "ENGAGED"`, `state` is missing, `state` is outside `ENGAGED` or `RELEASED`, persistence/schema is unavailable, the HTTP request fails, or the response is unavailable, malformed, ambiguous, or cannot be sanitized for operator reporting.
+4. Read unresolved-recovery status from `GET /api/v1/live/recovery/status`.
+5. Require `required == false` in the `LiveRecoveryStatusResponse`.
+6. Stop with `STOP - PHASE C MUTATION BLOCKED` when `required == true`, the status request fails, or the response is unavailable, malformed, ambiguous, or cannot be sanitized for operator reporting.
+7. Only after both GET checks pass may a separately authorized scenario proceed to its one-time permit and exact confirmation steps.
+
+These status reads are not mutation routes. Do not use `POST /api/v1/live/kill-switch/engage`, `POST /api/v1/live/kill-switch/release`, or `POST /api/v1/live/recovery/run` as pre-execution status checks. Do not automatically release the kill switch, do not automatically run recovery, and do not interpret an unavailable, untrusted, or ambiguous status as safe. Passing these GET checks does not issue, consume, or authorize a permit, and it does not replace the later exact confirmation phrase required by the selected supervised scenario.
+
+### Local Persistence Provisioning Contract
+
+The repository-owned Compose file `docker-compose.persistence.yml` is for supervised local/Testnet persistence only. It does not authorize C2C, credentials, permit issue, signing, or Binance contact.
+
+Operators must provide `ICT_POSTGRES_DB`, `ICT_POSTGRES_USER`, and `ICT_POSTGRES_PASSWORD` outside the repository. The required variable names are ICT_POSTGRES_DB, ICT_POSTGRES_USER, and ICT_POSTGRES_PASSWORD. Secret values must not be committed, printed, pasted into Codex prompts, or included in screenshots.
+
+Configuration validation command:
+
+```powershell
+docker compose -f docker-compose.persistence.yml config
+```
+
+Future startup command, documented only and not executed by this runbook section:
+
+```powershell
+docker compose -p ict-pro-tradingbot -f docker-compose.persistence.yml up -d
+```
+
+Future status command, documented only:
+
+```powershell
+docker compose -p ict-pro-tradingbot -f docker-compose.persistence.yml ps
+```
+
+Future shutdown command that preserves the named volume:
+
+```powershell
+docker compose -p ict-pro-tradingbot -f docker-compose.persistence.yml down
+```
+
+`down -v` is prohibited unless separately authorized. Migration and durable state initialization remain separate future passes. Container health does not prove schema readiness or kill-switch state. Existing old-project containers must not be reused.
+
+## Phase C Signed Order-Test Supervised Execution Runbook
+
+DOCUMENTATION ONLY - NO DEMO/TESTNET EXECUTION IS AUTHORIZED
+
+This runbook prepares a future separately authorized Binance Futures Testnet/Demo Signed Order-Test only. It is not execution approval, does not expose credentials, does not issue or consume a permit by itself, does not contact Binance, and does not authorize Codex to run any command shown here.
+
+### Phase 0 - Separate Authorization Boundary
+
+- This runbook does not authorize execution.
+- The user must separately approve one exact Signed Order-Test scenario before any credential exposure, permit operation, or submit command.
+- Approval applies to one Signed Order-Test attempt only.
+- Scope is BTCUSDT only and Binance Futures Testnet/Demo only.
+- Production remains disabled.
+- Autonomous execution is prohibited.
+- No actual exchange order creation is authorized; the only documented endpoint is Binance Test Order validation.
+- No later protective, lifecycle, paper-position, real-position, or runner scenario is authorized by this runbook.
+
+### Phase 1 - Operator and Environment Record
+
+Record a local sanitized operator worksheet before any permit or credential step:
+
+```text
+scenario_id: <UNIQUE_SCENARIO_ID>
+utc_timestamp: <UTC_TIMESTAMP>
+local_date: <LOCAL_DATE>
+operator: <OPERATOR>
+repository_branch: <BRANCH>
+repository_head: <HEAD_SHA>
+python_exe: <PYTHON_EXE>
+python_version: <PYTHON_VERSION>
+environment: TESTNET
+symbol: BTCUSDT
+production_disabled_evidence: <EVIDENCE>
+client_order_id: <UNIQUE_CLIENT_ORDER_ID>
+side: <APPROVED_SIDE>
+order_type: <APPROVED_ORDER_TYPE>
+quantity: <APPROVED_MINIMAL_QUANTITY>
+price: <APPROVED_PRICE_IF_REQUIRED>
+time_in_force: <APPROVED_TIME_IN_FORCE_IF_REQUIRED>
+reduce_only: <APPROVED_REDUCE_ONLY>
+```
+
+Do not record API keys, API secrets, signatures, authenticated headers, signed URLs, raw authenticated payloads, or credential lengths.
+
+### Phase 2 - Read-Only Safety Status
+
+Use HTTP GET only:
+
+```text
+GET <CONTROL_PLANE_BASE_URL>/api/v1/live/kill-switch/status
+GET <CONTROL_PLANE_BASE_URL>/api/v1/live/recovery/status
+```
+
+Require the kill-switch response to report `state == "RELEASED"`, `changed == false`, and durable `version` and `updated_at` values. Require the recovery response to report `required == false`.
+
+Every other outcome is:
+
+```text
+STOP - SIGNED ORDER-TEST BLOCKED
+```
+
+Do not automatically release the kill switch. Do not automatically run recovery. Do not interpret unavailable, malformed, ambiguous, failed, missing, untrusted, or unsanitizable status as safe. Do not proceed after an ambiguous response.
+
+### Phase 3 - Local Static and Preview Preparation
+
+Use the exact interpreter path approved for the future scenario:
+
+```powershell
+$PythonExe = "<PYTHON_EXE>"
+& $PythonExe --version
+& $PythonExe -m pytest --version
+```
+
+Run validation and preview only after separate authorization in an operator shell; these templates are documentation and must not be executed by this task:
+
+```powershell
+& $PythonExe scripts/run_binance_futures_testnet_order_test.py --validate-only
+```
+
+MARKET preview template:
+
+```powershell
+& $PythonExe scripts/run_binance_futures_testnet_order_test.py `
+  --build-preview `
+  --client-order-id <UNIQUE_CLIENT_ORDER_ID> `
+  --side <APPROVED_SIDE> `
+  --order-type MARKET `
+  --quantity <APPROVED_MINIMAL_QUANTITY> `
+  --reduce-only
+```
+
+For a MARKET preview, omit `--price` and omit `--time-in-force`. If `reduce_only` is false, omit `--reduce-only` from the preview command and record `reduce_only: false` explicitly. The frozen JSON must record `price: null` and `time_in_force: null`.
+
+LIMIT preview template:
+
+```powershell
+& $PythonExe scripts/run_binance_futures_testnet_order_test.py `
+  --build-preview `
+  --client-order-id <UNIQUE_CLIENT_ORDER_ID> `
+  --side <APPROVED_SIDE> `
+  --order-type LIMIT `
+  --quantity <APPROVED_MINIMAL_QUANTITY> `
+  --price <APPROVED_PRICE> `
+  --time-in-force <APPROVED_TIME_IN_FORCE> `
+  --reduce-only
+```
+
+For a LIMIT preview, include both `--price <APPROVED_PRICE>` and `--time-in-force <APPROVED_TIME_IN_FORCE>`. The approved `time_in_force` for the frozen fingerprint is exactly `GTC` or `GTX`. If `reduce_only` is false, omit `--reduce-only` from the preview command and record `reduce_only: false` explicitly. Do not rely on an implicit CLI default for any mutation-relevant value.
+
+Record the sanitized preview, exact unsigned business parameters, notional/filter result, and local `transmission_ready` status. Do not include credentials or permit references in preview unless a later production CLI contract requires them.
+
+### Phase 4 - Fingerprint and Request-File Freeze
+
+Create one immutable request artifact:
+
+```text
+<SIGNED_ORDER_TEST_REQUEST_JSON>
+```
+
+The frozen JSON must contain exactly the fingerprint business fields for `SIGNED_ORDER_TEST_CREATE`:
+
+```json
+{
+  "schema_version": "1.0",
+  "operation": "SIGNED_ORDER_TEST_CREATE",
+  "environment": "TESTNET",
+  "symbol": "BTCUSDT",
+  "client_order_id": "<UNIQUE_CLIENT_ORDER_ID>",
+  "side": "<APPROVED_SIDE>",
+  "position_side": "BOTH",
+  "order_type": "<APPROVED_ORDER_TYPE>",
+  "quantity": "<APPROVED_MINIMAL_QUANTITY>",
+  "price": "<APPROVED_PRICE_IF_REQUIRED_OR_NULL>",
+  "time_in_force": "<APPROVED_TIME_IN_FORCE_IF_REQUIRED_OR_NULL>",
+  "reduce_only": <APPROVED_REDUCE_ONLY>
+}
+```
+
+The request must include the exact environment, exact BTCUSDT symbol, exact operation `SIGNED_ORDER_TEST_CREATE`, exact subject/client order ID, exact business parameters, and exact fingerprint. It must not include timestamp, recvWindow, signature, API key, API secret, header, credential, authenticated URL, raw request, raw response, or metadata.
+
+After the preview and request JSON are frozen, any parameter change invalidates the scenario and requires a new preview plus separate approval. Do not manually modify a request after permit issuance.
+
+### Phase 5 - One-Time Permit Preparation
+
+Issue the one-time permit only after the frozen request is reviewed:
+
+```powershell
+& $PythonExe scripts/issue_live_execution_permit.py `
+  --operation SIGNED_ORDER_TEST_CREATE `
+  --request-file <SIGNED_ORDER_TEST_REQUEST_JSON> `
+  --issued-by <OPERATOR> `
+  --confirmation CONFIRM_TESTNET_ONE_TIME_EXECUTION_PERMIT
+```
+
+Show the permit without mutating it:
+
+```powershell
+& $PythonExe scripts/show_live_execution_permit.py --permit-id <PERMIT_ID>
+```
+
+Record permit ID, exact expected version, state `ISSUED`, environment, symbol, operation, subject/client order ID, fingerprint, issued time, and expiry when present. The permit must exactly match the frozen request. Any mismatch is:
+
+```text
+STOP - PERMIT DOES NOT MATCH SCENARIO
+```
+
+### Phase 6 - Final Human Hold Point
+
+Immediately before credential exposure, perform a second explicit human review. Verify separate user authorization is still valid, kill switch still reports `RELEASED`, recovery still reports `required == false`, scenario parameters are unchanged, frozen request hash is unchanged, permit is still `ISSUED`, permit version is unchanged, permit is not expired, Production remains disabled, and BTCUSDT/Testnet-Demo scope is unchanged.
+
+The CLI confirmation phrase is not the same as user execution authorization. Both are required.
+
+### Phase 7 - Temporary Credential Boundary
+
+Expose only Binance Futures Testnet/Demo credentials, only immediately before the one approved submission, and only in the operator-controlled shell. Never print credential values. Never place credentials in command history, documents, request JSON, permit files, reports, screenshots, or logs. Never use production credentials. Stop when the credential source or environment cannot be proven. Do not run credential inspection commands that print values.
+
+Static credential-readiness template, documentation only:
+
+```powershell
+& $PythonExe scripts/run_binance_futures_testnet_order_test.py --check-credentials
+```
+
+### Phase 8 - Exact One-Attempt Submit Template
+
+The future approved submit must use exactly one command, one process, and one attempt:
+
+MARKET submit template:
+
+```powershell
+& $PythonExe scripts/run_binance_futures_testnet_order_test.py `
+  --submit-test-order `
+  --client-order-id <UNIQUE_CLIENT_ORDER_ID> `
+  --side <APPROVED_SIDE> `
+  --order-type MARKET `
+  --quantity <APPROVED_MINIMAL_QUANTITY> `
+  --reduce-only `
+  --permit-id <PERMIT_ID> `
+  --permit-version <PERMIT_VERSION> `
+  --confirm-testnet-order-test CONFIRM_TESTNET_ORDER_TEST
+```
+
+For a MARKET submit, omit `--price` and omit `--time-in-force`.
+
+LIMIT submit template:
+
+```powershell
+& $PythonExe scripts/run_binance_futures_testnet_order_test.py `
+  --submit-test-order `
+  --client-order-id <UNIQUE_CLIENT_ORDER_ID> `
+  --side <APPROVED_SIDE> `
+  --order-type LIMIT `
+  --quantity <APPROVED_MINIMAL_QUANTITY> `
+  --price <APPROVED_PRICE> `
+  --time-in-force <APPROVED_TIME_IN_FORCE> `
+  --reduce-only `
+  --permit-id <PERMIT_ID> `
+  --permit-version <PERMIT_VERSION> `
+  --confirm-testnet-order-test CONFIRM_TESTNET_ORDER_TEST
+```
+
+For a LIMIT submit, pass both exact approved values: `--price <APPROVED_PRICE>` and `--time-in-force <APPROVED_TIME_IN_FORCE>`. The selected submit form must match the selected preview form, and every submitted value must equal the frozen request. If `reduce_only` is false, omit `--reduce-only` from the submit command and record `reduce_only: false`. Use one command, one process, and one attempt. POST retry zero is mandatory. No automatic retry, no second permit, no permit replacement, and no parameter change after authorization is allowed.
+
+This template is documentation only and must not be executed by this task.
+
+### Phase 9 - Expected Safe Outcome
+
+The endpoint is `/fapi/v1/order/test`. A successful Test Order validates parameters and must not create an exchange order, matching-engine order, exchange position, local paper state, or exchange state mutation. The permit is one-time and may be consumed before transport. Persistence must commit and close before signing and transport. Output must be sanitized. Secret, signature, authenticated URL, SQL, traceback, raw request, raw response, authenticated headers, and credential output is forbidden.
+
+Do not claim success without exact evidence.
+
+### Phase 10 - Post-Attempt Verification
+
+Record exact CLI exit code, sanitized decision/result, `mutation_transmitted`, `permit_consumed`, `recovery_required`, signing count when available, POST count when available, retry count, permit show after attempt, final permit state/version, final kill-switch status, and final recovery status.
+
+If a supported read-only command proves no order or position was created, record that evidence. Do not invent an unsupported query command. When no exact read-only query is proven, require separate authorization before reconciliation.
+
+### Phase 11 - Uncertainty and Failure Rules
+
+No blind retry. No rerun with the same permit. No permit refund. No permit reuse. No replacement permit in the same scenario. Do not infer failure merely from a missing response. Do not infer safety from a timeout. Preserve sanitized terminal evidence, inspect permit state, inspect recovery status, and stop for independent review. Exact reconciliation requires separate authorization when not already covered by a proven read-only command.
+
+Distinguish:
+
+```text
+pre-consume denial: failed safe, no mutation transmitted
+post-consume uncertainty: permit remains consumed, recovery may be required, no retry
+```
+
+### Phase 12 - Credential Removal and Closure
+
+Remove Testnet credential environment variables immediately after the attempt or abort. Do not print their values. Verify only their absence. Preserve sanitized evidence. Do not leave a credential-bearing terminal or process running. Do not persist credentials in files or logs.
+
+### Phase 13 - Unused-Permit Abort Procedure
+
+When submission did not begin and the permit remains `ISSUED`, revoke only after separate operator approval:
+
+```powershell
+& $PythonExe scripts/revoke_live_execution_permit.py `
+  --permit-id <PERMIT_ID> `
+  --expected-version <PERMIT_VERSION> `
+  --reason-code OPERATOR_REVOKED `
+  --confirmation CONFIRM_TESTNET_REVOKE_EXECUTION_PERMIT
+```
+
+Revoke only after proving submit did not begin. Do not revoke a consumed permit. Do not refund or replace a consumed permit. Revocation is a permit operation and requires separate operator approval during a real scenario.
+
+### Phase 14 - Required Evidence Package
+
+Produce one sanitized report containing separate user authorization reference, scenario ID, UTC timestamps, branch and HEAD, interpreter version, Testnet/Demo and BTCUSDT proof, production-disabled proof, pre/post kill-switch status, pre/post recovery status, exact scenario parameters, preview identity, frozen request SHA-256, fingerprint, permit ID and versions without secrets, permit state before and after, exact submit command with secrets absent, exact confirmation phrase used, exit code, sanitized outcome, `mutation_transmitted`, `permit_consumed`, `recovery_required`, POST count and retry count when available, no-order/no-position evidence when proven, credential-removal evidence, deviations, warnings, and unresolved uncertainty.
+
+The report must end with one of:
+
+```text
+SIGNED ORDER-TEST SCENARIO EVIDENCE COMPLETE - READY FOR REVIEW
+SIGNED ORDER-TEST SCENARIO BLOCKED - <exact reason>
+```
+
+Do not state that the scenario is accepted. Only independent review may accept it.
+## Enforced Mutation Boundaries
 
 The five permit-gated mutation boundaries are:
 

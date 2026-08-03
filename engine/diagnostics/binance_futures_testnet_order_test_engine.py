@@ -17,6 +17,7 @@ from engine.diagnostics.btc_paper_runtime_config_engine import BTCPaperRuntimeCo
 from infrastructure.exchanges.binance_futures_testnet_order_test_client import (
     BinanceFuturesTestnetOrderOperationBlocked,
     BinanceFuturesTestnetOrderTestClient,
+    BinanceFuturesTestnetOrderTestResponseShapeError,
 )
 from infrastructure.persistence.live_execution_authorization_policy import LiveExecutionAuthorizationPolicy
 from infrastructure.security.live_execution_mutation_fingerprint_adapter import build_signed_order_test_create_from_final_request
@@ -240,6 +241,24 @@ class BinanceFuturesTestnetOrderTestEngine:
         except OrderTestAuthorizationAbort as exc:
             issues.append(self._issue(exc.code.lower(), "FAIL", exc.message))
             return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", exc.code, exc.message, credential_metadata=metadata, issues=issues, credentials_inspected=True)
+        except BinanceFuturesTestnetOrderTestResponseShapeError as exc:
+            request_metadata = exc.metadata
+            details = {
+                "http_status_code": request_metadata.response_status_code,
+                "http_method": request_metadata.method,
+                "final_allowed_host": request_metadata.host if request_metadata.final_host_validated else None,
+                "allowed_path": request_metadata.path,
+                "request_transmitted": request_metadata.request_transmitted,
+                "response_received": request_metadata.response_received,
+                "retry_count": request_metadata.retry_count,
+                "body_type": request_metadata.response_body_type,
+                "byte_count_category": request_metadata.response_byte_count_category,
+                "content_type_category": request_metadata.response_content_type_category,
+                "binance_error_code": request_metadata.binance_error_code,
+                "binance_error_message": request_metadata.binance_error_message,
+            }
+            issues.append(self._issue("order_test_response_shape_invalid", "FAIL", self._sanitize(str(exc)), details))
+            return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", BinanceFuturesTestnetOrderTestDecision.ORDER_TEST_REJECTED.value, "Test Order request failed safely.", credential_metadata=metadata, request_metadata=request_metadata, issues=issues, credentials_inspected=True, public_server_time_request_used=True, public_exchange_info_request_used=True, signature_generated=True, authenticated_transport_invoked=True, test_order_request_transmitted=True, authenticated_test_request_used=True)
         except Exception as exc:
             issues.append(self._issue("order_test_request_failed", "FAIL", self._sanitize(str(exc))))
             return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", BinanceFuturesTestnetOrderTestDecision.ORDER_TEST_REJECTED.value, "Test Order request failed safely.", credential_metadata=metadata, issues=issues, credentials_inspected=True, public_exchange_info_request_used=True)

@@ -32,12 +32,19 @@ class BinanceFuturesTestnetOrderOperationBlocked(RuntimeError):
     pass
 
 
+class BinanceFuturesTestnetOrderTestResponseShapeError(ValueError):
+    def __init__(self, metadata: BinanceFuturesTestnetOrderTestRequestMetadata) -> None:
+        super().__init__("test order response must be an empty object")
+        self.metadata = metadata
+
+
 @dataclass
 class BinanceOrderTestHTTPResponse:
     status_code: int
     final_url: str
     payload: Any
     response_bytes: int | None = None
+    content_type: str | None = None
 
 
 class BinanceFuturesTestnetOrderTestClient:
@@ -276,7 +283,7 @@ class BinanceFuturesTestnetOrderTestClient:
             host=self.ALLOWED_HOST,
             path=self.TEST_ORDER_PATH,
             parameter_names=sorted(parameters.keys()),
-            timestamp=timestamp,
+            timestamp=0,
             recv_window_ms=recv_window,
             signature_generated=True,
             signature_redacted=True,
@@ -285,15 +292,28 @@ class BinanceFuturesTestnetOrderTestClient:
         response = self.authenticated_post(url, body, int(self.config.request_timeout_seconds), headers)
         if urlparse(response.final_url).hostname != self.ALLOWED_HOST:
             raise ValueError("final response host is not allowlisted")
+        self._copy_safe_response_metadata(metadata, response)
         if not (response.payload == {} or response.payload is None):
-            raise ValueError("test order response must be an empty object")
+            raise BinanceFuturesTestnetOrderTestResponseShapeError(metadata)
+        metadata.response_empty_object = True
+        return metadata
+
+    def _copy_safe_response_metadata(
+        self,
+        metadata: BinanceFuturesTestnetOrderTestRequestMetadata,
+        response: BinanceOrderTestHTTPResponse,
+    ) -> None:
         metadata.request_transmitted = True
         metadata.response_received = True
         metadata.response_status_code = int(response.status_code)
         metadata.final_host_validated = True
-        metadata.response_empty_object = True
         metadata.retry_count = 0
-        return metadata
+        metadata.response_body_type = _body_type_category(response.payload)
+        metadata.response_byte_count_category = _byte_count_category(response.response_bytes)
+        metadata.response_content_type_category = _content_type_category(response.content_type)
+        if isinstance(response.payload, Mapping):
+            metadata.binance_error_code = _safe_binance_error_code(response.payload.get("code"))
+            metadata.binance_error_message = _safe_binance_error_message(response.payload.get("msg"))
 
     def validate_base_url(self, url: str) -> None:
         parsed = urlparse(url)
@@ -518,7 +538,80 @@ def _format_decimal(value: Decimal | float) -> str:
 
 def _sanitize_error(text: Any) -> str:
     message = str(text)
-    for marker in ("signature=", "X-MBX-APIKEY", "apiKey"):
-        if marker in message:
+    lowered = message.lower()
+    for marker in (
+        "signature=",
+        "x-mbx-apikey",
+        "apikey",
+        "apisecret",
+        "api-secret",
+        "secret",
+        "authorization",
+        "signed-url",
+        "signed_query",
+        "timestamp",
+        "database_url",
+        "postgresql://",
+        "select ",
+        "traceback",
+    ):
+        if marker in lowered:
             return "redacted authenticated test order error"
     return message[:180]
+
+
+def _body_type_category(payload: Any) -> str:
+    if isinstance(payload, Mapping):
+        return "object"
+    if isinstance(payload, list):
+        return "list"
+    if isinstance(payload, str):
+        return "string"
+    if isinstance(payload, bool):
+        return "boolean"
+    if isinstance(payload, (int, float)) and not isinstance(payload, bool):
+        return "number"
+    if payload is None:
+        return "null"
+    return "other"
+
+
+def _byte_count_category(response_bytes: int | None) -> str:
+    if response_bytes is None:
+        return "unknown"
+    if response_bytes <= 0:
+        return "empty"
+    if response_bytes <= 1024:
+        return "small"
+    if response_bytes <= 65536:
+        return "medium"
+    return "large"
+
+
+def _content_type_category(content_type: str | None) -> str:
+    if not isinstance(content_type, str) or not content_type.strip():
+        return "unknown"
+    normalized = content_type.split(";", 1)[0].strip().lower()
+    if normalized == "application/json":
+        return "json"
+    if normalized == "text/plain":
+        return "text"
+    if normalized in {"text/html", "application/xhtml+xml"}:
+        return "html"
+    return "other"
+
+
+def _safe_binance_error_code(value: Any) -> str | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str) and re.fullmatch(r"-?\d{1,10}", value):
+        return value
+    return None
+
+
+def _safe_binance_error_message(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return _sanitize_error(value)

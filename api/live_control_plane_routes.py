@@ -132,6 +132,11 @@ def run_recovery(
     return _safe_recovery_call(lambda: service.run(request))
 
 
+@router.get("/kill-switch/status", response_model=KillSwitchControlResponse)
+def kill_switch_status(service: KillSwitchControlService = Depends(get_kill_switch_control_service)):
+    return _safe_kill_switch_call(service.status)
+
+
 @router.post("/kill-switch/engage", response_model=KillSwitchControlResponse)
 def engage_kill_switch(
     request: KillSwitchEngageRequest,

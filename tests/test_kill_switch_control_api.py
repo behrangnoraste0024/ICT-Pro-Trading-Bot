@@ -406,6 +406,108 @@ def _client(tmp_path: Path, env: dict[str, str], transport: RecordingTransport, 
     return TestClient(app)
 
 
+@pytest.mark.parametrize("durable_state", ["ENGAGED", "RELEASED"])
+def test_status_reports_exact_durable_state_without_mutation(tmp_path: Path, durable_state: str) -> None:
+    env, engine = _database(tmp_path)
+    transport = RecordingTransport()
+    persistence = KillSwitchPersistence(env=env)
+    persistence.ensure_available()
+    state, _ = persistence.engage()
+    if durable_state == "RELEASED":
+        state = persistence.release(expected_version=state.version)
+    persistence.close()
+    before = _snapshot(engine)
+    client = _client(tmp_path, env, transport)
+
+    first = client.get("/api/v1/live/kill-switch/status")
+    second = client.get("/api/v1/live/kill-switch/status")
+
+    assert first.status_code == 200
+    assert first.json() == {
+        "accepted": True,
+        "environment": "BINANCE_FUTURES_TESTNET",
+        "symbol": "BTCUSDT",
+        "state": durable_state,
+        "changed": False,
+        "version": state.version,
+        "updated_at": state.updated_at.isoformat(),
+        "blocking_code": None,
+    }
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert _snapshot(engine) == before
+    assert transport.calls == []
+
+
+def test_status_missing_durable_state_fails_closed_without_writes(tmp_path: Path) -> None:
+    env, engine = _database(tmp_path)
+    transport = RecordingTransport()
+    before = _snapshot(engine)
+    client = _client(tmp_path, env, transport)
+
+    response = client.get("/api/v1/live/kill-switch/status")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "KILL_SWITCH_STATE_UNAVAILABLE",
+        "message": "Kill switch state is unavailable.",
+        "details": {},
+    }
+    assert _snapshot(engine) == before
+    assert transport.calls == []
+
+
+def test_status_unavailable_persistence_fails_closed_and_sanitized(tmp_path: Path) -> None:
+    transport = RecordingTransport()
+    client = _client(tmp_path, {}, transport)
+
+    response = client.get("/api/v1/live/kill-switch/status")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "PERSISTENCE_UNAVAILABLE",
+        "message": "Kill switch persistence is unavailable.",
+        "details": {},
+    }
+    body = json.dumps(response.json())
+    for marker in ("postgresql://", "secret", "traceback", "SELECT", "database"):
+        assert marker not in body
+    assert transport.calls == []
+
+
+def test_status_does_not_call_engage_or_release(tmp_path: Path) -> None:
+    env, engine = _database(tmp_path)
+    persistence = KillSwitchPersistence(env=env)
+    persistence.ensure_available()
+    persistence.engage()
+    persistence.close()
+    before = _snapshot(engine)
+    transport = RecordingTransport()
+
+    class SpyPersistence(KillSwitchPersistence):
+        engage_calls = 0
+        release_calls = 0
+
+        def engage(self):
+            type(self).engage_calls += 1
+            return super().engage()
+
+        def release(self, expected_version: int):
+            type(self).release_calls += 1
+            return super().release(expected_version)
+
+    client = _client(tmp_path, env, transport, persistence_factory=SpyPersistence)
+
+    response = client.get("/api/v1/live/kill-switch/status")
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "ENGAGED"
+    assert SpyPersistence.engage_calls == 0
+    assert SpyPersistence.release_calls == 0
+    assert _snapshot(engine) == before
+    assert transport.calls == []
+
+
 def test_engage_persists_before_success_and_is_idempotent(tmp_path: Path) -> None:
     env, engine = _database(tmp_path)
     transport = RecordingTransport()

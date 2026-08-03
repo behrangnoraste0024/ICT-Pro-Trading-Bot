@@ -536,6 +536,95 @@ def test_confirmed_mock_test_order_is_accepted_without_actual_order_flags(tmp_pa
     assert "/fapi/v1/order?" not in calls[0][0]
 
 
+def test_non_empty_order_test_response_preserves_sanitized_metadata_before_rejection(tmp_path: Path) -> None:
+    path = _write_config(tmp_path)
+    calls = []
+
+    def authenticated_post(url, body, timeout, headers):
+        calls.append((url, body.decode("utf-8"), headers))
+        return BinanceOrderTestHTTPResponse(
+            400,
+            "https://demo-fapi.binance.com/fapi/v1/order/test",
+            {
+                "code": "-1102",
+                "msg": "Mandatory parameter was not sent.",
+                "nested": {"rawResponse": "RAW_RESPONSE_SENTINEL"},
+                "apiKey": "API_KEY_SENTINEL",
+                "apiSecret": "API_SECRET_SENTINEL",
+                "headers": "HEADER_SENTINEL",
+                "signature": "SIGNATURE_SENTINEL",
+                "signedQuery": "SIGNED_QUERY_SENTINEL",
+                "authenticatedUrl": "AUTHENTICATED_URL_SENTINEL",
+                "databaseUrl": "DATABASE_URL_SENTINEL",
+                "sql": "SQL_SENTINEL",
+                "traceback": "TRACEBACK_SENTINEL",
+            },
+            320,
+            "application/json",
+        )
+
+    result = _engine(tmp_path, env=_env(), http_get=_http_get, authenticated_post=authenticated_post, now_ms_provider=lambda: 123).submit_test_order(
+        "smcbot-test-submit-shape",
+        "BUY",
+        "MARKET",
+        0.001,
+        confirmation="CONFIRM_TESTNET_ORDER_TEST",
+        config_path=str(path),
+    )
+
+    assert result.status == "FAIL"
+    assert result.decision == "ORDER_TEST_REJECTED"
+    assert result.request_metadata is not None
+    assert result.request_metadata.method == "POST"
+    assert result.request_metadata.host == "demo-fapi.binance.com"
+    assert result.request_metadata.path == "/fapi/v1/order/test"
+    assert result.request_metadata.request_transmitted is True
+    assert result.request_metadata.response_received is True
+    assert result.request_metadata.response_status_code == 400
+    assert result.request_metadata.response_body_type == "object"
+    assert result.request_metadata.response_byte_count_category == "small"
+    assert result.request_metadata.response_content_type_category == "json"
+    assert result.request_metadata.binance_error_code == "-1102"
+    assert result.request_metadata.binance_error_message == "Mandatory parameter was not sent."
+    assert result.request_metadata.retry_count == 0
+    assert result.request_metadata.timestamp == 0
+    assert result.signature_generated is True
+    assert result.authenticated_transport_invoked is True
+    assert result.test_order_request_transmitted is True
+    assert result.authenticated_test_request_used is True
+    assert result.actual_order_endpoint_used is False
+    assert result.order_cancelled is False
+    assert len(calls) == 1
+    assert "/fapi/v1/order/test" in calls[0][0]
+    issue = next(issue for issue in result.issues if issue.name == "order_test_response_shape_invalid")
+    assert issue.details["http_status_code"] == 400
+    assert issue.details["http_method"] == "POST"
+    assert issue.details["final_allowed_host"] == "demo-fapi.binance.com"
+    assert issue.details["allowed_path"] == "/fapi/v1/order/test"
+    assert issue.details["request_transmitted"] is True
+    assert issue.details["response_received"] is True
+    assert issue.details["retry_count"] == 0
+    assert issue.details["body_type"] == "object"
+    assert issue.details["byte_count_category"] == "small"
+    assert issue.details["content_type_category"] == "json"
+    assert issue.details["binance_error_code"] == "-1102"
+    assert issue.details["binance_error_message"] == "Mandatory parameter was not sent."
+    serialized = json.dumps(result.to_dict(), sort_keys=True)
+    for sentinel in (
+        "RAW_RESPONSE_SENTINEL",
+        "API_KEY_SENTINEL",
+        "API_SECRET_SENTINEL",
+        "HEADER_SENTINEL",
+        "SIGNATURE_SENTINEL",
+        "SIGNED_QUERY_SENTINEL",
+        "AUTHENTICATED_URL_SENTINEL",
+        "DATABASE_URL_SENTINEL",
+        "SQL_SENTINEL",
+        "TRACEBACK_SENTINEL",
+    ):
+        assert sentinel not in serialized
+
+
 @pytest.mark.parametrize(
     ("payload", "message"),
     [
