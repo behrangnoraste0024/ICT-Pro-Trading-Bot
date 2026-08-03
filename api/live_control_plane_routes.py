@@ -15,6 +15,7 @@ from .live_control_plane_models import (
     LiveReadinessResponse,
     LiveRecoveryStatusResponse,
     LiveSafetyStatusResponse,
+    OperatorStatusResponse,
     ExchangeOrderReadResponse,
     ExecutionIntentReadResponse,
     PersistenceStatusResponse,
@@ -23,6 +24,7 @@ from .live_control_plane_models import (
     ProtectivePairReadResponse,
 )
 from .live_control_plane_service import LiveControlPlaneHTTPError, LiveControlPlaneService
+from .operator_status_service import OperatorStatusService
 from .persistence_read_model_service import PersistenceReadModelHTTPError, PersistenceReadModelService
 from .supervised_recovery_models import SupervisedRecoveryRequest, SupervisedRecoveryResponse
 from .supervised_recovery_service import SupervisedRecoveryHTTPError, SupervisedRecoveryService
@@ -42,6 +44,10 @@ def get_supervised_recovery_service() -> SupervisedRecoveryService:
 
 def get_kill_switch_control_service() -> KillSwitchControlService:
     return KillSwitchControlService()
+
+
+def get_operator_status_service() -> OperatorStatusService:
+    return OperatorStatusService()
 
 
 router = APIRouter(prefix="/api/v1/live", tags=["live-control-plane"])
@@ -99,6 +105,15 @@ def _safe_kill_switch_call(callback):
         raise HTTPException(status_code=503, detail=payload) from exc
 
 
+def _safe_operator_status_call(callback):
+    try:
+        return callback()
+    except Exception as exc:
+        error = LiveControlPlaneError(code="OPERATOR_STATUS_UNAVAILABLE", message="Operator status is unavailable.")
+        payload = error.model_dump() if hasattr(error, "model_dump") else error.dict()
+        raise HTTPException(status_code=503, detail=payload) from exc
+
+
 @router.get("/safety/status", response_model=LiveSafetyStatusResponse)
 def safety_status(service: LiveControlPlaneService = Depends(get_live_control_plane_service)):
     return _safe_call(service.safety_status)
@@ -135,6 +150,11 @@ def run_recovery(
 @router.get("/kill-switch/status", response_model=KillSwitchControlResponse)
 def kill_switch_status(service: KillSwitchControlService = Depends(get_kill_switch_control_service)):
     return _safe_kill_switch_call(service.status)
+
+
+@router.get("/operator/status", response_model=OperatorStatusResponse)
+def operator_status(service: OperatorStatusService = Depends(get_operator_status_service)):
+    return _safe_operator_status_call(service.status)
 
 
 @router.post("/kill-switch/engage", response_model=KillSwitchControlResponse)

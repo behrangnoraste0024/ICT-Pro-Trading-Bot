@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import create_app
-from api.live_control_plane_routes import get_kill_switch_control_service, get_live_control_plane_service
+from api.live_control_plane_routes import get_kill_switch_control_service, get_live_control_plane_service, get_operator_status_service
 import api.live_control_plane_service as service_module
 from api.live_control_plane_service import LiveControlPlaneHTTPError, LiveControlPlaneService
 from engine.diagnostics.btc_paper_readiness_engine import BTCPaperReadinessEngine
@@ -124,11 +124,44 @@ class FakeKillSwitchService:
             "blocking_code": None,
         }
 
+
+class FakeOperatorStatusService:
+    def __init__(self) -> None:
+        self.mutation_calls = []
+
+    def status(self):
+        return {
+            "environment": "BINANCE_FUTURES_TESTNET",
+            "symbol": "BTCUSDT",
+            "overall_status": "READY",
+            "kill_switch_state": "RELEASED",
+            "kill_switch_available": True,
+            "recovery_required": False,
+            "recovery_available": True,
+            "persistence_configured": True,
+            "persistence_reachable": True,
+            "persistence_schema_ready": True,
+            "readiness_status": "READY",
+            "validation_gate": "PASS",
+            "active_lock": False,
+            "warnings": [],
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+
+    def engage(self):
+        self.mutation_calls.append("engage")
+        raise AssertionError("operator status must not mutate")
+
+    def release(self):
+        self.mutation_calls.append("release")
+        raise AssertionError("operator status must not mutate")
+
 @pytest.fixture
 def client():
     app = create_app()
     app.dependency_overrides[get_live_control_plane_service] = lambda: FakeService()
     app.dependency_overrides[get_kill_switch_control_service] = lambda: FakeKillSwitchService()
+    app.dependency_overrides[get_operator_status_service] = lambda: FakeOperatorStatusService()
     return TestClient(app)
 
 
@@ -139,6 +172,7 @@ def test_live_control_plane_routes_allow_only_recovery_and_kill_switch_mutations
         "/api/v1/live/positions/{symbol}",
         "/api/v1/live/protective-orders/current",
         "/api/v1/live/recovery/status",
+        "/api/v1/live/operator/status",
         "/api/v1/live/recovery/run",
         "/api/v1/live/kill-switch/status",
         "/api/v1/live/kill-switch/engage",
@@ -158,13 +192,13 @@ def test_live_control_plane_routes_allow_only_recovery_and_kill_switch_mutations
     }
     assert all(app_paths[path] == {"post"} for path in mutation_paths)
     assert all(methods == {"get"} for path, methods in app_paths.items() if path not in mutation_paths)
-    for path in ["/api/v1/live/safety/status", "/api/v1/live/readiness", "/api/v1/live/positions/BTCUSDT", "/api/v1/live/protective-orders/current", "/api/v1/live/recovery/status", "/api/v1/live/kill-switch/status"]:
+    for path in ["/api/v1/live/safety/status", "/api/v1/live/readiness", "/api/v1/live/positions/BTCUSDT", "/api/v1/live/protective-orders/current", "/api/v1/live/recovery/status", "/api/v1/live/kill-switch/status", "/api/v1/live/operator/status"]:
         for method in (client.post, client.put, client.patch, client.delete):
             assert method(path).status_code == 405
 
 
 def test_routes_return_sanitized_payloads_without_secrets(client: TestClient) -> None:
-    for path in ["/api/v1/live/safety/status", "/api/v1/live/readiness", "/api/v1/live/positions/BTCUSDT", "/api/v1/live/protective-orders/current", "/api/v1/live/recovery/status", "/api/v1/live/kill-switch/status"]:
+    for path in ["/api/v1/live/safety/status", "/api/v1/live/readiness", "/api/v1/live/positions/BTCUSDT", "/api/v1/live/protective-orders/current", "/api/v1/live/recovery/status", "/api/v1/live/kill-switch/status", "/api/v1/live/operator/status"]:
         response = client.get(path)
         assert response.status_code == 200
         body = json.dumps(response.json())

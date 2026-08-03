@@ -77,6 +77,31 @@ class LiveControlPlaneError(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class OperatorWarningResponse(BaseModel):
+    code: str
+    severity: str
+    message: str
+    source: str
+
+
+class OperatorStatusResponse(BaseModel):
+    environment: str
+    symbol: str
+    overall_status: str
+    kill_switch_state: str | None = None
+    kill_switch_available: bool
+    recovery_required: bool
+    recovery_available: bool
+    persistence_configured: bool
+    persistence_reachable: bool
+    persistence_schema_ready: bool
+    readiness_status: str
+    validation_gate: str
+    active_lock: bool
+    warnings: list[OperatorWarningResponse] = Field(default_factory=list)
+    updated_at: str
+
+
 class PersistenceStatusResponse(BaseModel):
     configured: bool
     reachable: bool
