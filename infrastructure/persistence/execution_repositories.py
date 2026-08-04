@@ -125,6 +125,9 @@ class ExecutionIntentRepository(ABC):
     def get_by_correlation_id(self, correlation_id: UUID) -> ExecutionIntent | None: ...
 
     @abstractmethod
+    def list_recent(self, limit: int, offset: int = 0) -> list[ExecutionIntent]: ...
+
+    @abstractmethod
     def update_state(self, intent_id: UUID, expected_version: int, state: str, failure_code: str | None = None) -> ExecutionIntent: ...
 
 
@@ -299,6 +302,16 @@ class SqlAlchemyExecutionIntentRepository(ExecutionIntentRepository):
     def get_by_correlation_id(self, correlation_id: UUID) -> ExecutionIntent | None:
         row = self.session.scalar(select(ExecutionIntentORM).where(ExecutionIntentORM.correlation_id == correlation_id))
         return None if row is None else _execution_intent_from_orm(row)
+
+    def list_recent(self, limit: int, offset: int = 0) -> list[ExecutionIntent]:
+        _validate_pagination(limit, offset)
+        statement = (
+            select(ExecutionIntentORM)
+            .order_by(ExecutionIntentORM.created_at.desc(), ExecutionIntentORM.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return [_execution_intent_from_orm(row) for row in self.session.scalars(statement).all()]
 
     def update_state(self, intent_id: UUID, expected_version: int, state: str, failure_code: str | None = None) -> ExecutionIntent:
         validate_state(state, EXECUTION_INTENT_STATES)

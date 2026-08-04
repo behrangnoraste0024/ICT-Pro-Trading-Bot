@@ -18,6 +18,7 @@ from .live_control_plane_models import (
     LiveSafetyStatusResponse,
     OperatorStatusResponse,
     ExchangeOrderReadResponse,
+    ExecutionIntentListResponse,
     ExecutionIntentReadResponse,
     PersistenceStatusResponse,
     ProtectivePairEventsResponse,
@@ -198,6 +199,15 @@ def release_kill_switch(
 @router.get("/persistence/status", response_model=PersistenceStatusResponse)
 def persistence_status(service: PersistenceReadModelService = Depends(get_persistence_read_model_service)):
     return _safe_persistence_call(service.status)
+
+
+@router.get("/execution-intents", response_model=ExecutionIntentListResponse)
+def execution_intents(
+    limit: str = Query(default="50"),
+    offset: str = Query(default="0"),
+    service: PersistenceReadModelService = Depends(get_persistence_read_model_service),
+):
+    return _safe_persistence_call(lambda: service.execution_intents(limit=limit, offset=offset))
 
 
 @router.get("/execution-intents/{correlation_id}", response_model=ExecutionIntentReadResponse)

@@ -126,6 +126,14 @@ class ExecutionIntentReadResponse(BaseModel):
     updated_at: str
 
 
+class ExecutionIntentListResponse(BaseModel):
+    items: list[ExecutionIntentReadResponse] = Field(default_factory=list)
+    limit: int
+    offset: int
+    count: int
+    updated_at: str
+
+
 class ProtectivePairReadResponse(BaseModel):
     pair_id: str
     correlation_id: str

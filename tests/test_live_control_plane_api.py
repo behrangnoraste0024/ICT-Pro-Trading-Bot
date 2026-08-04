@@ -204,6 +204,7 @@ def test_live_control_plane_routes_allow_only_recovery_and_kill_switch_mutations
         "/api/v1/live/kill-switch/engage",
         "/api/v1/live/kill-switch/release",
         "/api/v1/live/persistence/status",
+        "/api/v1/live/execution-intents",
         "/api/v1/live/execution-intents/{correlation_id}",
         "/api/v1/live/protective-pairs/{pair_id}",
         "/api/v1/live/protective-pairs/{pair_id}/orders",
@@ -227,6 +228,7 @@ def test_live_control_plane_routes_allow_only_recovery_and_kill_switch_mutations
         "/api/v1/live/recovery/status",
         "/api/v1/live/kill-switch/status",
         "/api/v1/live/operator/status",
+        "/api/v1/live/execution-intents",
         "/api/v1/live/execution-permits/permit-00000000000000000000000000000001",
     ]:
         for method in (client.post, client.put, client.patch, client.delete):

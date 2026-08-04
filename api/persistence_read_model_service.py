@@ -103,6 +103,16 @@ class PersistenceReadModelService:
         self._require_supported_scope(record.environment, record.symbol)
         return self._intent_response(record)
 
+    def execution_intents(self, limit: int | str = 50, offset: int | str = 0) -> dict[str, Any]:
+        limit, offset = self._normalize_pagination(limit, offset)
+        with self._read_session() as session:
+            records = SqlAlchemyExecutionIntentRepository(session).list_recent(limit=limit, offset=offset)
+        items = []
+        for record in records:
+            self._require_supported_scope(record.environment, record.symbol)
+            items.append(self._intent_response(record))
+        return {"items": items, "limit": limit, "offset": offset, "count": len(items), "updated_at": _now()}
+
     def protective_pair(self, pair_id: str) -> dict[str, Any]:
         return self._pair_response(self._load_pair(pair_id))
 
@@ -247,6 +257,10 @@ class PersistenceReadModelService:
             raise PersistenceReadModelHTTPError(400, "INVALID_PERSISTENCE_PAGINATION", "Persistence pagination is invalid.")
 
     def _require_supported_scope(self, environment: Any, symbol: Any) -> None:
+        if not isinstance(environment, str) or not isinstance(symbol, str):
+            raise self._unavailable()
+        self._safe_code(environment, max_length=64)
+        self._safe_code(symbol, max_length=32)
         if environment != "BINANCE_FUTURES_TESTNET" or symbol != "BTCUSDT":
             raise PersistenceReadModelHTTPError(403, "PERSISTENCE_SCOPE_FORBIDDEN", "Persistence scope is forbidden.")
 

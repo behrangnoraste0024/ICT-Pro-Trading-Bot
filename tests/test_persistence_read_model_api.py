@@ -189,6 +189,7 @@ def test_persistence_routes_are_get_only_and_existing_routes_remain_registered()
     paths = client.get("/openapi.json").json()["paths"]
     new_paths = {
         "/api/v1/live/persistence/status",
+        "/api/v1/live/execution-intents",
         "/api/v1/live/execution-intents/{correlation_id}",
         "/api/v1/live/protective-pairs/{pair_id}",
         "/api/v1/live/protective-pairs/{pair_id}/orders",
@@ -196,7 +197,11 @@ def test_persistence_routes_are_get_only_and_existing_routes_remain_registered()
     }
     assert new_paths.issubset(paths)
     assert all(set(paths[path]) == {"get"} for path in new_paths)
-    for path in ("/api/v1/live/persistence/status", "/api/v1/live/execution-intents/00000000-0000-0000-0000-000000000000"):
+    for path in (
+        "/api/v1/live/persistence/status",
+        "/api/v1/live/execution-intents",
+        "/api/v1/live/execution-intents/00000000-0000-0000-0000-000000000000",
+    ):
         for method in (client.post, client.put, client.patch, client.delete):
             assert method(path).status_code == 405
     assert "/api/v1/live/readiness" in paths
@@ -288,6 +293,15 @@ def test_read_model_returns_only_sanitized_exact_records(tmp_path: Path) -> None
     assert "id" not in intent_body
     assert intent_body["created_at"].endswith("+00:00")
 
+    intent_list_response = client.get("/api/v1/live/execution-intents")
+    assert intent_list_response.status_code == 200
+    intent_list_body = intent_list_response.json()
+    assert set(intent_list_body) == {"items", "limit", "offset", "count", "updated_at"}
+    assert intent_list_body["limit"] == 50
+    assert intent_list_body["offset"] == 0
+    assert intent_list_body["count"] == len(intent_list_body["items"]) == 1
+    assert intent_list_body["items"][0] == intent_body
+
     pair_response = client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}")
     assert pair_response.status_code == 200
     pair_body = pair_response.json()
@@ -332,10 +346,222 @@ def test_read_model_validates_identifiers_scope_pagination_and_not_found(tmp_pat
     assert client.get("/api/v1/live/execution-intents/00000000-0000-0000-0000-000000000000").status_code == 404
     assert client.get(f"/api/v1/live/execution-intents/{production.correlation_id}").status_code == 403
     assert client.get(f"/api/v1/live/execution-intents/{eth_intent.correlation_id}").status_code == 403
+    assert client.get("/api/v1/live/execution-intents?limit=0").status_code == 400
+    assert client.get("/api/v1/live/execution-intents?limit=101").status_code == 400
+    assert client.get("/api/v1/live/execution-intents?offset=-1").status_code == 400
+    assert client.get("/api/v1/live/execution-intents?limit=invalid").status_code == 400
     assert client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/events?limit=101").status_code == 400
     assert client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/events?offset=-1").status_code == 400
     assert client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/events?limit=invalid").status_code == 400
     assert client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/events?limit=1&offset=1").status_code == 200
+
+
+def test_execution_intent_collection_empty_page_limit_edges_and_repository_bounds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "empty-intents.db"
+    _prepare_database(path).dispose()
+    calls: list[tuple[int, int]] = []
+
+    class FakeRepository:
+        def __init__(self, session) -> None:
+            pass
+
+        def list_recent(self, limit, offset=0):
+            calls.append((limit, offset))
+            return []
+
+    monkeypatch.setattr(service_module, "SqlAlchemyExecutionIntentRepository", FakeRepository)
+    client = _client(_service(path))
+
+    default = client.get("/api/v1/live/execution-intents")
+    limit_one = client.get("/api/v1/live/execution-intents?limit=1&offset=2")
+    limit_hundred = client.get("/api/v1/live/execution-intents?limit=100")
+
+    assert default.status_code == 200
+    assert default.json()["items"] == []
+    assert default.json()["count"] == 0
+    assert default.json()["limit"] == 50
+    assert default.json()["offset"] == 0
+    assert limit_one.status_code == 200
+    assert limit_hundred.status_code == 200
+    assert calls == [(50, 0), (1, 2), (100, 0)]
+
+
+@pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1", "limit=invalid"])
+def test_execution_intent_collection_invalid_pagination_fails_before_persistence_access(query: str) -> None:
+    response = _client(PersistenceReadModelService(env={})).get(f"/api/v1/live/execution-intents?{query}")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "code": "INVALID_PERSISTENCE_PAGINATION",
+        "message": "Persistence pagination is invalid.",
+        "details": {},
+    }
+
+
+def test_execution_intent_collection_orders_by_created_at_desc_and_id_desc(tmp_path: Path) -> None:
+    path = tmp_path / "intent-ordering.db"
+    engine = _prepare_database(path)
+    older = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+    newer = datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
+    same = datetime(2026, 1, 1, 0, 2, tzinfo=UTC)
+    SessionLocal = sessionmaker(bind=engine, future=True)
+    with SessionLocal() as session:
+        repo = SqlAlchemyExecutionIntentRepository(session)
+        first = repo.create(
+            ExecutionIntent(
+                id=UUID(int=1),
+                correlation_id=UUID(int=101),
+                environment="BINANCE_FUTURES_TESTNET",
+                symbol="BTCUSDT",
+                intent_type="PROTECTIVE_PAIR",
+                state="PERSISTED",
+                created_at=older,
+                updated_at=older,
+            )
+        )
+        second = repo.create(
+            ExecutionIntent(
+                id=UUID(int=2),
+                correlation_id=UUID(int=102),
+                environment="BINANCE_FUTURES_TESTNET",
+                symbol="BTCUSDT",
+                intent_type="PROTECTIVE_PAIR",
+                state="PERSISTED",
+                created_at=same,
+                updated_at=same,
+            )
+        )
+        third = repo.create(
+            ExecutionIntent(
+                id=UUID(int=3),
+                correlation_id=UUID(int=103),
+                environment="BINANCE_FUTURES_TESTNET",
+                symbol="BTCUSDT",
+                intent_type="PROTECTIVE_PAIR",
+                state="PERSISTED",
+                created_at=same,
+                updated_at=same,
+            )
+        )
+        fourth = repo.create(
+            ExecutionIntent(
+                id=UUID(int=4),
+                correlation_id=UUID(int=104),
+                environment="BINANCE_FUTURES_TESTNET",
+                symbol="BTCUSDT",
+                intent_type="PROTECTIVE_PAIR",
+                state="PERSISTED",
+                created_at=newer,
+                updated_at=newer,
+            )
+        )
+        session.commit()
+    engine.dispose()
+
+    response = _client(_service(path)).get("/api/v1/live/execution-intents?limit=3&offset=0")
+
+    assert response.status_code == 200
+    assert [item["correlation_id"] for item in response.json()["items"]] == [
+        str(third.correlation_id),
+        str(second.correlation_id),
+        str(fourth.correlation_id),
+    ]
+    assert first.correlation_id not in {UUID(item["correlation_id"]) for item in response.json()["items"]}
+
+
+@pytest.mark.parametrize(
+    ("environment", "symbol"),
+    [
+        ("BINANCE_FUTURES_PRODUCTION", "BTCUSDT"),
+        ("BINANCE_FUTURES_TESTNET", "ETHUSDT"),
+    ],
+)
+def test_execution_intent_collection_valid_unsupported_scope_returns_sanitized_403(
+    tmp_path: Path, environment: str, symbol: str
+) -> None:
+    path = tmp_path / f"unsupported-scope-{uuid4()}.db"
+    engine = _prepare_database(path)
+    SessionLocal = sessionmaker(bind=engine, future=True)
+    with SessionLocal() as session:
+        SqlAlchemyExecutionIntentRepository(session).create(
+            ExecutionIntent(environment=environment, symbol=symbol, intent_type="PROTECTIVE_PAIR", state="PERSISTED")
+        )
+        session.commit()
+    engine.dispose()
+
+    response = _client(_service(path)).get("/api/v1/live/execution-intents")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == {
+        "code": "PERSISTENCE_SCOPE_FORBIDDEN",
+        "message": "Persistence scope is forbidden.",
+        "details": {},
+    }
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda intent: replace(intent, environment=None),
+        lambda intent: replace(intent, environment="rawResponse"),
+        lambda intent: replace(intent, symbol=None),
+        lambda intent: replace(intent, symbol="rawResponse"),
+        lambda intent: replace(intent, state=None),
+    ],
+)
+def test_execution_intent_collection_malformed_rows_fail_closed_with_sanitized_503(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutator
+) -> None:
+    path = tmp_path / f"malformed-intents-{uuid4()}.db"
+    _prepare_database(path).dispose()
+    valid = ExecutionIntent(
+        environment="BINANCE_FUTURES_TESTNET",
+        symbol="BTCUSDT",
+        intent_type="PROTECTIVE_PAIR",
+        state="PERSISTED",
+    )
+
+    class FakeRepository:
+        def __init__(self, session) -> None:
+            pass
+
+        def list_recent(self, limit, offset=0):
+            return [mutator(valid)]
+
+    monkeypatch.setattr(service_module, "SqlAlchemyExecutionIntentRepository", FakeRepository)
+
+    response = _client(_service(path)).get("/api/v1/live/execution-intents")
+    body = json.dumps(response.json())
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "PERSISTENCE_UNAVAILABLE",
+        "message": "Persistence read model is unavailable.",
+        "details": {},
+    }
+    assert "rawResponse" not in body
+
+
+def test_execution_intent_collection_provider_exception_is_sanitized(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "provider-error.db"
+    _prepare_database(path).dispose()
+
+    class FakeRepository:
+        def __init__(self, session) -> None:
+            pass
+
+        def list_recent(self, limit, offset=0):
+            raise RuntimeError("postgresql://user:secret@db SELECT * FROM rawResponse traceback signature")
+
+    monkeypatch.setattr(service_module, "SqlAlchemyExecutionIntentRepository", FakeRepository)
+
+    response = _client(_service(path)).get("/api/v1/live/execution-intents")
+    body = json.dumps(response.json())
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "PERSISTENCE_UNAVAILABLE"
+    for marker in ("postgresql://", "secret", "SELECT * FROM", "rawResponse", "traceback", "signature"):
+        assert marker not in body
 
 
 class RecordingSession(Session):
@@ -368,6 +594,7 @@ def test_read_model_does_not_mutate_rows_commit_flush_or_journal(tmp_path: Path)
     RecordingSession.commit_calls = 0
     RecordingSession.flush_calls = 0
     client = _client(_service(path, session_factory=RecordingSession))
+    assert client.get("/api/v1/live/execution-intents").status_code == 200
     assert client.get(f"/api/v1/live/execution-intents/{intent.correlation_id}").status_code == 200
     assert client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/orders").status_code == 200
     assert client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/events").status_code == 200
@@ -393,6 +620,7 @@ def test_persistence_responses_never_expose_database_or_sensitive_fields(tmp_pat
     client = _client(PersistenceReadModelService(env={"ICT_DATABASE_URL": database_url}, engine_factory=create_engine))
     responses = [
         client.get("/api/v1/live/persistence/status"),
+        client.get("/api/v1/live/execution-intents"),
         client.get(f"/api/v1/live/execution-intents/{intent.correlation_id}"),
         client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}"),
         client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/orders"),
@@ -814,6 +1042,7 @@ def test_read_queries_issue_no_dml(tmp_path: Path) -> None:
         engine_factory=recording_engine,
     )
     client = _client(service)
+    assert client.get("/api/v1/live/execution-intents").status_code == 200
     assert client.get(f"/api/v1/live/execution-intents/{intent.correlation_id}").status_code == 200
     assert client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/orders").status_code == 200
     assert client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/events").status_code == 200
@@ -841,11 +1070,12 @@ def test_read_session_never_commits(tmp_path: Path) -> None:
     engine.dispose()
     RecordingSession.commit_calls = 0
 
-    response = _client(_service(path, session_factory=RecordingSession)).get(
-        f"/api/v1/live/execution-intents/{intent.correlation_id}"
-    )
+    client = _client(_service(path, session_factory=RecordingSession))
+    response = client.get(f"/api/v1/live/execution-intents/{intent.correlation_id}")
+    collection = client.get("/api/v1/live/execution-intents")
 
     assert response.status_code == 200
+    assert collection.status_code == 200
     assert RecordingSession.commit_calls == 0
 
 
@@ -872,6 +1102,7 @@ def test_internal_ids_are_hidden_from_every_record_response(tmp_path: Path) -> N
     client = _client(_service(path))
 
     bodies = [
+        client.get("/api/v1/live/execution-intents").json(),
         client.get(f"/api/v1/live/execution-intents/{intent.correlation_id}").json(),
         client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}").json(),
         client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/orders").json(),
