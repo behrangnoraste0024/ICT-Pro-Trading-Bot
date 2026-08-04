@@ -9,7 +9,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import create_app
-from api.live_control_plane_routes import get_kill_switch_control_service, get_live_control_plane_service, get_operator_status_service
+from api.live_control_plane_routes import (
+    get_kill_switch_control_service,
+    get_live_control_plane_service,
+    get_live_execution_permit_status_service,
+    get_operator_status_service,
+)
 import api.live_control_plane_service as service_module
 from api.live_control_plane_service import LiveControlPlaneHTTPError, LiveControlPlaneService
 from engine.diagnostics.btc_paper_readiness_engine import BTCPaperReadinessEngine
@@ -156,12 +161,33 @@ class FakeOperatorStatusService:
         self.mutation_calls.append("release")
         raise AssertionError("operator status must not mutate")
 
+
+class FakePermitStatusService:
+    def status(self, permit_id: str):
+        return {
+            "permit_id": permit_id,
+            "operation": "PROTECTIVE_CREATE",
+            "environment": "TESTNET",
+            "symbol": "BTCUSDT",
+            "state": "ISSUED",
+            "effective_expired": False,
+            "expires_at": "2026-01-01T00:05:00+00:00",
+            "issued_at": "2026-01-01T00:00:00+00:00",
+            "consumed_at": None,
+            "revoked_at": None,
+            "revocation_reason": None,
+            "version": 1,
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+
+
 @pytest.fixture
 def client():
     app = create_app()
     app.dependency_overrides[get_live_control_plane_service] = lambda: FakeService()
     app.dependency_overrides[get_kill_switch_control_service] = lambda: FakeKillSwitchService()
     app.dependency_overrides[get_operator_status_service] = lambda: FakeOperatorStatusService()
+    app.dependency_overrides[get_live_execution_permit_status_service] = lambda: FakePermitStatusService()
     return TestClient(app)
 
 
@@ -182,6 +208,7 @@ def test_live_control_plane_routes_allow_only_recovery_and_kill_switch_mutations
         "/api/v1/live/protective-pairs/{pair_id}",
         "/api/v1/live/protective-pairs/{pair_id}/orders",
         "/api/v1/live/protective-pairs/{pair_id}/events",
+        "/api/v1/live/execution-permits/{permit_id}",
     }
     app_paths = {path: set(methods) for path, methods in client.get("/openapi.json").json()["paths"].items() if path.startswith("/api/v1/live")}
     assert set(app_paths) == expected
@@ -192,13 +219,31 @@ def test_live_control_plane_routes_allow_only_recovery_and_kill_switch_mutations
     }
     assert all(app_paths[path] == {"post"} for path in mutation_paths)
     assert all(methods == {"get"} for path, methods in app_paths.items() if path not in mutation_paths)
-    for path in ["/api/v1/live/safety/status", "/api/v1/live/readiness", "/api/v1/live/positions/BTCUSDT", "/api/v1/live/protective-orders/current", "/api/v1/live/recovery/status", "/api/v1/live/kill-switch/status", "/api/v1/live/operator/status"]:
+    for path in [
+        "/api/v1/live/safety/status",
+        "/api/v1/live/readiness",
+        "/api/v1/live/positions/BTCUSDT",
+        "/api/v1/live/protective-orders/current",
+        "/api/v1/live/recovery/status",
+        "/api/v1/live/kill-switch/status",
+        "/api/v1/live/operator/status",
+        "/api/v1/live/execution-permits/permit-00000000000000000000000000000001",
+    ]:
         for method in (client.post, client.put, client.patch, client.delete):
             assert method(path).status_code == 405
 
 
 def test_routes_return_sanitized_payloads_without_secrets(client: TestClient) -> None:
-    for path in ["/api/v1/live/safety/status", "/api/v1/live/readiness", "/api/v1/live/positions/BTCUSDT", "/api/v1/live/protective-orders/current", "/api/v1/live/recovery/status", "/api/v1/live/kill-switch/status", "/api/v1/live/operator/status"]:
+    for path in [
+        "/api/v1/live/safety/status",
+        "/api/v1/live/readiness",
+        "/api/v1/live/positions/BTCUSDT",
+        "/api/v1/live/protective-orders/current",
+        "/api/v1/live/recovery/status",
+        "/api/v1/live/kill-switch/status",
+        "/api/v1/live/operator/status",
+        "/api/v1/live/execution-permits/permit-00000000000000000000000000000001",
+    ]:
         response = client.get(path)
         assert response.status_code == 200
         body = json.dumps(response.json())

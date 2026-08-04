@@ -10,6 +10,7 @@ from .kill_switch_control_models import (
 from .kill_switch_control_service import KillSwitchControlService, KillSwitchHTTPError
 from .live_control_plane_models import (
     LiveControlPlaneError,
+    LiveExecutionPermitStatusResponse,
     LivePositionResponse,
     LiveProtectiveOrdersCurrentResponse,
     LiveReadinessResponse,
@@ -24,6 +25,10 @@ from .live_control_plane_models import (
     ProtectivePairReadResponse,
 )
 from .live_control_plane_service import LiveControlPlaneHTTPError, LiveControlPlaneService
+from .live_execution_permit_status_service import (
+    LiveExecutionPermitStatusHTTPError,
+    LiveExecutionPermitStatusService,
+)
 from .operator_status_service import OperatorStatusService
 from .persistence_read_model_service import PersistenceReadModelHTTPError, PersistenceReadModelService
 from .supervised_recovery_models import SupervisedRecoveryRequest, SupervisedRecoveryResponse
@@ -48,6 +53,10 @@ def get_kill_switch_control_service() -> KillSwitchControlService:
 
 def get_operator_status_service() -> OperatorStatusService:
     return OperatorStatusService()
+
+
+def get_live_execution_permit_status_service() -> LiveExecutionPermitStatusService:
+    return LiveExecutionPermitStatusService()
 
 
 router = APIRouter(prefix="/api/v1/live", tags=["live-control-plane"])
@@ -110,6 +119,19 @@ def _safe_operator_status_call(callback):
         return callback()
     except Exception as exc:
         error = LiveControlPlaneError(code="OPERATOR_STATUS_UNAVAILABLE", message="Operator status is unavailable.")
+        payload = error.model_dump() if hasattr(error, "model_dump") else error.dict()
+        raise HTTPException(status_code=503, detail=payload) from exc
+
+
+def _safe_permit_status_call(callback):
+    try:
+        return callback()
+    except LiveExecutionPermitStatusHTTPError as exc:
+        error = LiveControlPlaneError(code=exc.code, message=exc.message)
+        payload = error.model_dump() if hasattr(error, "model_dump") else error.dict()
+        raise HTTPException(status_code=exc.status_code, detail=payload) from exc
+    except Exception as exc:
+        error = LiveControlPlaneError(code="PERMIT_STATUS_UNAVAILABLE", message="Live execution permit status is unavailable.")
         payload = error.model_dump() if hasattr(error, "model_dump") else error.dict()
         raise HTTPException(status_code=503, detail=payload) from exc
 
@@ -201,3 +223,11 @@ def protective_pair_events(
     service: PersistenceReadModelService = Depends(get_persistence_read_model_service),
 ):
     return _safe_persistence_call(lambda: service.protective_pair_events(pair_id, limit=limit, offset=offset))
+
+
+@router.get("/execution-permits/{permit_id}", response_model=LiveExecutionPermitStatusResponse)
+def execution_permit_status(
+    permit_id: str,
+    service: LiveExecutionPermitStatusService = Depends(get_live_execution_permit_status_service),
+):
+    return _safe_permit_status_call(lambda: service.status(permit_id))

@@ -177,3 +177,19 @@ class ProtectivePairEventsResponse(BaseModel):
     events: list[PersistenceEventReadResponse] = Field(default_factory=list)
     limit: int
     offset: int
+
+
+class LiveExecutionPermitStatusResponse(BaseModel):
+    permit_id: str
+    operation: str
+    environment: str
+    symbol: str
+    state: str
+    effective_expired: bool
+    expires_at: str
+    issued_at: str
+    consumed_at: str | None = None
+    revoked_at: str | None = None
+    revocation_reason: str | None = None
+    version: int
+    updated_at: str
