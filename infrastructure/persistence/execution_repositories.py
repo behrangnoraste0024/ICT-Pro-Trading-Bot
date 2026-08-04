@@ -158,6 +158,9 @@ class ExchangeOrderIdentityRepository(ABC):
     @abstractmethod
     def list_by_protective_pair_id(self, protective_pair_id: UUID, limit: int, offset: int = 0) -> list[ExchangeOrderIdentity]: ...
 
+    @abstractmethod
+    def list_recent(self, limit: int, offset: int = 0) -> list[ExchangeOrderIdentity]: ...
+
 
 class RecoveryEventRepository(ABC):
     """Append-only repository contract; database triggers/permissions are future work."""
@@ -645,6 +648,16 @@ class SqlAlchemyExchangeOrderIdentityRepository(ExchangeOrderIdentityRepository)
                 ExchangeOrderIdentityORM.created_at.asc(),
                 ExchangeOrderIdentityORM.id.asc(),
             )
+            .limit(limit)
+            .offset(offset)
+        )
+        return [_exchange_order_identity_from_orm(row) for row in self.session.scalars(statement).all()]
+
+    def list_recent(self, limit: int, offset: int = 0) -> list[ExchangeOrderIdentity]:
+        _validate_pagination(limit, offset)
+        statement = (
+            select(ExchangeOrderIdentityORM)
+            .order_by(ExchangeOrderIdentityORM.created_at.desc(), ExchangeOrderIdentityORM.id.desc())
             .limit(limit)
             .offset(offset)
         )

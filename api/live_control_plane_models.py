@@ -167,6 +167,19 @@ class ProtectivePairOrdersResponse(BaseModel):
     orders: list[ExchangeOrderReadResponse] = Field(default_factory=list)
 
 
+class ExchangeOrderIdentityReadResponse(ExchangeOrderReadResponse):
+    pair_id: str
+    correlation_id: str
+
+
+class ExchangeOrderIdentityListResponse(BaseModel):
+    items: list[ExchangeOrderIdentityReadResponse] = Field(default_factory=list)
+    limit: int
+    offset: int
+    count: int
+    updated_at: str
+
+
 class PersistenceEventReadResponse(BaseModel):
     event_kind: str
     correlation_id: str | None = None

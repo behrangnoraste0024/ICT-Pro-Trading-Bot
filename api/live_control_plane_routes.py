@@ -18,6 +18,7 @@ from .live_control_plane_models import (
     LiveSafetyStatusResponse,
     OperatorStatusResponse,
     ExchangeOrderReadResponse,
+    ExchangeOrderIdentityListResponse,
     ExecutionIntentListResponse,
     ExecutionIntentReadResponse,
     PersistenceStatusResponse,
@@ -213,6 +214,15 @@ def execution_intents(
 @router.get("/execution-intents/{correlation_id}", response_model=ExecutionIntentReadResponse)
 def execution_intent(correlation_id: str, service: PersistenceReadModelService = Depends(get_persistence_read_model_service)):
     return _safe_persistence_call(lambda: service.execution_intent(correlation_id))
+
+
+@router.get("/exchange-orders", response_model=ExchangeOrderIdentityListResponse)
+def exchange_orders(
+    limit: str = Query(default="50"),
+    offset: str = Query(default="0"),
+    service: PersistenceReadModelService = Depends(get_persistence_read_model_service),
+):
+    return _safe_persistence_call(lambda: service.exchange_orders(limit=limit, offset=offset))
 
 
 @router.get("/protective-pairs/{pair_id}", response_model=ProtectivePairReadResponse)

@@ -113,6 +113,33 @@ class PersistenceReadModelService:
             items.append(self._intent_response(record))
         return {"items": items, "limit": limit, "offset": offset, "count": len(items), "updated_at": _now()}
 
+    def exchange_orders(self, limit: int | str = 50, offset: int | str = 0) -> dict[str, Any]:
+        limit, offset = self._normalize_pagination(limit, offset)
+        with self._read_session() as session:
+            order_repo = SqlAlchemyExchangeOrderIdentityRepository(session)
+            pair_repo = SqlAlchemyProtectivePairRepository(session)
+            orders = order_repo.list_recent(limit=limit, offset=offset)
+            items = []
+            seen_client_algo_ids: set[tuple[str, str, str]] = set()
+            seen_pair_legs: set[tuple[UUID, str]] = set()
+            for order in orders:
+                self._require_supported_scope(order.environment, order.symbol)
+                pair = pair_repo.get_by_id(order.protective_pair_id)
+                if pair is None:
+                    raise self._unavailable()
+                self._validate_order_pair_ownership(order, pair)
+                client_key = (order.environment, order.symbol, self._safe_identifier(order.client_algo_id, max_length=80))
+                pair_leg_key = (order.protective_pair_id, self._safe_code(order.leg_type, max_length=16))
+                if client_key in seen_client_algo_ids or pair_leg_key in seen_pair_legs:
+                    raise self._unavailable()
+                seen_client_algo_ids.add(client_key)
+                seen_pair_legs.add(pair_leg_key)
+                item = self._order_response(order)
+                item["pair_id"] = self._safe_text(pair.pair_id)
+                item["correlation_id"] = self._uuid_text(pair.correlation_id)
+                items.append(item)
+        return {"items": items, "limit": limit, "offset": offset, "count": len(items), "updated_at": _now()}
+
     def protective_pair(self, pair_id: str) -> dict[str, Any]:
         return self._pair_response(self._load_pair(pair_id))
 
@@ -138,6 +165,17 @@ class PersistenceReadModelService:
             seen_legs.add(order.leg_type)
             seen_client_algo_ids.add(client_algo_id)
         return {"pair_id": self._safe_text(pair.pair_id), "orders": [self._order_response(order) for order in orders]}
+
+    def _validate_order_pair_ownership(self, order: ExchangeOrderIdentity, pair: ProtectivePair) -> None:
+        self._require_supported_scope(pair.environment, pair.symbol)
+        if (
+            order.protective_pair_id != pair.id
+            or order.environment != pair.environment
+            or order.symbol != pair.symbol
+            or not isinstance(pair.correlation_id, UUID)
+            or not isinstance(pair.execution_intent_id, UUID)
+        ):
+            raise self._unavailable()
 
     def protective_pair_events(self, pair_id: str, limit: int | str = 50, offset: int | str = 0) -> dict[str, Any]:
         limit, offset = self._normalize_pagination(limit, offset)

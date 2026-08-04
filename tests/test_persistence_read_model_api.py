@@ -191,6 +191,7 @@ def test_persistence_routes_are_get_only_and_existing_routes_remain_registered()
         "/api/v1/live/persistence/status",
         "/api/v1/live/execution-intents",
         "/api/v1/live/execution-intents/{correlation_id}",
+        "/api/v1/live/exchange-orders",
         "/api/v1/live/protective-pairs/{pair_id}",
         "/api/v1/live/protective-pairs/{pair_id}/orders",
         "/api/v1/live/protective-pairs/{pair_id}/events",
@@ -200,6 +201,7 @@ def test_persistence_routes_are_get_only_and_existing_routes_remain_registered()
     for path in (
         "/api/v1/live/persistence/status",
         "/api/v1/live/execution-intents",
+        "/api/v1/live/exchange-orders",
         "/api/v1/live/execution-intents/00000000-0000-0000-0000-000000000000",
     ):
         for method in (client.post, client.put, client.patch, client.delete):
@@ -469,6 +471,228 @@ def test_execution_intent_collection_orders_by_created_at_desc_and_id_desc(tmp_p
     assert first.correlation_id not in {UUID(item["correlation_id"]) for item in response.json()["items"]}
 
 
+def _insert_identity(engine, pair: ProtectivePair, *, identity_id: UUID, client_algo_id: str, leg_type: str, created_at: datetime) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            ExchangeOrderIdentityORM.__table__.insert().values(
+                id=identity_id,
+                protective_pair_id=pair.id,
+                environment="BINANCE_FUTURES_TESTNET",
+                symbol="BTCUSDT",
+                leg_type=leg_type,
+                client_algo_id=client_algo_id,
+                status="NEW",
+                trigger_price=Decimal("62000" if leg_type == "STOP" else "64000"),
+                created_at=created_at,
+                updated_at=created_at,
+                version=1,
+            )
+        )
+
+
+def test_exchange_order_collection_empty_default_pagination_and_exact_fields(tmp_path: Path) -> None:
+    path = tmp_path / "empty-exchange-orders.db"
+    _prepare_database(path).dispose()
+
+    response = _client(_service(path)).get("/api/v1/live/exchange-orders")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["items"] == []
+    assert payload["limit"] == 50
+    assert payload["offset"] == 0
+    assert payload["count"] == 0
+    assert set(payload) == {"items", "limit", "offset", "count", "updated_at"}
+
+
+@pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1", "limit=invalid", "offset=invalid"])
+def test_exchange_order_collection_invalid_pagination_fails_before_persistence_access(query: str) -> None:
+    def forbidden_engine(*args, **kwargs):
+        raise AssertionError("invalid pagination must not construct persistence providers")
+
+    response = _client(PersistenceReadModelService(env={}, engine_factory=forbidden_engine)).get(
+        f"/api/v1/live/exchange-orders?{query}"
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "code": "INVALID_PERSISTENCE_PAGINATION",
+        "message": "Persistence pagination is invalid.",
+        "details": {},
+    }
+
+
+def test_exchange_order_collection_orders_by_created_at_desc_and_id_desc_with_exact_fields(tmp_path: Path) -> None:
+    path = tmp_path / "exchange-ordering.db"
+    engine = _prepare_database(path)
+    _, pair = _seed(engine, include_orders=False, include_events=False)
+    _, second_pair = _seed(engine, include_orders=False, include_events=False)
+    older = datetime(2026, 1, 1, tzinfo=UTC)
+    newer = datetime(2026, 1, 2, tzinfo=UTC)
+    _insert_identity(engine, pair, identity_id=UUID(int=1), client_algo_id="smcbot-old", leg_type="STOP", created_at=older)
+    _insert_identity(engine, second_pair, identity_id=UUID(int=2), client_algo_id="smcbot-new-low", leg_type="STOP", created_at=newer)
+    _insert_identity(engine, pair, identity_id=UUID(int=3), client_algo_id="smcbot-new-high", leg_type="TAKE_PROFIT", created_at=newer)
+    engine.dispose()
+
+    client = _client(_service(path))
+    default = client.get("/api/v1/live/exchange-orders")
+    limit_one = client.get("/api/v1/live/exchange-orders?limit=1")
+    limit_hundred = client.get("/api/v1/live/exchange-orders?limit=100&offset=0")
+
+    assert default.status_code == 200
+    assert limit_one.status_code == 200
+    assert limit_hundred.status_code == 200
+    payload = default.json()
+    assert payload["count"] == len(payload["items"]) == 3
+    assert [item["client_algo_id"] for item in payload["items"]] == ["smcbot-new-high", "smcbot-new-low", "smcbot-old"]
+    assert [item["client_algo_id"] for item in limit_one.json()["items"]] == ["smcbot-new-high"]
+    item_keys = {
+        "pair_id",
+        "correlation_id",
+        "leg_type",
+        "client_algo_id",
+        "exchange_algo_id",
+        "exchange_order_id",
+        "status",
+        "trigger_price",
+        "version",
+        "created_at",
+        "updated_at",
+    }
+    assert all(set(item) == item_keys for item in payload["items"])
+    assert payload["items"][0]["pair_id"] == pair.pair_id
+    assert payload["items"][0]["correlation_id"] == str(pair.correlation_id)
+    assert payload["items"][1]["pair_id"] == second_pair.pair_id
+    assert payload["items"][1]["correlation_id"] == str(second_pair.correlation_id)
+    assert payload["items"][2]["pair_id"] == pair.pair_id
+    assert payload["items"][2]["correlation_id"] == str(pair.correlation_id)
+    serialized = json.dumps(payload)
+    assert str(pair.id) not in serialized
+    assert "protective_pair_id" not in serialized
+
+
+def test_exchange_order_collection_uses_exact_repository_bounds_and_no_total_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "exchange-bounds.db"
+    _prepare_database(path).dispose()
+    calls = []
+
+    class FakeOrderRepository:
+        def __init__(self, session) -> None:
+            pass
+
+        def list_recent(self, limit, offset=0):
+            calls.append((limit, offset))
+            return []
+
+    monkeypatch.setattr(service_module, "SqlAlchemyExchangeOrderIdentityRepository", FakeOrderRepository)
+    response = _client(_service(path)).get("/api/v1/live/exchange-orders?limit=7&offset=3")
+
+    assert response.status_code == 200
+    assert calls == [(7, 3)]
+    assert response.json()["count"] == 0
+
+
+@pytest.mark.parametrize(
+    "order_mutator,pair_mutator,expected_status",
+    [
+        (lambda order: replace(order, environment="BINANCE_FUTURES_PRODUCTION"), lambda pair: pair, 403),
+        (lambda order: replace(order, symbol="ETHUSDT"), lambda pair: pair, 403),
+        (lambda order: order, lambda pair: replace(pair, environment="BINANCE_FUTURES_PRODUCTION"), 403),
+        (lambda order: order, lambda pair: replace(pair, symbol="ETHUSDT"), 403),
+        (lambda order: replace(order, environment=None), lambda pair: pair, 503),
+        (lambda order: replace(order, symbol=None), lambda pair: pair, 503),
+        (lambda order: order, lambda pair: replace(pair, environment=None), 503),
+        (lambda order: order, lambda pair: replace(pair, symbol=None), 503),
+        (lambda order: replace(order, protective_pair_id=uuid4()), lambda pair: pair, 503),
+        (lambda order: replace(order, client_algo_id=None), lambda pair: pair, 503),
+        (lambda order: replace(order, status=None), lambda pair: pair, 503),
+    ],
+)
+def test_exchange_order_collection_scope_and_malformed_rows_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, order_mutator, pair_mutator, expected_status: int
+) -> None:
+    path = tmp_path / f"exchange-scope-{uuid4()}.db"
+    engine = _prepare_database(path)
+    _, pair = _seed(engine, include_orders=False, include_events=False)
+    engine.dispose()
+    order = order_mutator(_order(pair, "STOP", "safe-stop"))
+    stored_pair = pair_mutator(pair)
+
+    class FakeOrderRepository:
+        def __init__(self, session) -> None:
+            pass
+
+        def list_recent(self, limit, offset=0):
+            return [order]
+
+    class FakePairRepository:
+        def __init__(self, session) -> None:
+            pass
+
+        def get_by_id(self, pair_id):
+            return stored_pair
+
+    monkeypatch.setattr(service_module, "SqlAlchemyExchangeOrderIdentityRepository", FakeOrderRepository)
+    monkeypatch.setattr(service_module, "SqlAlchemyProtectivePairRepository", FakePairRepository)
+
+    response = _client(_service(path)).get("/api/v1/live/exchange-orders")
+    body = json.dumps(response.json())
+
+    assert response.status_code == expected_status
+    assert response.json()["detail"]["code"] in {"PERSISTENCE_SCOPE_FORBIDDEN", "PERSISTENCE_UNAVAILABLE"}
+    assert "safe-stop" not in body
+
+
+def test_exchange_order_collection_orphan_duplicate_and_provider_failures_are_sanitized(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / f"exchange-sanitized-{uuid4()}.db"
+    engine = _prepare_database(path)
+    _, pair = _seed(engine, include_orders=False, include_events=False)
+    engine.dispose()
+    order = _order(pair, "STOP", "same-client")
+
+    class DuplicateOrderRepository:
+        def __init__(self, session) -> None:
+            pass
+
+        def list_recent(self, limit, offset=0):
+            return [order, replace(order, leg_type="TAKE_PROFIT")]
+
+    class PairRepository:
+        def __init__(self, session) -> None:
+            pass
+
+        def get_by_id(self, pair_id):
+            return pair
+
+    monkeypatch.setattr(service_module, "SqlAlchemyExchangeOrderIdentityRepository", DuplicateOrderRepository)
+    monkeypatch.setattr(service_module, "SqlAlchemyProtectivePairRepository", PairRepository)
+    duplicate = _client(_service(path)).get("/api/v1/live/exchange-orders")
+    assert duplicate.status_code == 503
+
+    class OrphanPairRepository(PairRepository):
+        def get_by_id(self, pair_id):
+            return None
+
+    monkeypatch.setattr(service_module, "SqlAlchemyProtectivePairRepository", OrphanPairRepository)
+    orphan = _client(_service(path)).get("/api/v1/live/exchange-orders")
+    assert orphan.status_code == 503
+
+    class FailingOrderRepository:
+        def __init__(self, session) -> None:
+            pass
+
+        def list_recent(self, limit, offset=0):
+            raise RuntimeError("postgresql://user:secret@db SELECT * FROM exchange_order_identities rawResponse traceback signature")
+
+    monkeypatch.setattr(service_module, "SqlAlchemyExchangeOrderIdentityRepository", FailingOrderRepository)
+    failed = _client(_service(path)).get("/api/v1/live/exchange-orders")
+    body = json.dumps(failed.json()).casefold()
+
+    assert failed.status_code == 503
+    for marker in ("postgresql://", "secret", "select * from", "rawresponse", "traceback", "signature"):
+        assert marker not in body
+
+
 @pytest.mark.parametrize(
     ("environment", "symbol"),
     [
@@ -622,6 +846,7 @@ def test_persistence_responses_never_expose_database_or_sensitive_fields(tmp_pat
         client.get("/api/v1/live/persistence/status"),
         client.get("/api/v1/live/execution-intents"),
         client.get(f"/api/v1/live/execution-intents/{intent.correlation_id}"),
+        client.get("/api/v1/live/exchange-orders"),
         client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}"),
         client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/orders"),
         client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/events"),
@@ -1044,12 +1269,14 @@ def test_read_queries_issue_no_dml(tmp_path: Path) -> None:
     client = _client(service)
     assert client.get("/api/v1/live/execution-intents").status_code == 200
     assert client.get(f"/api/v1/live/execution-intents/{intent.correlation_id}").status_code == 200
+    assert client.get("/api/v1/live/exchange-orders").status_code == 200
     assert client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/orders").status_code == 200
     assert client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/events").status_code == 200
 
     assert statements
     assert all(not statement.startswith(("INSERT", "UPDATE", "DELETE")) for statement in statements)
     assert all("FOR UPDATE" not in statement for statement in statements)
+    assert all("COUNT" not in statement for statement in statements)
 
 
 def test_read_service_has_no_binance_alembic_or_journal_execution_path(tmp_path: Path) -> None:
@@ -1073,9 +1300,11 @@ def test_read_session_never_commits(tmp_path: Path) -> None:
     client = _client(_service(path, session_factory=RecordingSession))
     response = client.get(f"/api/v1/live/execution-intents/{intent.correlation_id}")
     collection = client.get("/api/v1/live/execution-intents")
+    orders = client.get("/api/v1/live/exchange-orders")
 
     assert response.status_code == 200
     assert collection.status_code == 200
+    assert orders.status_code == 200
     assert RecordingSession.commit_calls == 0
 
 
@@ -1086,11 +1315,12 @@ def test_read_session_never_flushes(tmp_path: Path) -> None:
     engine.dispose()
     RecordingSession.flush_calls = 0
 
-    response = _client(_service(path, session_factory=RecordingSession)).get(
-        f"/api/v1/live/protective-pairs/{pair.pair_id}/orders"
-    )
+    client = _client(_service(path, session_factory=RecordingSession))
+    response = client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/orders")
+    collection = client.get("/api/v1/live/exchange-orders")
 
     assert response.status_code == 200
+    assert collection.status_code == 200
     assert RecordingSession.flush_calls == 0
 
 
@@ -1104,6 +1334,7 @@ def test_internal_ids_are_hidden_from_every_record_response(tmp_path: Path) -> N
     bodies = [
         client.get("/api/v1/live/execution-intents").json(),
         client.get(f"/api/v1/live/execution-intents/{intent.correlation_id}").json(),
+        client.get("/api/v1/live/exchange-orders").json(),
         client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}").json(),
         client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/orders").json(),
         client.get(f"/api/v1/live/protective-pairs/{pair.pair_id}/events").json(),
