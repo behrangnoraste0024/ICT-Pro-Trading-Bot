@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 
 from .kill_switch_control_models import (
     KillSwitchControlResponse,
@@ -37,24 +39,28 @@ from .supervised_recovery_models import SupervisedRecoveryRequest, SupervisedRec
 from .supervised_recovery_service import SupervisedRecoveryHTTPError, SupervisedRecoveryService
 
 
-def get_live_control_plane_service() -> LiveControlPlaneService:
-    return LiveControlPlaneService()
+def _operational_counter_registry(request: Request) -> OperationalCounterRegistry:
+    return request.app.state.operational_counter_registry
+
+
+def get_live_control_plane_service(request: Request) -> LiveControlPlaneService:
+    return LiveControlPlaneService(operational_counter_registry=_operational_counter_registry(request))
 
 
 def get_persistence_read_model_service() -> PersistenceReadModelService:
     return PersistenceReadModelService()
 
 
-def get_supervised_recovery_service() -> SupervisedRecoveryService:
-    return SupervisedRecoveryService()
+def get_supervised_recovery_service(request: Request) -> SupervisedRecoveryService:
+    return SupervisedRecoveryService(operational_counter_registry=_operational_counter_registry(request))
 
 
-def get_kill_switch_control_service() -> KillSwitchControlService:
-    return KillSwitchControlService()
+def get_kill_switch_control_service(request: Request) -> KillSwitchControlService:
+    return KillSwitchControlService(operational_counter_registry=_operational_counter_registry(request))
 
 
-def get_operator_status_service() -> OperatorStatusService:
-    return OperatorStatusService()
+def get_operator_status_service(request: Request) -> OperatorStatusService:
+    return OperatorStatusService(operational_counter_registry=_operational_counter_registry(request))
 
 
 def get_live_execution_permit_status_service() -> LiveExecutionPermitStatusService:

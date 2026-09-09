@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from infrastructure.exchanges.binance_futures_testnet_protective_orders_client import BinanceFuturesTestnetProtectiveAPIError, BinanceFuturesTestnetProtectiveOrdersClient
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from infrastructure.persistence.protective_lifecycle_persistence import (
     ProtectiveLifecyclePersistence,
     ProtectivePersistenceError,
@@ -78,6 +79,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
         kill_switch_gate=None,
         authorization_policy=None,
         permit_gate=None,
+        operational_counter_registry: OperationalCounterRegistry | None = None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.http_get = http_get
@@ -90,6 +92,7 @@ class BinanceFuturesTestnetProtectiveOrdersEngine:
             repo_root=self.repo_root,
             env=self.env,
             kill_switch_gate=kill_switch_gate,
+            operational_counter_registry=operational_counter_registry,
         )
         self.permit_gate = permit_gate or LiveExecutionPermitGate(
             authorization_policy=self.authorization_policy,

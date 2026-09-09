@@ -11,6 +11,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from engine.diagnostics.binance_futures_testnet_order_test_engine import BinanceFuturesTestnetOrderTestEngine
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from models.live_execution_permit_enforcement import LiveExecutionPermitReference
 from models.binance_futures_testnet_order_test import (
     BinanceFuturesTestnetOrderTestAction,
@@ -35,7 +36,8 @@ def main(argv: list[str] | None = None) -> int:
         permit = None
         if action == "submit_test_order":
             permit = _required_permit_reference(args.permit_id, args.permit_version)
-        engine = BinanceFuturesTestnetOrderTestEngine(repo_root=ROOT_DIR, env=os.environ)
+        operational_counter_registry = OperationalCounterRegistry()
+        engine = BinanceFuturesTestnetOrderTestEngine(repo_root=ROOT_DIR, env=os.environ, operational_counter_registry=operational_counter_registry)
         if action == "validate":
             report = engine.validate(args.config, expected_profile=args.expected_profile)
             _emit_payload(report.to_dict(), format_binance_futures_testnet_order_test_validation_report(report), args)

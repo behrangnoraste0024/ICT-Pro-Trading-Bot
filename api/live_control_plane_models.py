@@ -84,6 +84,17 @@ class OperatorWarningResponse(BaseModel):
     source: str
 
 
+class OperatorOperationalMetricsResponse(BaseModel):
+    ict_tradingbot_safety_denials_total: int
+
+
+class OperatorAlertResponse(BaseModel):
+    alert_id: str
+    severity: str
+    safe_message: str
+    source_state: str
+
+
 class OperatorStatusResponse(BaseModel):
     environment: str
     symbol: str
@@ -99,6 +110,8 @@ class OperatorStatusResponse(BaseModel):
     validation_gate: str
     active_lock: bool
     warnings: list[OperatorWarningResponse] = Field(default_factory=list)
+    operational_metrics: OperatorOperationalMetricsResponse
+    alerts: list[OperatorAlertResponse] = Field(default_factory=list)
     updated_at: str
 
 

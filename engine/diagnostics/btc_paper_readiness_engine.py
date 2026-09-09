@@ -26,6 +26,7 @@ from engine.diagnostics.btc_futures_paper_position_engine import BTCFuturesPaper
 from engine.diagnostics.btc_futures_risk_model_engine import BTCFuturesRiskModelEngine
 from engine.diagnostics.btc_live_market_feed_engine import BTCLiveMarketFeedEngine
 from engine.diagnostics.btc_paper_account_engine import BTCPaperAccountEngine
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from models.btc_paper_readiness import BTCPaperReadinessCheck, BTCPaperReadinessReport
 
 
@@ -56,6 +57,7 @@ class BTCPaperReadinessEngine:
         env: dict[str, str] | None = None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
+        self.operational_counter_registry = OperationalCounterRegistry()
         self.registry_engine = registry_engine or HistoricalSampleRegistryEngine(repo_root=self.repo_root)
         self.baseline_engine = baseline_engine or ValidationBaselineEngine(repo_root=self.repo_root)
         self.runtime_config_engine = runtime_config_engine or BTCPaperRuntimeConfigEngine(repo_root=self.repo_root)
@@ -72,9 +74,9 @@ class BTCPaperReadinessEngine:
         self.futures_paper_position_engine = futures_paper_position_engine or BTCFuturesPaperPositionEngine(repo_root=self.repo_root)
         self.binance_futures_testnet_adapter_engine = binance_futures_testnet_adapter_engine or BinanceFuturesTestnetAdapterEngine(repo_root=self.repo_root, env={})
         self.binance_futures_testnet_read_only_engine = binance_futures_testnet_read_only_engine or BinanceFuturesTestnetReadOnlyEngine(repo_root=self.repo_root, env={})
-        self.binance_futures_testnet_order_test_engine = binance_futures_testnet_order_test_engine or BinanceFuturesTestnetOrderTestEngine(repo_root=self.repo_root, env={})
-        self.binance_futures_testnet_order_lifecycle_engine = binance_futures_testnet_order_lifecycle_engine or BinanceFuturesTestnetOrderLifecycleEngine(repo_root=self.repo_root, env={})
-        self.binance_futures_testnet_protective_orders_engine = binance_futures_testnet_protective_orders_engine or BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=self.repo_root, env={})
+        self.binance_futures_testnet_order_test_engine = binance_futures_testnet_order_test_engine or BinanceFuturesTestnetOrderTestEngine(repo_root=self.repo_root, env={}, operational_counter_registry=self.operational_counter_registry)
+        self.binance_futures_testnet_order_lifecycle_engine = binance_futures_testnet_order_lifecycle_engine or BinanceFuturesTestnetOrderLifecycleEngine(repo_root=self.repo_root, env={}, operational_counter_registry=self.operational_counter_registry)
+        self.binance_futures_testnet_protective_orders_engine = binance_futures_testnet_protective_orders_engine or BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=self.repo_root, env={}, operational_counter_registry=self.operational_counter_registry)
         self.gate_runner = gate_runner
         self.env = os.environ if env is None else env
 

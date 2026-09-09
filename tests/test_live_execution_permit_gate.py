@@ -7,6 +7,8 @@ from uuid import UUID
 
 import pytest
 
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
+from infrastructure.persistence.live_execution_authorization_policy import SAFETY_DENIAL_COUNTER
 from infrastructure.persistence.live_execution_permit_persistence import (
     ISSUE_CONFIRMATION,
     LiveExecutionPermitPersistence,
@@ -106,6 +108,45 @@ def test_gate_requires_reference_before_authorization_or_persistence() -> None:
         )
 
     assert exc.value.code == "PERMIT_REQUIRED"
+
+
+def test_gate_default_policy_uses_injected_operational_counter_registry() -> None:
+    env = durable_state_env("RELEASED")
+    registry = OperationalCounterRegistry()
+
+    def forbidden_factory(*args, **kwargs):
+        raise AssertionError("persistence should not open when authorization blocks")
+
+    gate = LiveExecutionPermitGate(
+        env=env,
+        permit_persistence_factory=forbidden_factory,
+        operational_counter_registry=registry,
+    )
+
+    with pytest.raises(LiveExecutionPermitGateError) as exc:
+        gate.authorize_and_consume(
+            operation=LiveExecutionOperation.ORDER_LIFECYCLE_CANCEL,
+            fingerprint=_fingerprint(),
+            permit_reference=LiveExecutionPermitReference("permit-" + "a" * 32, 1),
+            confirmation_verified=True,
+            credentials_configured=False,
+            runtime_config_path=env["ICT_LIVE_EXECUTION_RUNTIME_CONFIG"],
+        )
+
+    assert exc.value.code == "CREDENTIALS_UNAVAILABLE"
+    assert registry.snapshot() == {SAFETY_DENIAL_COUNTER: 1}
+
+
+def test_gate_explicit_authorization_policy_is_preserved_when_registry_is_supplied() -> None:
+    class Policy:
+        pass
+
+    policy = Policy()
+    registry = OperationalCounterRegistry()
+
+    gate = LiveExecutionPermitGate(authorization_policy=policy, operational_counter_registry=registry, env={})
+
+    assert gate.authorization_policy is policy
 
 
 def test_gate_authorization_denial_happens_before_persistence() -> None:

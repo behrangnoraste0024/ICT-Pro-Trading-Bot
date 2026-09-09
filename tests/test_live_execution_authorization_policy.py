@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+import logging
 from pathlib import Path
 
 import pytest
 
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
+from infrastructure.persistence import live_execution_authorization_policy as authorization_policy_module
 from infrastructure.persistence.kill_switch_gate import KillSwitchGateError
-from infrastructure.persistence.live_execution_authorization_policy import LiveExecutionAuthorizationPolicy
+from infrastructure.persistence.live_execution_authorization_policy import (
+    SAFETY_DENIAL_COUNTER,
+    LiveExecutionAuthorizationPolicy,
+)
 from infrastructure.persistence.kill_switch_persistence import KillSwitchPersistence
 from models.live_execution_authorization import LiveExecutionAuthorizationContext, LiveExecutionOperation
 from tests.kill_switch_test_support import durable_state_env
@@ -94,6 +100,23 @@ def _policy(gate: _Gate | None = None) -> LiveExecutionAuthorizationPolicy:
     )
 
 
+def _policy_with_registry(registry: OperationalCounterRegistry) -> LiveExecutionAuthorizationPolicy:
+    return LiveExecutionAuthorizationPolicy(
+        env={},
+        kill_switch_gate=_Gate(),
+        persistence_factory=_Persistence,
+        operational_counter_registry=registry,
+    )
+
+
+def _denial_records(caplog: pytest.LogCaptureFixture) -> list[dict]:
+    records = []
+    for record in caplog.records:
+        if record.name == "ict_tradingbot.observability":
+            records.append(json.loads(record.getMessage()))
+    return records
+
+
 @pytest.mark.parametrize("operation", list(LiveExecutionOperation))
 def test_supported_operations_are_allowed(operation: LiveExecutionOperation) -> None:
     decision = _policy().evaluate(_context(operation=operation))
@@ -119,6 +142,108 @@ def test_independent_policy_denials_are_deterministic(changes: dict, code: str) 
     assert decision.allowed is False
     assert decision.code == code
     assert "secret" not in decision.message.lower()
+
+
+def test_safety_denial_emits_exact_structured_event_and_counter_once(caplog: pytest.LogCaptureFixture) -> None:
+    registry = OperationalCounterRegistry()
+    policy = _policy_with_registry(registry)
+    caplog.set_level(logging.WARNING, logger="ict_tradingbot.observability")
+
+    decision = policy.evaluate(_context(live_trading_enabled=False))
+
+    assert decision.allowed is False
+    assert decision.code == "LIVE_TRADING_DISABLED"
+    assert registry.snapshot() == {SAFETY_DENIAL_COUNTER: 1}
+    records = _denial_records(caplog)
+    assert len(records) == 1
+    record = records[0]
+    assert record["event_name"] == "live_execution_authorization_denied"
+    assert record["category"] == "safety_denial"
+    assert record["severity"] == "WARNING"
+    assert record["request_fingerprint"] is None
+    assert record["context"] == {
+        "decision_code": "LIVE_TRADING_DISABLED",
+        "operation": LiveExecutionOperation.PROTECTIVE_CREATE.value,
+        "policy_version": decision.policy_version,
+    }
+    assert set(record["context"]) == {"decision_code", "operation", "policy_version"}
+    for prohibited in (
+        "request_fingerprint",
+        "permit_id",
+        "order_id",
+        "pair_id",
+        "client_order_id",
+        "correlation_id",
+        "api_key",
+        "api_secret",
+        "signature",
+        "authorization",
+        "headers",
+        "request_body",
+        "sql",
+        "traceback",
+        "raw_exchange_response",
+        "labels",
+        "tags",
+    ):
+        assert prohibited not in record["context"]
+
+
+def test_authorized_outcome_does_not_emit_denial_event_or_increment_counter(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = OperationalCounterRegistry()
+    policy = _policy_with_registry(registry)
+    caplog.set_level(logging.WARNING, logger="ict_tradingbot.observability")
+
+    decision = policy.evaluate(_context())
+
+    assert decision.allowed is True
+    assert decision.code == "AUTHORIZED"
+    assert registry.snapshot() == {SAFETY_DENIAL_COUNTER: 0}
+    assert _denial_records(caplog) == []
+
+
+@pytest.mark.parametrize("failure_point", ["build", "emit", "register", "increment"])
+def test_observability_failures_preserve_denial_decision(
+    failure_point: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingRegistry:
+        def register(self, name: str) -> None:
+            if failure_point == "register":
+                raise RuntimeError("signature=secret")
+
+        def increment(self, name: str, amount: int = 1) -> int:
+            if failure_point == "increment":
+                raise RuntimeError("rawResponse secret")
+            return amount
+
+    if failure_point == "build":
+        def fail_build(**kwargs):
+            raise RuntimeError("postgresql://user:secret@host/db")
+
+        monkeypatch.setattr(authorization_policy_module, "build_structured_record", fail_build)
+    if failure_point == "emit":
+        def fail_emit(record):
+            raise RuntimeError("Authorization secret")
+
+        monkeypatch.setattr(authorization_policy_module, "emit_structured_record", fail_emit)
+
+    policy = LiveExecutionAuthorizationPolicy(
+        env={},
+        kill_switch_gate=_Gate(),
+        persistence_factory=_Persistence,
+        operational_counter_registry=FailingRegistry(),
+    )
+
+    decision = policy.evaluate(_context(live_trading_enabled=False))
+
+    assert decision.allowed is False
+    assert decision.code == "LIVE_TRADING_DISABLED"
+    assert decision.operation == LiveExecutionOperation.PROTECTIVE_CREATE.value
+    assert decision.message == LiveExecutionAuthorizationPolicy.SAFE_MESSAGES["LIVE_TRADING_DISABLED"]
+    assert decision.policy_version == "1.0"
 
 
 @pytest.mark.parametrize(

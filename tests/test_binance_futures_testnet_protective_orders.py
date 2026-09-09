@@ -11,6 +11,7 @@ from urllib.parse import parse_qs
 from engine.diagnostics.binance_futures_testnet_protective_orders_engine import BinanceFuturesTestnetProtectiveOrdersEngine
 from infrastructure.exchanges.binance_futures_testnet_order_lifecycle_client import BinanceLifecycleHTTPResponse
 from infrastructure.exchanges.binance_futures_testnet_protective_orders_client import BinanceFuturesTestnetProtectiveAPIError, BinanceFuturesTestnetProtectiveOrdersClient
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from models.binance_futures_testnet_protective_orders import BinanceFuturesTestnetProtectiveOrdersConfig
 from reporting.binance_futures_testnet_protective_orders_report import format_binance_futures_testnet_protective_orders_result
 from tests.kill_switch_test_support import durable_state_env
@@ -75,6 +76,25 @@ def _allow_legacy_live_execution_permits(monkeypatch):
         "engine.diagnostics.binance_futures_testnet_protective_orders_engine.BinanceFuturesTestnetProtectiveOrdersEngine.__init__",
         legacy_init,
     )
+
+
+def test_protective_engine_default_policy_uses_injected_operational_counter_registry(tmp_path: Path) -> None:
+    registry = OperationalCounterRegistry()
+
+    engine = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, operational_counter_registry=registry)
+
+    assert engine.authorization_policy.operational_counter_registry is registry
+    assert engine.permit_gate.authorization_policy is engine.authorization_policy
+
+
+def test_protective_engine_preserves_explicit_authorization_policy_when_registry_is_supplied(tmp_path: Path) -> None:
+    policy = object()
+    registry = OperationalCounterRegistry()
+
+    engine = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=tmp_path, authorization_policy=policy, operational_counter_registry=registry)
+
+    assert engine.authorization_policy is policy
+    assert engine.permit_gate.authorization_policy is policy
 
 
 

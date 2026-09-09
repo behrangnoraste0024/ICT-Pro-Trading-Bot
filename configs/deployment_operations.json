@@ -1,0 +1,122 @@
+{
+  "schema_version": "1.0",
+  "environments": [
+    {
+      "name": "local_development",
+      "role": "local development and repository-local validation",
+      "production_disabled": true,
+      "automated_tests_may_use_credentials": false,
+      "exchange_transport_authorized": false
+    },
+    {
+      "name": "automated_tests",
+      "role": "deterministic automated test execution",
+      "production_disabled": true,
+      "automated_tests_may_use_credentials": false,
+      "exchange_transport_authorized": false
+    },
+    {
+      "name": "supervised_testnet_demo",
+      "role": "separately authorized supervised Binance Futures Testnet or Demo operation",
+      "production_disabled": true,
+      "automated_tests_may_use_credentials": false,
+      "exchange_transport_authorized": false
+    },
+    {
+      "name": "production_readiness_review",
+      "role": "future assessment only; production enablement remains disabled",
+      "production_disabled": true,
+      "automated_tests_may_use_credentials": false,
+      "exchange_transport_authorized": false
+    }
+  ],
+  "unknown_environment_role": {
+    "authorized": false,
+    "readiness_status": "NOT_READY",
+    "reason_code": "UNKNOWN_ENVIRONMENT_ROLE_FAIL_CLOSED"
+  },
+  "trading_scope": {
+    "symbol": "BTCUSDT",
+    "symbol_scope": "BTCUSDT_ONLY",
+    "production_disabled": true,
+    "production_trading_authorized": false,
+    "live_order_authority": false,
+    "exchange_transport_authority": false,
+    "exchange_policy": "Binance Futures Testnet/Demo only when separately authorized"
+  },
+  "expected_env_names": [
+    "ICT_DATABASE_URL",
+    "ICT_RUNTIME_ENV"
+  ],
+  "secret_categories": [
+    {
+      "name": "exchange_api_credentials",
+      "values_allowed_in_repository": false,
+      "values_allowed_in_automated_tests": false
+    },
+    {
+      "name": "database_credentials",
+      "values_allowed_in_repository": false,
+      "values_allowed_in_automated_tests": false
+    },
+    {
+      "name": "operator_credentials",
+      "values_allowed_in_repository": false,
+      "values_allowed_in_automated_tests": false
+    },
+    {
+      "name": "signing_material",
+      "values_allowed_in_repository": false,
+      "values_allowed_in_automated_tests": false
+    }
+  ],
+  "fail_closed_defaults": {
+    "missing_required_configuration_authorized": false,
+    "unknown_required_configuration_authorized": false,
+    "malformed_required_configuration_authorized": false,
+    "ambiguous_operational_evidence_authorized": false,
+    "default_readiness_status": "NOT_READY"
+  },
+  "prohibited_actions": [
+    "deployment_execution",
+    "service_start_stop_restart",
+    "service_mutation",
+    "credential_access",
+    "secret_value_access",
+    "secret_output",
+    "secret_storage",
+    "secret_rotation",
+    "binance_transport",
+    "exchange_transport",
+    "exchange_clients",
+    "live_execution",
+    "live_orders",
+    "permit_changes",
+    "persistence_mutation",
+    "database_mutation",
+    "migration_execution",
+    "backup_execution",
+    "restore_execution",
+    "rollback_execution",
+    "docker_cloud_deployment_mutation",
+    "ssh",
+    "remote_shell",
+    "dashboard_integration"
+  ],
+  "health_status_surfaces": [
+    "operator_status",
+    "kill_switch_status",
+    "recovery_status",
+    "readiness_status",
+    "safety_status",
+    "persistence_status"
+  ],
+  "versioned_configuration": {
+    "non_secret_configuration_version_controlled": true,
+    "secret_values_excluded_from_version_control": true,
+    "missing_required_configuration_fails_closed": true,
+    "unknown_required_configuration_fails_closed": true,
+    "configuration_changes_require_explicit_review": true,
+    "schema_version_explicit": true
+  }
+}

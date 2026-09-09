@@ -9,7 +9,72 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from api.live_control_plane_routes import get_operator_status_service
-from api.operator_status_service import OperatorStatusService
+from api.operator_status_service import SAFETY_DENIAL_COUNTER, OperatorStatusService
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
+
+
+EXPECTED_ALERTS = [
+    {
+        "alert_id": "SAFETY_DENIAL_ACTIVE",
+        "severity": "BLOCKING",
+        "safe_message": "Safety denial counter is non-zero.",
+        "source_state": "NON_ZERO",
+    },
+    {
+        "alert_id": "RECOVERY_REQUIRED",
+        "severity": "BLOCKING",
+        "safe_message": "Protective recovery is required.",
+        "source_state": "REQUIRED",
+    },
+    {
+        "alert_id": "PERSISTENCE_UNCONFIGURED",
+        "severity": "BLOCKING",
+        "safe_message": "Persistence is not configured.",
+        "source_state": "NOT_CONFIGURED",
+    },
+    {
+        "alert_id": "PERSISTENCE_UNAVAILABLE",
+        "severity": "UNAVAILABLE",
+        "safe_message": "Persistence is unavailable.",
+        "source_state": "UNAVAILABLE",
+    },
+    {
+        "alert_id": "PERSISTENCE_SCHEMA_NOT_READY",
+        "severity": "BLOCKING",
+        "safe_message": "Persistence schema is not ready.",
+        "source_state": "NOT_READY",
+    },
+    {
+        "alert_id": "KILL_SWITCH_ENGAGED",
+        "severity": "BLOCKING",
+        "safe_message": "Kill switch is not released.",
+        "source_state": "ENGAGED",
+    },
+    {
+        "alert_id": "KILL_SWITCH_UNAVAILABLE",
+        "severity": "UNAVAILABLE",
+        "safe_message": "Kill switch status is unavailable.",
+        "source_state": "UNAVAILABLE",
+    },
+    {
+        "alert_id": "READINESS_NOT_READY",
+        "severity": "BLOCKING",
+        "safe_message": "BTC paper readiness is not ready.",
+        "source_state": "NOT_READY",
+    },
+    {
+        "alert_id": "VALIDATION_GATE_NOT_PASS",
+        "severity": "BLOCKING",
+        "safe_message": "Validation gate has not passed.",
+        "source_state": "NOT_PASS",
+    },
+    {
+        "alert_id": "ACTIVE_LOCK_PRESENT",
+        "severity": "BLOCKING",
+        "safe_message": "A protective or recovery lock is active.",
+        "source_state": "PRESENT",
+    },
+]
 
 
 SECRET_MARKERS = (
@@ -205,14 +270,21 @@ class PayloadPersistenceService(FakePersistenceService):
         return self.payload
 
 
+class BrokenSnapshotRegistry:
+    def snapshot(self):
+        raise RuntimeError("postgresql://unit-test-secret rawResponse traceback X-MBX-APIKEY")
+
+
 @dataclass
 class ServiceBundle:
     live: FakeLiveService
     kill_switch: FakeKillSwitchService
     persistence: FakePersistenceService
+    operational_counter_registry: OperationalCounterRegistry
 
     def operator(self) -> OperatorStatusService:
         return OperatorStatusService(
+            operational_counter_registry=self.operational_counter_registry,
             live_service=self.live,
             kill_switch_service=self.kill_switch,
             persistence_service=self.persistence,
@@ -224,16 +296,22 @@ def _bundle(
     live: FakeLiveService | None = None,
     kill_switch: FakeKillSwitchService | None = None,
     persistence: FakePersistenceService | None = None,
+    operational_counter_registry: OperationalCounterRegistry | None = None,
 ) -> ServiceBundle:
     return ServiceBundle(
         live=live or FakeLiveService(),
         kill_switch=kill_switch or FakeKillSwitchService(),
         persistence=persistence or FakePersistenceService(),
+        operational_counter_registry=operational_counter_registry or OperationalCounterRegistry(),
     )
 
 
 def _status(**kwargs) -> dict[str, Any]:
     return _bundle(**kwargs).operator().status()
+
+
+def _alert_ids(payload: dict[str, Any]) -> list[str]:
+    return [alert["alert_id"] for alert in payload["alerts"]]
 
 
 def _valid_safety_payload(**overrides: Any) -> dict[str, Any]:
@@ -276,7 +354,133 @@ def test_operator_status_ready_aggregate_returns_ready() -> None:
     assert result["validation_gate"] == "PASS"
     assert result["active_lock"] is False
     assert result["warnings"] == []
+    assert result["operational_metrics"] == {SAFETY_DENIAL_COUNTER: 0}
+    assert result["alerts"] == []
     assert result["updated_at"].endswith("+00:00")
+
+
+def test_operator_status_operational_metrics_schema_is_fixed_and_zero_is_visible() -> None:
+    result = _status()
+
+    assert result["operational_metrics"] == {SAFETY_DENIAL_COUNTER: 0}
+    assert set(result["operational_metrics"]) == {SAFETY_DENIAL_COUNTER}
+    assert "SAFETY_DENIAL_ACTIVE" not in _alert_ids(result)
+
+
+def test_operator_status_alert_identity_set_is_exact() -> None:
+    assert [alert["alert_id"] for alert in EXPECTED_ALERTS] == [
+        "SAFETY_DENIAL_ACTIVE",
+        "RECOVERY_REQUIRED",
+        "PERSISTENCE_UNCONFIGURED",
+        "PERSISTENCE_UNAVAILABLE",
+        "PERSISTENCE_SCHEMA_NOT_READY",
+        "KILL_SWITCH_ENGAGED",
+        "KILL_SWITCH_UNAVAILABLE",
+        "READINESS_NOT_READY",
+        "VALIDATION_GATE_NOT_PASS",
+        "ACTIVE_LOCK_PRESENT",
+    ]
+
+
+def test_operator_status_operational_metrics_reads_non_zero_injected_registry() -> None:
+    registry = OperationalCounterRegistry()
+    registry.register(SAFETY_DENIAL_COUNTER)
+    registry.increment(SAFETY_DENIAL_COUNTER, 4)
+
+    result = _status(operational_counter_registry=registry)
+
+    assert result["operational_metrics"] == {SAFETY_DENIAL_COUNTER: 4}
+    assert result["alerts"] == [EXPECTED_ALERTS[0]]
+    assert registry.snapshot() == {SAFETY_DENIAL_COUNTER: 4}
+
+
+def test_operator_status_service_retains_exact_registry_without_recreation() -> None:
+    registry = OperationalCounterRegistry()
+    service = _bundle(operational_counter_registry=registry).operator()
+
+    assert service.operational_counter_registry is registry
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_alert"),
+    [
+        (
+            {"live": FakeLiveService(recovery_required=True)},
+            EXPECTED_ALERTS[1],
+        ),
+        (
+            {"persistence": FakePersistenceService(configured=False, reachable=False, schema_ready=False)},
+            EXPECTED_ALERTS[2],
+        ),
+        (
+            {"persistence": FakePersistenceService(configured=True, reachable=False, schema_ready=False)},
+            EXPECTED_ALERTS[3],
+        ),
+        (
+            {"persistence": FakePersistenceService(configured=True, reachable=True, schema_ready=False)},
+            EXPECTED_ALERTS[4],
+        ),
+        (
+            {"kill_switch": FakeKillSwitchService(state="ENGAGED")},
+            EXPECTED_ALERTS[5],
+        ),
+        (
+            {"kill_switch": FakeKillSwitchService(available=False)},
+            EXPECTED_ALERTS[6],
+        ),
+        (
+            {"live": FakeLiveService(readiness_status="BLOCKED")},
+            EXPECTED_ALERTS[7],
+        ),
+        (
+            {"live": FakeLiveService(validation_gate="FAIL")},
+            EXPECTED_ALERTS[8],
+        ),
+        (
+            {"live": FakeLiveService(active_lock=True)},
+            EXPECTED_ALERTS[9],
+        ),
+    ],
+)
+def test_operator_status_alert_activation_conditions(kwargs: dict[str, Any], expected_alert: dict[str, str]) -> None:
+    result = _status(**kwargs)
+
+    assert expected_alert in result["alerts"]
+    assert "OPERATOR_STATUS_UNAVAILABLE" not in _alert_ids(result)
+    assert all(set(alert) == {"alert_id", "severity", "safe_message", "source_state"} for alert in result["alerts"])
+    assert all("active" not in alert for alert in result["alerts"])
+    _assert_no_sensitive_payload(result)
+
+
+def test_operator_status_alerts_are_active_only_and_deterministically_ordered() -> None:
+    registry = OperationalCounterRegistry()
+    registry.register(SAFETY_DENIAL_COUNTER)
+    registry.increment(SAFETY_DENIAL_COUNTER)
+
+    result = _status(
+        operational_counter_registry=registry,
+        live=FakeLiveService(recovery_required=True, active_lock=True, readiness_status="BLOCKED", validation_gate="FAIL"),
+        kill_switch=FakeKillSwitchService(state="ENGAGED"),
+        persistence=FakePersistenceService(configured=False, reachable=False, schema_ready=False),
+    )
+    repeated = _status(
+        operational_counter_registry=registry,
+        live=FakeLiveService(recovery_required=True, active_lock=True, readiness_status="BLOCKED", validation_gate="FAIL"),
+        kill_switch=FakeKillSwitchService(state="ENGAGED"),
+        persistence=FakePersistenceService(configured=False, reachable=False, schema_ready=False),
+    )
+
+    expected = [
+        EXPECTED_ALERTS[0],
+        EXPECTED_ALERTS[1],
+        EXPECTED_ALERTS[2],
+        EXPECTED_ALERTS[5],
+        EXPECTED_ALERTS[7],
+        EXPECTED_ALERTS[8],
+        EXPECTED_ALERTS[9],
+    ]
+    assert result["alerts"] == expected
+    assert repeated["alerts"] == expected
 
 
 def test_operator_status_kill_switch_not_released_returns_blocked() -> None:
@@ -387,6 +591,7 @@ def test_operator_status_unexpected_service_exception_is_sanitized_unavailable()
 
     assert result["overall_status"] == "UNAVAILABLE"
     assert any(warning["code"] == "OPERATOR_STATUS_UNAVAILABLE" for warning in result["warnings"])
+    assert "OPERATOR_STATUS_UNAVAILABLE" not in _alert_ids(result)
     _assert_no_sensitive_payload(result)
 
 
@@ -554,12 +759,40 @@ def test_operator_status_route_get_only_and_performs_no_mutation_calls(monkeypat
     response = client.get("/api/v1/live/operator/status")
 
     assert response.status_code == 200
-    assert response.json()["overall_status"] == "READY"
+    payload = response.json()
+    assert payload["overall_status"] == "READY"
+    assert payload["operational_metrics"] == {SAFETY_DENIAL_COUNTER: 0}
+    assert set(payload["operational_metrics"]) == {SAFETY_DENIAL_COUNTER}
+    assert payload["alerts"] == []
     assert bundle.live.mutations == []
     assert bundle.kill_switch.mutations == []
     assert bundle.persistence.mutations == []
     for method in (client.post, client.put, client.patch, client.delete):
         assert method("/api/v1/live/operator/status").status_code == 405
+
+
+def test_operator_status_route_sanitizes_snapshot_failure_without_raw_details() -> None:
+    service = OperatorStatusService(
+        operational_counter_registry=BrokenSnapshotRegistry(),  # type: ignore[arg-type]
+        live_service=FakeLiveService(),
+        kill_switch_service=FakeKillSwitchService(),
+        persistence_service=FakePersistenceService(),
+    )
+    app = create_app()
+    app.dependency_overrides[get_operator_status_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.get("/api/v1/live/operator/status")
+
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["detail"] == {
+        "code": "OPERATOR_STATUS_UNAVAILABLE",
+        "message": "Operator status is unavailable.",
+        "details": {},
+    }
+    assert "alerts" not in payload
+    _assert_no_sensitive_payload(payload)
 
 
 def test_operator_status_route_sanitizes_unexpected_top_level_exception() -> None:
@@ -574,11 +807,13 @@ def test_operator_status_route_sanitizes_unexpected_top_level_exception() -> Non
     response = client.get("/api/v1/live/operator/status")
 
     assert response.status_code == 503
-    assert response.json()["detail"] == {
+    payload = response.json()
+    assert payload["detail"] == {
         "code": "OPERATOR_STATUS_UNAVAILABLE",
         "message": "Operator status is unavailable.",
         "details": {},
     }
-    body = json.dumps(response.json())
+    assert "alerts" not in payload
+    body = json.dumps(payload)
     for marker in SECRET_MARKERS:
         assert marker.lower() not in body.lower()

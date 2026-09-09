@@ -23,6 +23,7 @@ from engine.diagnostics.btc_futures_paper_position_engine import BTCFuturesPaper
 from engine.diagnostics.btc_futures_risk_model_engine import BTCFuturesRiskModelEngine
 from engine.diagnostics.btc_live_market_feed_engine import BTCLiveMarketFeedEngine
 from engine.diagnostics.btc_paper_account_engine import BTCPaperAccountEngine
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from models.btc_forward_test_loop import BTCForwardTestIssue
 from models.binance_futures_testnet_adapter import BinanceFuturesTestnetIssue
 from models.binance_futures_testnet_read_only import BinanceFuturesTestnetReadOnlyIssue
@@ -142,7 +143,8 @@ def main(argv: list[str] | None = None) -> int:
         accepted = read_only_result.status in ("PASS", "WARNING")
     elif args.validate_binance_futures_testnet_order_test_dry_run:
         status = engine.build_status(config_path=args.config, expected_profile=args.expected_profile, state=state)
-        order_test_engine = BinanceFuturesTestnetOrderTestEngine(repo_root=ROOT_DIR, env={})
+        operational_counter_registry = OperationalCounterRegistry()
+        order_test_engine = BinanceFuturesTestnetOrderTestEngine(repo_root=ROOT_DIR, env={}, operational_counter_registry=operational_counter_registry)
         order_test_result = order_test_engine.runner_validate(
             config_path="configs/binance_futures_testnet_order_test.json",
             expected_profile=args.expected_profile,
@@ -164,7 +166,8 @@ def main(argv: list[str] | None = None) -> int:
         accepted = order_test_result.status in ("PASS", "WARNING")
     elif args.validate_binance_futures_testnet_order_lifecycle_dry_run:
         status = engine.build_status(config_path=args.config, expected_profile=args.expected_profile, state=state)
-        lifecycle_engine = BinanceFuturesTestnetOrderLifecycleEngine(repo_root=ROOT_DIR, env={})
+        operational_counter_registry = OperationalCounterRegistry()
+        lifecycle_engine = BinanceFuturesTestnetOrderLifecycleEngine(repo_root=ROOT_DIR, env={}, operational_counter_registry=operational_counter_registry)
         lifecycle_result = lifecycle_engine.runner_validate(
             config_path="configs/binance_futures_testnet_order_lifecycle.json",
             expected_profile=args.expected_profile,

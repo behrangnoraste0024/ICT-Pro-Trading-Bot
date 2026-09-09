@@ -5,11 +5,14 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
+
 from .live_control_plane_routes import router
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="ICT Pro Trading Bot Live Control Plane", version="2.90.0")
+    app.state.operational_counter_registry = OperationalCounterRegistry()
 
     @app.exception_handler(RequestValidationError)
     async def sanitized_recovery_validation_error(request: Request, exc: RequestValidationError):

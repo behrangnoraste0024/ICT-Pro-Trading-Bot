@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "artifact_schema_version": "1.0",
+  "symbol": "BTCUSDT",
+  "production_disabled": true,
+  "runtime_mode": "local_paper_evidence",
+  "environment_classification": "LOCAL_PAPER",
+  "minimum_elapsed_hours": 72,
+  "operator_observation_interval_hours": 12,
+  "heartbeat_interval_seconds": 30,
+  "liveness_multiplier": 2,
+  "network_allowed": false,
+  "credentials_allowed": false,
+  "exchange_transport_allowed": false,
+  "runtime_state_resume_allowed": false,
+  "allowed_successful_stop_reasons": [
+    "THRESHOLD_REACHED",
+    "OPERATOR_STOP_AFTER_THRESHOLD"
+  ],
+  "config_reference": "configs/local_paper_evidence_harness.json"
+}

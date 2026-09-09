@@ -19,7 +19,17 @@ from infrastructure.exchanges.binance_futures_testnet_order_test_client import (
     BinanceFuturesTestnetOrderTestClient,
     BinanceFuturesTestnetOrderTestResponseShapeError,
 )
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from infrastructure.persistence.live_execution_authorization_policy import LiveExecutionAuthorizationPolicy
+from infrastructure.persistence.live_execution_permit_persistence import (
+    RUNTIME_EVIDENCE_EVENT_POST_ATTEMPTED,
+    RUNTIME_EVIDENCE_EVENT_POST_COMPLETED,
+    RUNTIME_EVIDENCE_EVENT_SIGNED,
+    begin_order_test_runtime_evidence_capture,
+    get_order_test_runtime_evidence,
+    record_order_test_runtime_evidence_event,
+    reset_order_test_runtime_evidence_capture,
+)
 from infrastructure.security.live_execution_mutation_fingerprint_adapter import build_signed_order_test_create_from_final_request
 from infrastructure.security.live_execution_permit_gate import LiveExecutionPermitGate
 from models.live_execution_authorization import LiveExecutionOperation
@@ -48,6 +58,8 @@ class OrderTestAuthorizationAbort(RuntimeError):
 
 
 class BinanceFuturesTestnetOrderTestEngine:
+    _TESTNET_SUPERVISED_RUNTIME_CONFIG_PATH = "configs/binance_futures_testnet_supervised_runtime.json"
+
     def __init__(
         self,
         repo_root: str | Path | None = None,
@@ -67,6 +79,7 @@ class BinanceFuturesTestnetOrderTestEngine:
         kill_switch_gate=None,
         authorization_policy=None,
         permit_gate=None,
+        operational_counter_registry: OperationalCounterRegistry | None = None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.runtime_config_engine = runtime_config_engine or BTCPaperRuntimeConfigEngine(repo_root=self.repo_root)
@@ -86,19 +99,21 @@ class BinanceFuturesTestnetOrderTestEngine:
             repo_root=self.repo_root,
             env=self.env,
             kill_switch_gate=kill_switch_gate,
+            operational_counter_registry=operational_counter_registry,
         )
         self.permit_gate = permit_gate or LiveExecutionPermitGate(
             authorization_policy=self.authorization_policy,
             env=self.env,
         )
 
-    def _require_mutation_permission(self) -> None:
+    def _require_mutation_permission(self, runtime_config_path: str) -> None:
         decision = self.authorization_policy.authorize(
             LiveExecutionOperation.SIGNED_ORDER_TEST_CREATE,
             environment="TESTNET",
             symbol="BTCUSDT",
             confirmation_verified=True,
             credentials_configured=True,
+            runtime_config_path=runtime_config_path,
         )
         if not decision.allowed:
             raise OrderTestAuthorizationAbort(decision.code, decision.message)
@@ -228,19 +243,26 @@ class BinanceFuturesTestnetOrderTestEngine:
         if not metadata.credentials_complete:
             decision = BinanceFuturesTestnetOrderTestDecision.CREDENTIALS_INCOMPLETE.value if metadata.api_key_present or metadata.api_secret_present else BinanceFuturesTestnetOrderTestDecision.CREDENTIALS_NOT_CONFIGURED.value
             return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "WARNING", decision, "Dedicated testnet credentials are incomplete or missing.", credential_metadata=metadata, issues=issues, credentials_inspected=True)
+        runtime_evidence = None
         try:
-            self._require_mutation_permission()
+            self._require_mutation_permission(config.runtime_config_path)
             filters = client.fetch_exchange_filters()
             mark_price = client.fetch_mark_price(config.exchange_symbol) if str(order_type).upper() == "MARKET" else None
             preview = client.build_order_test_preview(client_order_id, side, order_type, quantity, price, time_in_force, reduce_only, exchange_filters=filters, mark_price=mark_price)
             server = self._server_time_or_issue(client, config, issues)
             unsigned_request = client.build_unsigned_business_request(preview)
             fingerprint = build_signed_order_test_create_from_final_request(unsigned_request)
-            self._require_permit_for_mutation(fingerprint=fingerprint, permit_reference=permit, config=config)
-            request_metadata = client.submit_test_order(preview, server, unsigned_business_request=unsigned_request)
+            evidence_token = begin_order_test_runtime_evidence_capture()
+            try:
+                self._require_permit_for_mutation(fingerprint=fingerprint, permit_reference=permit, config=config)
+                client.authenticated_post = self._runtime_evidence_authenticated_post(client.authenticated_post)
+                request_metadata = client.submit_test_order(preview, server, unsigned_business_request=unsigned_request)
+            finally:
+                runtime_evidence = get_order_test_runtime_evidence()
+                reset_order_test_runtime_evidence_capture(evidence_token)
         except OrderTestAuthorizationAbort as exc:
             issues.append(self._issue(exc.code.lower(), "FAIL", exc.message))
-            return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", exc.code, exc.message, credential_metadata=metadata, issues=issues, credentials_inspected=True)
+            return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", exc.code, exc.message, credential_metadata=metadata, payload=self._runtime_evidence_payload(runtime_evidence), issues=issues, credentials_inspected=True)
         except BinanceFuturesTestnetOrderTestResponseShapeError as exc:
             request_metadata = exc.metadata
             details = {
@@ -258,10 +280,12 @@ class BinanceFuturesTestnetOrderTestEngine:
                 "binance_error_message": request_metadata.binance_error_message,
             }
             issues.append(self._issue("order_test_response_shape_invalid", "FAIL", self._sanitize(str(exc)), details))
-            return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", BinanceFuturesTestnetOrderTestDecision.ORDER_TEST_REJECTED.value, "Test Order request failed safely.", credential_metadata=metadata, request_metadata=request_metadata, issues=issues, credentials_inspected=True, public_server_time_request_used=True, public_exchange_info_request_used=True, signature_generated=True, authenticated_transport_invoked=True, test_order_request_transmitted=True, authenticated_test_request_used=True)
+            return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", BinanceFuturesTestnetOrderTestDecision.ORDER_TEST_REJECTED.value, "Test Order request failed safely.", credential_metadata=metadata, request_metadata=request_metadata, payload=self._runtime_evidence_payload(runtime_evidence), issues=issues, credentials_inspected=True, public_server_time_request_used=True, public_exchange_info_request_used=True, signature_generated=True, authenticated_transport_invoked=True, test_order_request_transmitted=True, authenticated_test_request_used=True)
         except Exception as exc:
             issues.append(self._issue("order_test_request_failed", "FAIL", self._sanitize(str(exc))))
-            return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", BinanceFuturesTestnetOrderTestDecision.ORDER_TEST_REJECTED.value, "Test Order request failed safely.", credential_metadata=metadata, issues=issues, credentials_inspected=True, public_exchange_info_request_used=True)
+            if runtime_evidence is not None and runtime_evidence["mutation_boundary_events"] == []:
+                return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", "PERMIT_GATE_UNAVAILABLE", "Live execution permit gate is unavailable.", credential_metadata=metadata, payload=self._runtime_evidence_payload(runtime_evidence), issues=issues, credentials_inspected=True, public_exchange_info_request_used=True)
+            return self._result(config, BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value, "FAIL", BinanceFuturesTestnetOrderTestDecision.ORDER_TEST_REJECTED.value, "Test Order request failed safely.", credential_metadata=metadata, payload=self._runtime_evidence_payload(runtime_evidence), issues=issues, credentials_inspected=True, public_exchange_info_request_used=True)
         return self._result(
             config,
             BinanceFuturesTestnetOrderTestAction.SUBMIT_TEST_ORDER.value,
@@ -272,6 +296,7 @@ class BinanceFuturesTestnetOrderTestEngine:
             exchange_filter_summary=filters,
             preview=preview,
             request_metadata=request_metadata,
+            payload=self._runtime_evidence_payload(runtime_evidence),
             issues=issues,
             credentials_inspected=True,
             public_server_time_request_used=True,
@@ -404,13 +429,17 @@ class BinanceFuturesTestnetOrderTestEngine:
         self._expect((urlparse(config.rest_base_url).hostname or "") == "demo-fapi.binance.com", issues, "rest_base_url_host", "REST host must be demo-fapi.binance.com.")
 
     def _validate_dependencies(self, config: BinanceFuturesTestnetOrderTestConfig, expected_profile: str, issues: list[BinanceFuturesTestnetOrderTestIssue], diagnostics: dict[str, Any]) -> None:
-        runtime = self.runtime_config_engine.validate(config.runtime_config_path, expected_profile=expected_profile)
-        diagnostics["runtime_config_status"] = runtime.status
-        diagnostics["kill_switch_enabled"] = bool(getattr(runtime.config, "kill_switch_enabled", False))
-        if config.require_runtime_config_pass and runtime.status != "PASS":
+        if config.runtime_config_path == self._TESTNET_SUPERVISED_RUNTIME_CONFIG_PATH:
+            runtime_status, runtime_config = self._validate_testnet_runtime_config(config.runtime_config_path, expected_profile)
+        else:
+            runtime = self.runtime_config_engine.validate(config.runtime_config_path, expected_profile=expected_profile)
+            runtime_status, runtime_config = runtime.status, runtime.config
+        diagnostics["runtime_config_status"] = runtime_status
+        diagnostics["kill_switch_enabled"] = bool(getattr(runtime_config, "kill_switch_enabled", False))
+        if config.require_runtime_config_pass and runtime_status != "PASS":
             issues.append(self._issue("runtime_config_validation", "FAIL", "Runtime config must validate PASS."))
-        if runtime.config is not None and config.require_kill_switch_enabled:
-            self._expect(runtime.config.kill_switch_enabled, issues, "kill_switch_enabled", "kill_switch_enabled must remain true.")
+        if runtime_config is not None and config.require_kill_switch_enabled:
+            self._expect(runtime_config.kill_switch_enabled, issues, "kill_switch_enabled", "kill_switch_enabled must remain true.")
         monitoring = self.monitoring_engine.validate(config.monitoring_config_path, expected_profile=expected_profile)
         diagnostics["monitoring_config_status"] = monitoring.status
         if config.require_monitoring_config_pass and monitoring.status != "PASS":
@@ -440,6 +469,39 @@ class BinanceFuturesTestnetOrderTestEngine:
         if config.require_futures_paper_position_config_pass and paper.status != "PASS":
             issues.append(self._issue("futures_paper_position_config_validation", "FAIL", "Futures paper position config must validate PASS."))
 
+    def _validate_testnet_runtime_config(self, runtime_config_path: str, expected_profile: str) -> tuple[str, Any | None]:
+        try:
+            loaded = json.loads(self._resolve(runtime_config_path).read_text(encoding="utf-8"))
+        except Exception:
+            return "FAIL", None
+        if not isinstance(loaded, dict):
+            return "FAIL", None
+        runtime_config = type("RuntimeConfig", (), loaded)()
+        expected = {
+            "project_scope": "BTC_ONLY",
+            "symbol": "BTC/USDT",
+            "exchange": "binance",
+            "strategy_profile": expected_profile,
+            "live_trading_enabled": True,
+            "dry_run": False,
+            "kill_switch_enabled": True,
+            "order_submission_enabled": False,
+        }
+        serialized = json.dumps(loaded, sort_keys=True).lower()
+        forbidden_markers = (
+            "api_key",
+            "api secret",
+            "database_url",
+            "permit_id",
+            "signature",
+            "signed_query",
+            "authenticated",
+            "headers",
+        )
+        valid = all(loaded.get(name) == value for name, value in expected.items())
+        valid = valid and not any(marker in serialized for marker in forbidden_markers)
+        return ("PASS" if valid else "FAIL"), runtime_config
+
     def _server_time_or_issue(self, client: BinanceFuturesTestnetOrderTestClient, config: BinanceFuturesTestnetOrderTestConfig, issues: list[BinanceFuturesTestnetOrderTestIssue]) -> int:
         if not config.allow_public_server_time_fetch:
             raise RuntimeError("server time fetch is disabled")
@@ -452,6 +514,23 @@ class BinanceFuturesTestnetOrderTestEngine:
 
     def _client(self, config: BinanceFuturesTestnetOrderTestConfig) -> BinanceFuturesTestnetOrderTestClient:
         return BinanceFuturesTestnetOrderTestClient(config, http_get=self.http_get, authenticated_post=self.authenticated_post, env=self.env, now_ms_provider=self.now_ms_provider)
+
+    @staticmethod
+    def _runtime_evidence_authenticated_post(authenticated_post):
+        def wrapped_authenticated_post(url: str, body: bytes, timeout: int, headers: dict[str, str]):
+            record_order_test_runtime_evidence_event(RUNTIME_EVIDENCE_EVENT_SIGNED)
+            record_order_test_runtime_evidence_event(RUNTIME_EVIDENCE_EVENT_POST_ATTEMPTED)
+            response = authenticated_post(url, body, timeout, headers)
+            record_order_test_runtime_evidence_event(RUNTIME_EVIDENCE_EVENT_POST_COMPLETED)
+            return response
+
+        return wrapped_authenticated_post
+
+    @staticmethod
+    def _runtime_evidence_payload(runtime_evidence: dict[str, Any] | None) -> dict[str, Any]:
+        if runtime_evidence is None:
+            return {}
+        return {"runtime_evidence": runtime_evidence}
 
     def _result(
         self,

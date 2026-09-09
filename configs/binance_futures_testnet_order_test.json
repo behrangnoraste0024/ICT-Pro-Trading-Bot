@@ -7,7 +7,7 @@
   "market_type": "futures",
   "futures_contract_type": "USDT_PERPETUAL",
   "strategy_profile": "balanced_smc_decision_065",
-  "runtime_config_path": "configs/btc_paper_runtime.json",
+  "runtime_config_path": "configs/binance_futures_testnet_supervised_runtime.json",
   "monitoring_config_path": "configs/btc_paper_monitoring.json",
   "runner_config_path": "configs/btc_paper_runner.json",
   "testnet_adapter_config_path": "configs/binance_futures_testnet_adapter.json",

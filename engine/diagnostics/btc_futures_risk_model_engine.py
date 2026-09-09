@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -232,13 +233,23 @@ class BTCFuturesRiskModelEngine:
         self._validate_dependencies(config, expected_profile, issues, diagnostics)
 
     def _validate_dependencies(self, config: BTCFuturesRiskConfig, expected_profile: str, issues: list[BTCFuturesRiskIssue], diagnostics: dict[str, Any]) -> None:
-        runtime = self.runtime_config_engine.validate(config.runtime_config_path, expected_profile=expected_profile)
-        diagnostics["runtime_config_status"] = runtime.status
-        diagnostics["kill_switch_enabled"] = bool(getattr(runtime.config, "kill_switch_enabled", False))
-        if config.require_runtime_config_pass and runtime.status != "PASS":
+        try:
+            runtime = self.runtime_config_engine.validate(config.runtime_config_path, expected_profile=expected_profile)
+            diagnostics["runtime_config_status"] = runtime.status
+            diagnostics["kill_switch_enabled"] = bool(getattr(runtime.config, "kill_switch_enabled", False))
+            if runtime.config is not None and config.require_kill_switch_enabled and not bool(runtime.config.kill_switch_enabled):
+                issues.append(self._issue("kill_switch_enabled", "FAIL", "kill_switch_enabled must remain true."))
+                return
+            if config.require_runtime_config_pass and runtime.status != "PASS":
+                issues.append(self._issue("runtime_config_validation", "FAIL", "Runtime config must validate PASS."))
+                return
+            if runtime.config is not None and config.require_kill_switch_enabled:
+                self._expect(runtime.config.kill_switch_enabled, issues, "kill_switch_enabled", "kill_switch_enabled must remain true.")
+        except Exception:
+            diagnostics["runtime_config_status"] = "FAIL"
+            diagnostics["kill_switch_enabled"] = None
             issues.append(self._issue("runtime_config_validation", "FAIL", "Runtime config must validate PASS."))
-        if runtime.config is not None and config.require_kill_switch_enabled:
-            self._expect(runtime.config.kill_switch_enabled, issues, "kill_switch_enabled", "kill_switch_enabled must remain true.")
+            return
         monitoring = self.monitoring_engine.validate(config.monitoring_config_path, expected_profile=expected_profile)
         diagnostics["monitoring_config_status"] = monitoring.status
         if config.require_monitoring_config_pass and monitoring.status != "PASS":
@@ -320,6 +331,7 @@ class BTCFuturesRiskModelEngine:
         take_profit_distance = abs(scenario.take_profit - entry)
         funding_per_period = self._funding_payment(scenario)
         total_funding = None if funding_per_period is None else funding_per_period * int(scenario.funding_periods)
+        sizing_metadata = self._risk_sizing_metadata(config, scenario, quantity, stop_distance, risk)
         return BTCFuturesRiskCalculation(
             quantity=quantity,
             notional_value=notional,
@@ -354,11 +366,14 @@ class BTCFuturesRiskModelEngine:
                 "Cross-margin wallet effects and private leverage brackets are not modeled.",
                 "No order, position, leverage, margin mode, or account state is mutated.",
             ],
-            metadata={"margin_mode": config.margin_mode, "position_mode": config.position_mode},
+            metadata={"margin_mode": config.margin_mode, "position_mode": config.position_mode, **sizing_metadata},
         )
 
     def _decision(self, config: BTCFuturesRiskConfig, scenario: BTCFuturesRiskScenarioInput, calc: BTCFuturesRiskCalculation) -> tuple[str, str, str, list[BTCFuturesRiskIssue]]:
         issues: list[BTCFuturesRiskIssue] = []
+        sizing_issues = self._risk_sizing_boundary_issues(calc)
+        if sizing_issues:
+            return "FAIL", BTCFuturesRiskDecision.REJECT_NOTIONAL_LIMIT.value, "Requested scenario exceeds risk-per-trade sizing boundary.", sizing_issues
         if not calc.stop_before_liquidation:
             issues.append(self._issue("stop_beyond_liquidation", "FAIL", "Stop loss is beyond or equal to estimated liquidation price."))
             return "FAIL", BTCFuturesRiskDecision.REJECT_STOP_BEYOND_LIQUIDATION.value, "Stop loss is not safely before estimated liquidation.", issues
@@ -394,9 +409,110 @@ class BTCFuturesRiskModelEngine:
 
     def _min_risk_reward(self, config: BTCFuturesRiskConfig) -> float:
         try:
-            return float(self.runtime_config_engine.load_config(config.runtime_config_path).min_risk_reward)
+            runtime = self.runtime_config_engine.validate(config.runtime_config_path)
+            if runtime.status == "PASS" and runtime.config is not None:
+                return float(runtime.config.min_risk_reward)
         except Exception:
-            return 1.5
+            pass
+        return 1.5
+
+    def _risk_sizing_metadata(
+        self,
+        config: BTCFuturesRiskConfig,
+        scenario: BTCFuturesRiskScenarioInput,
+        requested_quantity: float,
+        stop_distance: float,
+        requested_risk_amount: float,
+    ) -> dict[str, Any]:
+        metadata = {
+            "risk_sizing_boundary_checked": True,
+            "risk_sizing_boundary_status": "FAIL",
+            "risk_sizing_issues": [],
+            "requested_quantity": requested_quantity,
+            "requested_risk_amount": requested_risk_amount,
+            "stop_distance": stop_distance,
+            "account_equity": scenario.account_equity,
+        }
+        try:
+            runtime = self.runtime_config_engine.validate(config.runtime_config_path)
+        except Exception:
+            metadata["risk_sizing_issues"].append("runtime_config_validation")
+            return metadata
+        if runtime.status != "PASS" or runtime.config is None:
+            metadata["risk_sizing_issues"].append("runtime_config_validation")
+            return metadata
+        risk_per_trade_pct = _float_or_none(getattr(runtime.config, "risk_per_trade_pct", None))
+        max_risk_per_trade_pct = _float_or_none(getattr(runtime.config, "max_risk_per_trade_pct", None))
+        metadata["risk_per_trade_pct"] = risk_per_trade_pct
+        metadata["max_risk_per_trade_pct"] = max_risk_per_trade_pct
+        account_equity = _float_or_none(scenario.account_equity)
+        if risk_per_trade_pct is None or not math.isfinite(risk_per_trade_pct) or risk_per_trade_pct <= 0:
+            metadata["risk_sizing_issues"].append("risk_per_trade_pct")
+        if max_risk_per_trade_pct is None or not math.isfinite(max_risk_per_trade_pct) or max_risk_per_trade_pct <= 0:
+            metadata["risk_sizing_issues"].append("max_risk_per_trade_pct")
+        if risk_per_trade_pct is not None and max_risk_per_trade_pct is not None and risk_per_trade_pct > max_risk_per_trade_pct:
+            metadata["risk_sizing_issues"].append("risk_per_trade_pct_limit")
+        if account_equity is None or not math.isfinite(account_equity) or account_equity <= 0:
+            metadata["risk_sizing_issues"].append("account_equity")
+        if not math.isfinite(stop_distance) or stop_distance <= 0:
+            metadata["risk_sizing_issues"].append("stop_distance")
+        if not math.isfinite(requested_quantity) or requested_quantity < 0:
+            metadata["risk_sizing_issues"].append("requested_quantity")
+        if not math.isfinite(requested_risk_amount) or requested_risk_amount < 0:
+            metadata["risk_sizing_issues"].append("requested_risk_amount")
+        if metadata["risk_sizing_issues"]:
+            return metadata
+        configured_target_risk_amount = account_equity * risk_per_trade_pct
+        configured_max_risk_amount = account_equity * max_risk_per_trade_pct
+        configured_target_quantity = configured_target_risk_amount / stop_distance
+        configured_max_quantity = configured_max_risk_amount / stop_distance
+        requested_risk_fraction = requested_risk_amount / account_equity
+        metadata.update(
+            {
+                "requested_risk_fraction": requested_risk_fraction,
+                "configured_target_risk_amount": configured_target_risk_amount,
+                "configured_max_risk_amount": configured_max_risk_amount,
+                "configured_target_quantity": configured_target_quantity,
+                "configured_max_quantity": configured_max_quantity,
+            }
+        )
+        for name in (
+            "requested_risk_fraction",
+            "configured_target_risk_amount",
+            "configured_max_risk_amount",
+            "configured_target_quantity",
+            "configured_max_quantity",
+        ):
+            if not math.isfinite(float(metadata[name])):
+                metadata["risk_sizing_issues"].append(name)
+        if self._greater_than(requested_risk_fraction, max_risk_per_trade_pct):
+            metadata["risk_sizing_issues"].append("requested_risk_fraction_limit")
+        if self._greater_than(requested_quantity, configured_max_quantity):
+            metadata["risk_sizing_issues"].append("requested_quantity_limit")
+        metadata["risk_sizing_boundary_status"] = "FAIL" if metadata["risk_sizing_issues"] else "PASS"
+        return metadata
+
+    def _risk_sizing_boundary_issues(self, calc: BTCFuturesRiskCalculation) -> list[BTCFuturesRiskIssue]:
+        issue_names = calc.metadata.get("risk_sizing_issues", [])
+        if not issue_names:
+            return []
+        return [
+            self._issue(
+                "risk_per_trade_sizing_boundary",
+                "FAIL",
+                "Requested scenario failed local risk-per-trade sizing boundary.",
+                {
+                    "risk_sizing_issues": issue_names,
+                    "requested_risk_fraction": calc.metadata.get("requested_risk_fraction"),
+                    "max_risk_per_trade_pct": calc.metadata.get("max_risk_per_trade_pct"),
+                    "requested_quantity": calc.metadata.get("requested_quantity"),
+                    "configured_max_quantity": calc.metadata.get("configured_max_quantity"),
+                },
+            )
+        ]
+
+    def _greater_than(self, left: float, right: float) -> bool:
+        return left > right and not math.isclose(left, right, rel_tol=1e-12, abs_tol=1e-12)
 
     def _result(self, config: BTCFuturesRiskConfig, scenario: BTCFuturesRiskScenarioInput, calculation: BTCFuturesRiskCalculation | None, status: str, decision: str, reason: str, issues: list[BTCFuturesRiskIssue], public_market_data_used: bool = False) -> BTCFuturesRiskResult:
         return BTCFuturesRiskResult(

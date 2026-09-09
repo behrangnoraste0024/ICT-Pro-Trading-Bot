@@ -11,6 +11,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from engine.diagnostics.binance_futures_testnet_protective_orders_engine import BinanceFuturesTestnetProtectiveOrdersEngine
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from models.binance_futures_testnet_protective_orders import BinanceFuturesTestnetProtectiveIssue, BinanceFuturesTestnetProtectiveResult
 from models.live_execution_permit_enforcement import LiveExecutionPermitReference
 from reporting.binance_futures_testnet_protective_orders_report import (
@@ -35,7 +36,8 @@ def main(argv: list[str] | None = None) -> int:
             take_profit_create_permit = _required_permit_reference(args.take_profit_create_permit_id, args.take_profit_create_permit_version)
             take_profit_cancel_permit = _required_permit_reference(args.take_profit_cancel_permit_id, args.take_profit_cancel_permit_version)
             stop_cancel_permit = _required_permit_reference(args.stop_cancel_permit_id, args.stop_cancel_permit_version)
-        engine = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=ROOT_DIR, env=os.environ)
+        operational_counter_registry = OperationalCounterRegistry()
+        engine = BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=ROOT_DIR, env=os.environ, operational_counter_registry=operational_counter_registry)
         if action == "validate":
             report = engine.validate(args.config, args.expected_profile)
             _emit_payload(report.to_dict(), format_binance_futures_testnet_protective_orders_validation_report(report), args)

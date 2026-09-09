@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -410,6 +411,23 @@ def test_alembic_requires_environment_database_url_when_missing(monkeypatch: pyt
     monkeypatch.delenv("DATABASE_URL", raising=False)
     with pytest.raises(RuntimeError, match="ICT_DATABASE_URL or DATABASE_URL"):
         command.upgrade(config, "head")
+
+
+def test_alembic_config_preserves_existing_observability_logger(monkeypatch: pytest.MonkeyPatch) -> None:
+    logger = logging.getLogger("ict_tradingbot.observability")
+    original_disabled = logger.disabled
+    try:
+        logger.disabled = False
+        config = Config("alembic.ini")
+        monkeypatch.delenv("ICT_DATABASE_URL", raising=False)
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+
+        with pytest.raises(RuntimeError, match="ICT_DATABASE_URL or DATABASE_URL"):
+            command.upgrade(config, "head")
+
+        assert logger.disabled is False
+    finally:
+        logger.disabled = original_disabled
 
 
 def test_postgresql_dialect_schema_uses_jsonb_uuid_timestamptz_numeric_and_restrict_fks() -> None:

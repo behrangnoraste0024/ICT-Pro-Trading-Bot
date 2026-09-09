@@ -4,6 +4,7 @@ import os
 from typing import Callable
 from uuid import UUID, uuid4
 
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from infrastructure.persistence.live_execution_authorization_policy import LiveExecutionAuthorizationPolicy
 from infrastructure.persistence.live_execution_permit_persistence import LiveExecutionPermitPersistence, LiveExecutionPermitPersistenceError
 from infrastructure.security.live_execution_request_fingerprint import LiveExecutionRequestFingerprint
@@ -23,9 +24,13 @@ class LiveExecutionPermitGate:
         permit_persistence_factory: Callable[..., LiveExecutionPermitPersistence] = LiveExecutionPermitPersistence,
         correlation_id_provider: Callable[[], object] = uuid4,
         env: dict[str, str] | None = None,
+        operational_counter_registry: OperationalCounterRegistry | None = None,
     ) -> None:
         self.env = os.environ if env is None else env
-        self.authorization_policy = authorization_policy or LiveExecutionAuthorizationPolicy(env=self.env)
+        self.authorization_policy = authorization_policy or LiveExecutionAuthorizationPolicy(
+            env=self.env,
+            operational_counter_registry=operational_counter_registry,
+        )
         self.permit_persistence_factory = permit_persistence_factory
         self.correlation_id_provider = correlation_id_provider
 

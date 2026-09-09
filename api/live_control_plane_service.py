@@ -16,6 +16,7 @@ from engine.diagnostics.binance_futures_testnet_protective_orders_engine import 
 from engine.diagnostics.binance_futures_testnet_read_only_engine import BinanceFuturesTestnetReadOnlyEngine
 from engine.diagnostics.btc_paper_readiness_engine import BTCPaperReadinessEngine
 from infrastructure.exchanges.binance_futures_testnet_read_only_client import BinanceFuturesTestnetReadOnlyClient
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from models.binance_futures_testnet_protective_orders import BinanceFuturesTestnetProtectiveOrdersConfig
 from models.binance_futures_testnet_read_only import BinanceFuturesTestnetReadOnlyConfig
 
@@ -46,11 +47,13 @@ class LiveControlPlaneService:
         read_only_engine: BinanceFuturesTestnetReadOnlyEngine | None = None,
         protective_engine: BinanceFuturesTestnetProtectiveOrdersEngine | None = None,
         readiness_engine: BTCPaperReadinessEngine | None = None,
+        operational_counter_registry: OperationalCounterRegistry | None = None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.env = os.environ if env is None else env
+        self.operational_counter_registry = operational_counter_registry
         self.read_only_engine = read_only_engine or BinanceFuturesTestnetReadOnlyEngine(repo_root=self.repo_root, env=self.env)
-        self.protective_engine = protective_engine or BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=self.repo_root, env=self.env)
+        self.protective_engine = protective_engine or BinanceFuturesTestnetProtectiveOrdersEngine(repo_root=self.repo_root, env=self.env, operational_counter_registry=operational_counter_registry)
         self.readiness_engine = readiness_engine or BTCPaperReadinessEngine(repo_root=self.repo_root, env=self.env)
 
     def safety_status(self) -> dict[str, Any]:

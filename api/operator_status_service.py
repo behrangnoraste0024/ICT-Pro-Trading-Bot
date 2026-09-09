@@ -4,12 +4,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
+
 from .kill_switch_control_service import KillSwitchControlService
 from .live_control_plane_service import LiveControlPlaneService
 from .persistence_read_model_service import PersistenceReadModelService
 
 ENVIRONMENT = "BINANCE_FUTURES_TESTNET"
 SYMBOL = "BTCUSDT"
+SAFETY_DENIAL_COUNTER = "ict_tradingbot_safety_denials_total"
 _KILL_SWITCH_STATES = {"ENGAGED", "RELEASED"}
 _READINESS_STATES = {"BLOCKED", "READY", "WARNING"}
 _VALIDATION_GATE_STATES = {"FAIL", "PASS", "WARNING"}
@@ -80,16 +83,61 @@ def _get(payload: Any, key: str, default: Any = None) -> Any:
     return getattr(payload, key, default)
 
 
+def _evaluate_operator_alerts(
+    *,
+    operational_metrics: dict[str, int],
+    warnings: list[_Warning],
+    recovery_required: bool,
+    kill_switch_state: str | None,
+) -> list[dict[str, str]]:
+    warning_codes = {warning.code for warning in warnings}
+    alerts: list[dict[str, str]] = []
+
+    def add(alert_id: str, severity: str, safe_message: str, source_state: str) -> None:
+        alerts.append(
+            {
+                "alert_id": alert_id,
+                "severity": severity,
+                "safe_message": safe_message,
+                "source_state": source_state,
+            }
+        )
+
+    if operational_metrics.get(SAFETY_DENIAL_COUNTER, 0) > 0:
+        add("SAFETY_DENIAL_ACTIVE", "BLOCKING", "Safety denial counter is non-zero.", "NON_ZERO")
+    if recovery_required is True:
+        add("RECOVERY_REQUIRED", "BLOCKING", "Protective recovery is required.", "REQUIRED")
+    if "PERSISTENCE_UNCONFIGURED" in warning_codes:
+        add("PERSISTENCE_UNCONFIGURED", "BLOCKING", "Persistence is not configured.", "NOT_CONFIGURED")
+    if "PERSISTENCE_UNAVAILABLE" in warning_codes:
+        add("PERSISTENCE_UNAVAILABLE", "UNAVAILABLE", "Persistence is unavailable.", "UNAVAILABLE")
+    if "PERSISTENCE_SCHEMA_NOT_READY" in warning_codes:
+        add("PERSISTENCE_SCHEMA_NOT_READY", "BLOCKING", "Persistence schema is not ready.", "NOT_READY")
+    if kill_switch_state == "ENGAGED" or "KILL_SWITCH_NOT_RELEASED" in warning_codes:
+        add("KILL_SWITCH_ENGAGED", "BLOCKING", "Kill switch is not released.", "ENGAGED")
+    if "KILL_SWITCH_UNAVAILABLE" in warning_codes:
+        add("KILL_SWITCH_UNAVAILABLE", "UNAVAILABLE", "Kill switch status is unavailable.", "UNAVAILABLE")
+    if "READINESS_NOT_READY" in warning_codes:
+        add("READINESS_NOT_READY", "BLOCKING", "BTC paper readiness is not ready.", "NOT_READY")
+    if "VALIDATION_GATE_NOT_PASS" in warning_codes:
+        add("VALIDATION_GATE_NOT_PASS", "BLOCKING", "Validation gate has not passed.", "NOT_PASS")
+    if "ACTIVE_LOCK_PRESENT" in warning_codes:
+        add("ACTIVE_LOCK_PRESENT", "BLOCKING", "A protective or recovery lock is active.", "PRESENT")
+    return alerts
+
+
 class OperatorStatusService:
     """Read-only operator summary built from existing backend status providers."""
 
     def __init__(
         self,
         *,
+        operational_counter_registry: OperationalCounterRegistry,
         live_service: LiveControlPlaneService | None = None,
         kill_switch_service: KillSwitchControlService | None = None,
         persistence_service: PersistenceReadModelService | None = None,
     ) -> None:
+        self.operational_counter_registry = operational_counter_registry
         self.live_service = live_service or LiveControlPlaneService()
         self.kill_switch_service = kill_switch_service or KillSwitchControlService()
         self.persistence_service = persistence_service or PersistenceReadModelService()
@@ -210,6 +258,16 @@ class OperatorStatusService:
             active_lock=active_lock,
             warnings=ordered_warnings,
         )
+        metrics_snapshot = self.operational_counter_registry.snapshot()
+        operational_metrics = {
+            SAFETY_DENIAL_COUNTER: metrics_snapshot.get(SAFETY_DENIAL_COUNTER, 0),
+        }
+        alerts = _evaluate_operator_alerts(
+            operational_metrics=operational_metrics,
+            warnings=ordered_warnings,
+            recovery_required=recovery_required,
+            kill_switch_state=kill_switch_state,
+        )
         return {
             "environment": environment,
             "symbol": symbol,
@@ -225,6 +283,8 @@ class OperatorStatusService:
             "validation_gate": validation_gate,
             "active_lock": active_lock,
             "warnings": [warning.to_dict() for warning in ordered_warnings],
+            "operational_metrics": operational_metrics,
+            "alerts": alerts,
             "updated_at": _now(),
         }
 

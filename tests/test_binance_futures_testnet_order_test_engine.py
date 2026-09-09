@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 from decimal import Decimal
 
-from engine.diagnostics.binance_futures_testnet_order_test_engine import BinanceFuturesTestnetOrderTestEngine
+from engine.diagnostics.binance_futures_testnet_order_test_engine import BinanceFuturesTestnetOrderTestEngine, OrderTestAuthorizationAbort
 from infrastructure.exchanges.binance_futures_testnet_order_test_client import BinanceOrderTestHTTPResponse
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from infrastructure.persistence.live_execution_authorization_policy import LiveExecutionAuthorizationPolicy
 from models.binance_futures_testnet_order_test import BinanceFuturesTestnetOrderTestConfig
 from tests.kill_switch_test_support import durable_state_env
@@ -88,6 +89,25 @@ def _allow_legacy_live_execution_permits(monkeypatch):
     )
 
 
+def test_order_test_engine_default_policy_uses_injected_operational_counter_registry(tmp_path: Path) -> None:
+    registry = OperationalCounterRegistry()
+
+    engine = BinanceFuturesTestnetOrderTestEngine(repo_root=tmp_path, operational_counter_registry=registry)
+
+    assert engine.authorization_policy.operational_counter_registry is registry
+    assert engine.permit_gate.authorization_policy is engine.authorization_policy
+
+
+def test_order_test_engine_preserves_explicit_authorization_policy_when_registry_is_supplied(tmp_path: Path) -> None:
+    policy = object()
+    registry = OperationalCounterRegistry()
+
+    engine = BinanceFuturesTestnetOrderTestEngine(repo_root=tmp_path, authorization_policy=policy, operational_counter_registry=registry)
+
+    assert engine.authorization_policy is policy
+    assert engine.permit_gate.authorization_policy is policy
+
+
 
 class _FakeEngine:
     def __init__(self, status: str = "PASS") -> None:
@@ -163,8 +183,26 @@ def test_repo_safe_config_validates_pass() -> None:
     report = BinanceFuturesTestnetOrderTestEngine().validate()
 
     assert report.status == "PASS"
+    assert report.config.runtime_config_path == "configs/binance_futures_testnet_supervised_runtime.json"
     assert report.diagnostics["credentials_inspected"] is False
     assert report.diagnostics["network_used"] is False
+
+
+def test_order_test_policy_preflight_uses_dedicated_testnet_runtime_path() -> None:
+    observed_runtime_paths: list[str | None] = []
+
+    class Policy:
+        def authorize(self, *args, **kwargs):
+            observed_runtime_paths.append(kwargs.get("runtime_config_path"))
+            return type("Decision", (), {"allowed": False, "code": "LIVE_TRADING_DISABLED", "message": "blocked"})()
+
+    engine = BinanceFuturesTestnetOrderTestEngine(authorization_policy=Policy())
+
+    with pytest.raises(OrderTestAuthorizationAbort):
+        engine._require_mutation_permission("configs/binance_futures_testnet_supervised_runtime.json")
+
+    assert observed_runtime_paths == ["configs/binance_futures_testnet_supervised_runtime.json"]
+    assert "configs/btc_paper_runtime.json" not in observed_runtime_paths
 
 
 @pytest.mark.parametrize(

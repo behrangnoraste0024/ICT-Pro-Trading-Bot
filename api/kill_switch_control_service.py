@@ -11,6 +11,7 @@ from engine.diagnostics.binance_futures_testnet_protective_orders_engine import 
     BinanceFuturesTestnetProtectiveOrdersEngine,
     ProtectiveAbort,
 )
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from infrastructure.persistence.kill_switch_persistence import (
     KillSwitchPersistence,
     KillSwitchPersistenceError,
@@ -40,11 +41,13 @@ class KillSwitchControlService:
         protective_engine: BinanceFuturesTestnetProtectiveOrdersEngine | None = None,
         persistence_factory: Callable[..., KillSwitchPersistence] = KillSwitchPersistence,
         lifecycle_persistence_factory: Callable[..., ProtectiveLifecyclePersistence] = ProtectiveLifecyclePersistence,
+        operational_counter_registry: OperationalCounterRegistry | None = None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.env = os.environ if env is None else env
+        self.operational_counter_registry = operational_counter_registry
         self.protective_engine = protective_engine or BinanceFuturesTestnetProtectiveOrdersEngine(
-            repo_root=self.repo_root, env=self.env
+            repo_root=self.repo_root, env=self.env, operational_counter_registry=operational_counter_registry
         )
         self.persistence_factory = persistence_factory
         self.lifecycle_persistence_factory = lifecycle_persistence_factory

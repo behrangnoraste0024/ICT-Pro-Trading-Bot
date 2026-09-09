@@ -11,6 +11,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from engine.diagnostics.binance_futures_testnet_order_lifecycle_engine import BinanceFuturesTestnetOrderLifecycleEngine
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from models.live_execution_permit_enforcement import LiveExecutionPermitReference
 from models.binance_futures_testnet_order_lifecycle import (
     BinanceFuturesTestnetLifecycleIssue,
@@ -36,7 +37,8 @@ def main(argv: list[str] | None = None) -> int:
         if action == "run_lifecycle":
             create_permit = _required_permit_reference(args.create_permit_id, args.create_permit_version)
             cancel_permit = _required_permit_reference(args.cancel_permit_id, args.cancel_permit_version)
-        engine = BinanceFuturesTestnetOrderLifecycleEngine(repo_root=ROOT_DIR, env=os.environ)
+        operational_counter_registry = OperationalCounterRegistry()
+        engine = BinanceFuturesTestnetOrderLifecycleEngine(repo_root=ROOT_DIR, env=os.environ, operational_counter_registry=operational_counter_registry)
         if action == "validate":
             report = engine.validate(args.config, expected_profile=args.expected_profile)
             _emit_payload(report.to_dict(), format_binance_futures_testnet_order_lifecycle_validation_report(report), args)

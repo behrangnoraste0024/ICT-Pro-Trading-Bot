@@ -310,6 +310,141 @@ def test_safe_scenario_returns_pass_and_unsafe_flags_false(tmp_path: Path) -> No
     assert result.execution_state_mutated is False
 
 
+def test_risk_sizing_boundary_consumes_runtime_config_and_allows_below_max(tmp_path: Path) -> None:
+    path = _write_risk_configs(
+        tmp_path,
+        runtime={"risk_per_trade_pct": 0.004, "max_risk_per_trade_pct": 0.008},
+        account={"max_risk_per_trade_pct": 0.8},
+    )
+
+    result = _engine(tmp_path).analyze_scenario(_scenario(), str(path))
+
+    assert result.status == "PASS"
+    assert result.calculation is not None
+    metadata = result.calculation.metadata
+    assert metadata["risk_per_trade_pct"] == pytest.approx(0.004)
+    assert metadata["max_risk_per_trade_pct"] == pytest.approx(0.008)
+    assert metadata["requested_risk_amount"] == pytest.approx((1000.0 / 64000.0) * 2000.0)
+    assert metadata["requested_risk_fraction"] == pytest.approx(31.25 / 10000.0)
+    assert metadata["configured_target_risk_amount"] == pytest.approx(40.0)
+    assert metadata["configured_max_risk_amount"] == pytest.approx(80.0)
+    assert metadata["configured_target_quantity"] == pytest.approx(40.0 / 2000.0)
+    assert metadata["configured_max_quantity"] == pytest.approx(80.0 / 2000.0)
+    assert metadata["risk_sizing_boundary_status"] == "PASS"
+
+
+def test_risk_sizing_boundary_allows_exact_max_equality(tmp_path: Path) -> None:
+    path = _write_risk_configs(tmp_path)
+    equality_notional = 3200.0
+
+    result = _engine(tmp_path).analyze_scenario(_scenario(notional_value=equality_notional), str(path))
+
+    assert result.status == "PASS"
+    assert result.calculation is not None
+    assert result.calculation.metadata["requested_risk_fraction"] == pytest.approx(0.01)
+    assert result.calculation.metadata["requested_quantity"] == pytest.approx(result.calculation.metadata["configured_max_quantity"])
+
+
+def test_risk_sizing_boundary_rejects_requested_risk_above_max(tmp_path: Path) -> None:
+    path = _write_risk_configs(tmp_path)
+
+    result = _engine(tmp_path).analyze_scenario(_scenario(notional_value=3300.0), str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "REJECT_NOTIONAL_LIMIT"
+    assert result.calculation is not None
+    assert result.calculation.metadata["requested_risk_fraction"] > result.calculation.metadata["max_risk_per_trade_pct"]
+    assert result.calculation.metadata["risk_sizing_boundary_status"] == "FAIL"
+    assert result.issues[0].name == "risk_per_trade_sizing_boundary"
+    assert "requested_risk_fraction_limit" in result.issues[0].details["risk_sizing_issues"]
+    assert "requested_quantity_limit" in result.issues[0].details["risk_sizing_issues"]
+
+
+def test_risk_sizing_boundary_fail_cannot_become_warning_or_pass(tmp_path: Path) -> None:
+    path = _write_risk_configs(tmp_path, risk={"warning_liquidation_distance_pct": 90.0})
+
+    result = _engine(tmp_path).analyze_scenario(_scenario(notional_value=3300.0), str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "REJECT_NOTIONAL_LIMIT"
+    assert result.decision != "WARNING_LIQUIDATION_DISTANCE"
+
+
+def test_risk_sizing_boundary_rejects_non_finite_account_equity(tmp_path: Path) -> None:
+    path = _write_risk_configs(tmp_path)
+
+    result = _engine(tmp_path).analyze_scenario(_scenario(account_equity=float("nan")), str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "REJECT_NOTIONAL_LIMIT"
+    assert result.calculation is not None
+    assert result.calculation.metadata["risk_sizing_boundary_status"] == "FAIL"
+    assert "account_equity" in result.issues[0].details["risk_sizing_issues"]
+
+
+def test_risk_sizing_boundary_rejects_invalid_stop_distance(tmp_path: Path) -> None:
+    path = _write_risk_configs(tmp_path)
+
+    result = _engine(tmp_path).analyze_scenario(_scenario(stop_loss=float("nan")), str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "REJECT_NOTIONAL_LIMIT"
+    assert result.calculation is not None
+    assert result.calculation.metadata["risk_sizing_boundary_status"] == "FAIL"
+    assert "stop_distance" in result.issues[0].details["risk_sizing_issues"]
+
+
+@pytest.mark.parametrize(
+    "runtime",
+    [
+        {"risk_per_trade_pct": float("nan")},
+        {"max_risk_per_trade_pct": float("inf")},
+        {"risk_per_trade_pct": 0},
+        {"max_risk_per_trade_pct": 0},
+        {"risk_per_trade_pct": 0.011, "max_risk_per_trade_pct": 0.01},
+        {"risk_per_trade_pct": "bad"},
+    ],
+)
+def test_runtime_risk_sizing_values_fail_closed(tmp_path: Path, runtime: dict[str, Any]) -> None:
+    path = _write_risk_configs(tmp_path, runtime=runtime)
+
+    result = _engine(tmp_path).analyze_scenario(_scenario(), str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "MODEL_FAILED"
+    assert result.calculation is None
+
+
+def test_runtime_config_validation_failure_still_blocks_approval(tmp_path: Path) -> None:
+    path = _write_risk_configs(tmp_path, runtime={"live_trading_enabled": True})
+
+    result = _engine(tmp_path).analyze_scenario(_scenario(), str(path))
+
+    assert result.status == "FAIL"
+    assert result.decision == "MODEL_FAILED"
+    assert result.calculation is None
+    assert "runtime_config_validation" in {issue.name for issue in result.issues}
+
+
+def test_risk_sizing_boundary_does_not_introduce_execution_authority(tmp_path: Path) -> None:
+    path = _write_risk_configs(tmp_path)
+
+    result = _engine(tmp_path).analyze_scenario(_scenario(notional_value=3300.0), str(path))
+
+    assert result.private_api_used is False
+    assert result.api_key_used is False
+    assert result.trading_api_used is False
+    assert result.account_data_used is False
+    assert result.balance_fetch_used is False
+    assert result.position_fetch_used is False
+    assert result.order_submitted is False
+    assert result.order_cancelled is False
+    assert result.real_position_created is False
+    assert result.paper_futures_position_created is False
+    assert result.paper_trade_persisted is False
+    assert result.executable_trade_created is False
+
+
 def test_compare_leverage_rows_and_selection(tmp_path: Path) -> None:
     path = _write_risk_configs(tmp_path)
 

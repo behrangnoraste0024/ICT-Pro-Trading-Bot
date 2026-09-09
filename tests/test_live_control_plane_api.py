@@ -14,11 +14,14 @@ from api.live_control_plane_routes import (
     get_live_control_plane_service,
     get_live_execution_permit_status_service,
     get_operator_status_service,
+    get_supervised_recovery_service,
 )
 import api.live_control_plane_service as service_module
 from api.live_control_plane_service import LiveControlPlaneHTTPError, LiveControlPlaneService
+from api.operator_status_service import SAFETY_DENIAL_COUNTER
 from engine.diagnostics.btc_paper_readiness_engine import BTCPaperReadinessEngine
 from infrastructure.exchanges.binance_futures_testnet_order_lifecycle_client import BinanceLifecycleHTTPResponse
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
 from models.binance_futures_testnet_protective_orders import BinanceFuturesTestnetProtectiveJournal, BinanceFuturesTestnetProtectiveOrdersConfig
 from models.binance_futures_testnet_read_only import BinanceFuturesTestnetReadOnlyConfig, BinanceFuturesTestnetPositionSummary
 
@@ -150,6 +153,8 @@ class FakeOperatorStatusService:
             "validation_gate": "PASS",
             "active_lock": False,
             "warnings": [],
+            "operational_metrics": {SAFETY_DENIAL_COUNTER: 0},
+            "alerts": [],
             "updated_at": "2026-01-01T00:00:00+00:00",
         }
 
@@ -235,6 +240,61 @@ def test_live_control_plane_routes_allow_only_recovery_and_kill_switch_mutations
     ]:
         for method in (client.post, client.put, client.patch, client.delete):
             assert method(path).status_code == 405
+
+
+def test_api_dependency_providers_share_application_owned_operational_counter_registry() -> None:
+    app = create_app()
+    request = SimpleNamespace(app=app)
+
+    live_service = get_live_control_plane_service(request)
+    recovery_service = get_supervised_recovery_service(request)
+    kill_switch_service = get_kill_switch_control_service(request)
+    operator_service = get_operator_status_service(request)
+    second_live_service = get_live_control_plane_service(request)
+
+    registry = app.state.operational_counter_registry
+    assert live_service is not second_live_service
+    assert live_service.operational_counter_registry is registry
+    assert recovery_service.operational_counter_registry is registry
+    assert kill_switch_service.operational_counter_registry is registry
+    assert operator_service.operational_counter_registry is registry
+    assert live_service.protective_engine.authorization_policy.operational_counter_registry is registry
+    assert recovery_service.protective_engine.authorization_policy.operational_counter_registry is registry
+    assert kill_switch_service.protective_engine.authorization_policy.operational_counter_registry is registry
+
+
+def test_operator_status_route_observes_application_owned_operational_counter_registry() -> None:
+    app = create_app()
+    registry: OperationalCounterRegistry = app.state.operational_counter_registry
+    registry.register(SAFETY_DENIAL_COUNTER)
+    registry.increment(SAFETY_DENIAL_COUNTER, 2)
+    request = SimpleNamespace(app=app)
+    service = get_operator_status_service(request)
+    service.live_service = FakeService()
+    service.kill_switch_service = FakeKillSwitchService()
+    service.persistence_service = SimpleNamespace(
+        status=lambda: {
+            "configured": True,
+            "reachable": True,
+            "schema_ready": True,
+        }
+    )
+    app.dependency_overrides[get_operator_status_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.get("/api/v1/live/operator/status")
+
+    assert response.status_code == 200
+    assert response.json()["operational_metrics"] == {SAFETY_DENIAL_COUNTER: 2}
+    assert response.json()["alerts"] == [
+        {
+            "alert_id": "SAFETY_DENIAL_ACTIVE",
+            "severity": "BLOCKING",
+            "safe_message": "Safety denial counter is non-zero.",
+            "source_state": "NON_ZERO",
+        }
+    ]
+    assert service.operational_counter_registry is registry
 
 
 def test_routes_return_sanitized_payloads_without_secrets(client: TestClient) -> None:

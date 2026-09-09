@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from datetime import datetime, timedelta
 from typing import Any, Callable, Iterator
 from uuid import UUID
@@ -52,6 +53,80 @@ AUDIT_METADATA_KEYS = {
     "version",
     "consumption_correlation_id",
 }
+RUNTIME_EVIDENCE_EVENT_POLICY_EVALUATED = "POLICY_EVALUATED"
+RUNTIME_EVIDENCE_EVENT_PERSISTENCE_OPENED = "PERSISTENCE_OPENED"
+RUNTIME_EVIDENCE_EVENT_PERMIT_CONSUMED = "PERMIT_CONSUMED"
+RUNTIME_EVIDENCE_EVENT_PERSISTENCE_COMMITTED = "PERSISTENCE_COMMITTED"
+RUNTIME_EVIDENCE_EVENT_PERSISTENCE_CLOSED = "PERSISTENCE_CLOSED"
+RUNTIME_EVIDENCE_EVENT_SIGNED = "SIGNED"
+RUNTIME_EVIDENCE_EVENT_POST_ATTEMPTED = "POST_ATTEMPTED"
+RUNTIME_EVIDENCE_EVENT_POST_COMPLETED = "POST_COMPLETED"
+RUNTIME_EVIDENCE_ALLOWED_EVENTS = {
+    RUNTIME_EVIDENCE_EVENT_POLICY_EVALUATED,
+    RUNTIME_EVIDENCE_EVENT_PERSISTENCE_OPENED,
+    RUNTIME_EVIDENCE_EVENT_PERMIT_CONSUMED,
+    RUNTIME_EVIDENCE_EVENT_PERSISTENCE_COMMITTED,
+    RUNTIME_EVIDENCE_EVENT_PERSISTENCE_CLOSED,
+    RUNTIME_EVIDENCE_EVENT_SIGNED,
+    RUNTIME_EVIDENCE_EVENT_POST_ATTEMPTED,
+    RUNTIME_EVIDENCE_EVENT_POST_COMPLETED,
+}
+_RUNTIME_EVIDENCE_CAPTURE: ContextVar[dict[str, Any] | None] = ContextVar(
+    "order_test_runtime_evidence_capture",
+    default=None,
+)
+
+
+def begin_order_test_runtime_evidence_capture() -> Token[dict[str, Any] | None]:
+    return _RUNTIME_EVIDENCE_CAPTURE.set(
+        {
+            "policy_evaluation_count": 0,
+            "audit_record_count": 0,
+            "recovery_required": None,
+            "mutation_boundary_events": [],
+        }
+    )
+
+
+def get_order_test_runtime_evidence() -> dict[str, Any] | None:
+    capture = _RUNTIME_EVIDENCE_CAPTURE.get()
+    if capture is None:
+        return None
+    return {
+        "policy_evaluation_count": int(capture["policy_evaluation_count"]),
+        "audit_record_count": int(capture["audit_record_count"]),
+        "recovery_required": capture["recovery_required"],
+        "mutation_boundary_events": list(capture["mutation_boundary_events"]),
+    }
+
+
+def reset_order_test_runtime_evidence_capture(token: Token[dict[str, Any] | None]) -> None:
+    _RUNTIME_EVIDENCE_CAPTURE.reset(token)
+
+
+def record_order_test_runtime_evidence_event(event: str) -> None:
+    capture = _RUNTIME_EVIDENCE_CAPTURE.get()
+    if capture is None:
+        return
+    if event not in RUNTIME_EVIDENCE_ALLOWED_EVENTS:
+        raise LiveExecutionPermitPersistenceError("PERMIT_UNAVAILABLE")
+    capture["mutation_boundary_events"].append(event)
+
+
+def record_order_test_policy_evaluation(*, recovery_required: bool | None) -> None:
+    capture = _RUNTIME_EVIDENCE_CAPTURE.get()
+    if capture is None:
+        return
+    capture["policy_evaluation_count"] += 1
+    capture["recovery_required"] = recovery_required
+    record_order_test_runtime_evidence_event(RUNTIME_EVIDENCE_EVENT_POLICY_EVALUATED)
+
+
+def record_order_test_audit_record() -> None:
+    capture = _RUNTIME_EVIDENCE_CAPTURE.get()
+    if capture is None:
+        return
+    capture["audit_record_count"] += 1
 
 
 class LiveExecutionPermitPersistenceError(RuntimeError):
@@ -85,6 +160,7 @@ class LiveExecutionPermitPersistence:
                 if not validate_persistence_schema(connection):
                     raise LiveExecutionPermitPersistenceError("PERMIT_UNAVAILABLE")
             self._engine = engine
+            record_order_test_runtime_evidence_event(RUNTIME_EVIDENCE_EVENT_PERSISTENCE_OPENED)
         except LiveExecutionPermitPersistenceError:
             if "engine" in locals():
                 engine.dispose()
@@ -98,6 +174,7 @@ class LiveExecutionPermitPersistence:
         if self._engine is not None:
             self._engine.dispose()
             self._engine = None
+            record_order_test_runtime_evidence_event(RUNTIME_EVIDENCE_EVENT_PERSISTENCE_CLOSED)
 
     def issue(
         self,
@@ -236,7 +313,7 @@ class LiveExecutionPermitPersistence:
     ) -> LiveExecutionPermit:
         now = self._now_provider() if now is None else now
         try:
-            with self._transaction() as session:
+            with self._transaction(record_runtime_boundary=True) as session:
                 repo = SqlAlchemyLiveExecutionPermitRepository(session)
                 consumed = repo.consume_if_issued(
                     permit_id,
@@ -250,7 +327,9 @@ class LiveExecutionPermitPersistence:
                     consumption_correlation_id,
                     now,
                 )
+                record_order_test_runtime_evidence_event(RUNTIME_EVIDENCE_EVENT_PERMIT_CONSUMED)
                 SqlAlchemyAuditEventRepository(session).append(self._audit("PERMIT_CONSUMED", "PASS", consumed))
+                record_order_test_audit_record()
                 return consumed
         except OptimisticLockError:
             code = self._classify_consume_failure(
@@ -390,11 +469,13 @@ class LiveExecutionPermitPersistence:
             session.close()
 
     @contextmanager
-    def _transaction(self) -> Iterator[Session]:
+    def _transaction(self, *, record_runtime_boundary: bool = False) -> Iterator[Session]:
         with self._session() as session:
             try:
                 with session.begin():
                     yield session
+                if record_runtime_boundary:
+                    record_order_test_runtime_evidence_event(RUNTIME_EVIDENCE_EVENT_PERSISTENCE_COMMITTED)
             except Exception:
                 session.rollback()
                 raise

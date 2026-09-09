@@ -6,6 +6,15 @@ from pathlib import Path
 from engine.diagnostics.btc_paper_readiness_engine import BTCPaperReadinessEngine
 
 
+def test_readiness_engine_shares_one_operational_counter_registry_across_testnet_child_engines(tmp_path: Path) -> None:
+    engine = BTCPaperReadinessEngine(repo_root=tmp_path, env={})
+    registry = engine.operational_counter_registry
+
+    assert engine.binance_futures_testnet_order_test_engine.authorization_policy.operational_counter_registry is registry
+    assert engine.binance_futures_testnet_order_lifecycle_engine.authorization_policy.operational_counter_registry is registry
+    assert engine.binance_futures_testnet_protective_orders_engine.authorization_policy.operational_counter_registry is registry
+
+
 def _write_json(path: Path, data: dict | list) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data), encoding="utf-8")

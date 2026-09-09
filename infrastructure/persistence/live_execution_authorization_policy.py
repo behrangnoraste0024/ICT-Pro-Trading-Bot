@@ -2,18 +2,24 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime
 from dataclasses import fields
 from pathlib import Path
 from typing import Callable
 
+from infrastructure.observability.operational_metrics import OperationalCounterRegistry
+from infrastructure.observability.structured_logging import build_structured_record, emit_structured_record
 from infrastructure.persistence.kill_switch_gate import DurableKillSwitchGate, KillSwitchGateError
 from infrastructure.persistence.kill_switch_persistence import KillSwitchPersistence
+from infrastructure.persistence.live_execution_permit_persistence import record_order_test_policy_evaluation
 from models.live_execution_authorization import (
     LiveExecutionAuthorizationContext,
     LiveExecutionAuthorizationDecision,
     LiveExecutionOperation,
 )
 from models.btc_paper_runtime_config import BTCPaperRuntimeConfig
+
+SAFETY_DENIAL_COUNTER = "ict_tradingbot_safety_denials_total"
 
 
 class LiveExecutionRuntimeProvider:
@@ -71,12 +77,18 @@ class LiveExecutionAuthorizationPolicy:
         runtime_provider: LiveExecutionRuntimeProvider | None = None,
         kill_switch_gate: DurableKillSwitchGate | None = None,
         persistence_factory: Callable[..., KillSwitchPersistence] = KillSwitchPersistence,
+        operational_counter_registry: OperationalCounterRegistry | None = None,
     ) -> None:
         self.repo_root = Path.cwd() if repo_root is None else Path(repo_root)
         self.env = os.environ if env is None else env
         self.runtime_provider = runtime_provider or LiveExecutionRuntimeProvider(self.repo_root, self.env)
         self.kill_switch_gate = kill_switch_gate or DurableKillSwitchGate(env=self.env)
         self.persistence_factory = persistence_factory
+        self.operational_counter_registry = operational_counter_registry or OperationalCounterRegistry()
+        try:
+            self.operational_counter_registry.register(SAFETY_DENIAL_COUNTER)
+        except Exception:
+            pass
 
     def authorize(
         self,
@@ -98,40 +110,73 @@ class LiveExecutionAuthorizationPolicy:
             credentials_configured,
             current_pair_id,
         ):
-            return self._deny("EXECUTION_POLICY_UNAVAILABLE", operation_value)
+            return self._record_order_test_authorization_evidence(
+                self._deny("EXECUTION_POLICY_UNAVAILABLE", operation_value),
+                recovery_required=None,
+            )
         if operation_value is None:
-            return self._deny("UNSUPPORTED_EXECUTION_OPERATION", None)
+            return self._record_order_test_authorization_evidence(
+                self._deny("UNSUPPORTED_EXECUTION_OPERATION", None),
+                recovery_required=None,
+            )
         if environment != "TESTNET":
-            return self._deny("TESTNET_ONLY", operation_value)
+            return self._record_order_test_authorization_evidence(
+                self._deny("TESTNET_ONLY", operation_value),
+                recovery_required=None,
+            )
         if symbol != "BTCUSDT":
-            return self._deny("BTCUSDT_ONLY", operation_value)
+            return self._record_order_test_authorization_evidence(
+                self._deny("BTCUSDT_ONLY", operation_value),
+                recovery_required=None,
+            )
 
         available, _ = self._use_persistence(lambda persistence: None)
         if not available:
-            return self._deny("PERSISTENCE_UNAVAILABLE", operation_value)
+            return self._record_order_test_authorization_evidence(
+                self._deny("PERSISTENCE_UNAVAILABLE", operation_value),
+                recovery_required=None,
+            )
         kill_switch_denial = self._kill_switch_denial(operation_value)
         if kill_switch_denial is not None:
-            return kill_switch_denial
+            return self._record_order_test_authorization_evidence(
+                kill_switch_denial,
+                recovery_required=None,
+            )
         available, unresolved = self._use_persistence(
             lambda persistence: persistence.has_unresolved_recovery(current_pair_id)
         )
         if not available:
-            return self._deny("PERSISTENCE_UNAVAILABLE", operation_value)
+            return self._record_order_test_authorization_evidence(
+                self._deny("PERSISTENCE_UNAVAILABLE", operation_value),
+                recovery_required=None,
+            )
         if unresolved:
-            return self._deny("RECOVERY_REQUIRED", operation_value)
+            return self._record_order_test_authorization_evidence(
+                self._deny("RECOVERY_REQUIRED", operation_value),
+                recovery_required=True,
+            )
 
         try:
             live, dry_run = self.runtime_provider.load(runtime_config_path)
         except Exception:
-            return self._deny("EXECUTION_POLICY_UNAVAILABLE", operation_value)
+            return self._record_order_test_authorization_evidence(
+                self._deny("EXECUTION_POLICY_UNAVAILABLE", operation_value),
+                recovery_required=False,
+            )
         if type(live) is not bool or type(dry_run) is not bool:
-            return self._deny("EXECUTION_POLICY_UNAVAILABLE", operation_value)
-        return self._evaluate_flags(
-            operation_value,
-            live,
-            dry_run,
-            confirmation_verified,
-            credentials_configured,
+            return self._record_order_test_authorization_evidence(
+                self._deny("EXECUTION_POLICY_UNAVAILABLE", operation_value),
+                recovery_required=False,
+            )
+        return self._record_order_test_authorization_evidence(
+            self._evaluate_flags(
+                operation_value,
+                live,
+                dry_run,
+                confirmation_verified,
+                credentials_configured,
+            ),
+            recovery_required=False,
         )
 
     def authorize_preflight(
@@ -267,4 +312,37 @@ class LiveExecutionAuthorizationPolicy:
         )
 
     def _deny(self, code: str, operation: str | None) -> LiveExecutionAuthorizationDecision:
-        return LiveExecutionAuthorizationDecision(False, code, operation, message=self.SAFE_MESSAGES[code])
+        decision = LiveExecutionAuthorizationDecision(False, code, operation, message=self.SAFE_MESSAGES[code])
+        self._observe_denial(decision)
+        return decision
+
+    def _observe_denial(self, decision: LiveExecutionAuthorizationDecision) -> None:
+        context = {
+            "decision_code": decision.code,
+            "operation": decision.operation,
+            "policy_version": decision.policy_version,
+        }
+        try:
+            record = build_structured_record(
+                timestamp=datetime.now(UTC),
+                severity="WARNING",
+                event_name="live_execution_authorization_denied",
+                category="safety_denial",
+                context=context,
+            )
+            emit_structured_record(record)
+        except Exception:
+            pass
+        try:
+            self.operational_counter_registry.increment(SAFETY_DENIAL_COUNTER, 1)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _record_order_test_authorization_evidence(
+        decision: LiveExecutionAuthorizationDecision,
+        *,
+        recovery_required: bool | None,
+    ) -> LiveExecutionAuthorizationDecision:
+        record_order_test_policy_evaluation(recovery_required=recovery_required)
+        return decision

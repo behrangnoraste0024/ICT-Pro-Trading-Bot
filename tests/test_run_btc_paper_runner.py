@@ -169,9 +169,13 @@ class _FakeBinanceFuturesTestnetReadOnlyEngine:
 
 
 class _FakeBinanceFuturesTestnetOrderTestEngine:
-    def __init__(self, repo_root=None, env=None) -> None:
+    seen_registries = []
+
+    def __init__(self, repo_root=None, env=None, operational_counter_registry=None) -> None:
         self.repo_root = repo_root
         self.env = env
+        self.operational_counter_registry = operational_counter_registry
+        type(self).seen_registries.append(operational_counter_registry)
 
     def runner_validate(self, **kwargs) -> BinanceFuturesTestnetOrderTestResult:
         return BinanceFuturesTestnetOrderTestResult(
@@ -193,9 +197,13 @@ class _FakeBinanceFuturesTestnetOrderTestEngine:
 
 
 class _FakeBinanceFuturesTestnetOrderLifecycleEngine:
-    def __init__(self, repo_root=None, env=None) -> None:
+    seen_registries = []
+
+    def __init__(self, repo_root=None, env=None, operational_counter_registry=None) -> None:
         self.repo_root = repo_root
         self.env = env
+        self.operational_counter_registry = operational_counter_registry
+        type(self).seen_registries.append(operational_counter_registry)
 
     def runner_validate(self, **kwargs) -> BinanceFuturesTestnetLifecycleResult:
         return BinanceFuturesTestnetLifecycleResult(
@@ -505,6 +513,7 @@ def test_validate_binance_futures_testnet_read_only_dry_run_does_not_mutate_runn
 def test_validate_binance_futures_testnet_order_test_dry_run_does_not_mutate_runner_state(tmp_path, capsys, monkeypatch) -> None:
     _write_configs(tmp_path)
     monkeypatch.setattr(run_btc_paper_runner, "ROOT_DIR", tmp_path)
+    _FakeBinanceFuturesTestnetOrderTestEngine.seen_registries = []
     monkeypatch.setattr(run_btc_paper_runner, "BinanceFuturesTestnetOrderTestEngine", _FakeBinanceFuturesTestnetOrderTestEngine)
     state_path = tmp_path / "reports" / "paper_runner" / "state.json"
     run_btc_paper_runner.main(["--initialize", "--state-file", "reports/paper_runner/state.json"])
@@ -523,11 +532,14 @@ def test_validate_binance_futures_testnet_order_test_dry_run_does_not_mutate_run
     assert "Test Request Transmitted  : false" in captured.out
     assert "Actual Order Submitted    : false" in captured.out
     assert "Futures Paper Mutated     : false" in captured.out
+    assert len(_FakeBinanceFuturesTestnetOrderTestEngine.seen_registries) == 1
+    assert _FakeBinanceFuturesTestnetOrderTestEngine.seen_registries[0] is not None
 
 
 def test_validate_binance_futures_testnet_order_lifecycle_dry_run_does_not_mutate_runner_state(tmp_path, capsys, monkeypatch) -> None:
     _write_configs(tmp_path)
     monkeypatch.setattr(run_btc_paper_runner, "ROOT_DIR", tmp_path)
+    _FakeBinanceFuturesTestnetOrderLifecycleEngine.seen_registries = []
     monkeypatch.setattr(run_btc_paper_runner, "BinanceFuturesTestnetOrderLifecycleEngine", _FakeBinanceFuturesTestnetOrderLifecycleEngine)
     state_path = tmp_path / "reports" / "paper_runner" / "state.json"
     run_btc_paper_runner.main(["--initialize", "--state-file", "reports/paper_runner/state.json"])
@@ -539,6 +551,8 @@ def test_validate_binance_futures_testnet_order_lifecycle_dry_run_does_not_mutat
     after = json.loads(state_path.read_text(encoding="utf-8"))
     assert code == 0
     assert before == after
+    assert len(_FakeBinanceFuturesTestnetOrderLifecycleEngine.seen_registries) == 1
+    assert _FakeBinanceFuturesTestnetOrderLifecycleEngine.seen_registries[0] is not None
     assert "BINANCE FUTURES TESTNET POST-ONLY LIMIT LIFECYCLE" in captured.out
     assert "Runner is not running; Binance futures Testnet manual post-only order lifecycle validation executed as standalone local dry-run diagnostic." in captured.out
     assert "Order Created             : false" in captured.out
